@@ -55,6 +55,47 @@ describe("kc.poles (query helper)", function()
   end)
 end)
 
+describe("kc.place_ghosts (query helper)", function()
+  it("places ghosts and refuses overlaps with entities and with ghosts of the same call", function()
+    local s = game.surfaces[1]
+    local tiles = {}
+    for x = 400, 420 do for y = 400, 420 do tiles[#tiles + 1] = { name = "grass-1", position = { x, y } } end end
+    s.set_tiles(tiles)
+    local chest = s.create_entity{ name = "wooden-chest", position = { 415.5, 410.5 }, force = "player" }
+    local well = s.create_entity{ name = "crude-oil", position = { 405.5, 405.5 }, amount = 1000 } -- a pumpjack needs one
+    local r = q([[return kc.place_ghosts(surface, {
+      {name = "pumpjack", x = 405.5, y = 405.5, direction = defines.direction.west},
+      {name = "pipe", x = 405.5, y = 406.5},            -- inside the pumpjack ghost just placed
+      {name = "pipe", x = 403.5, y = 406.5},            -- free
+      {name = "pipe", x = 415.5, y = 410.5},            -- on the chest
+      {name = "no-such-thing", x = 1, y = 1},
+    })]])
+    local ghosts = s.find_entities_filtered{ name = "entity-ghost", area = { { 400, 400 }, { 420, 420 } } }
+    for _, g in pairs(ghosts) do g.destroy() end
+    chest.destroy()
+    well.destroy()
+    assert(r.placed == 2 and #ghosts == 2, serpent.line(r))
+    local idx = {}
+    for _, f in ipairs(r.failed) do idx[#idx + 1] = f.index end
+    assert(serpent.line(idx) == serpent.line({ 2, 4, 5 }), serpent.line(r.failed))
+    assert(r.unpowered == 1 and r.hint and r.hint:find("Power them now", 1, true), serpent.line(r)) -- the pumpjack
+  end)
+
+  it("stops reporting unpowered once a pole covers the design", function()
+    local s = game.surfaces[1]
+    local tiles = {}
+    for x = 430, 450 do for y = 430, 450 do tiles[#tiles + 1] = { name = "grass-1", position = { x, y } } end end
+    s.set_tiles(tiles)
+    local first = q([[return kc.place_ghosts(surface, {{name = "small-lamp", x = 440.5, y = 440.5}})]])
+    local second = q([[return kc.place_ghosts(surface, {{name = "medium-electric-pole", x = 442.5, y = 440.5}})]])
+    local check = q([[return kc.unpowered(surface, {{name = "small-lamp", x = 440.5, y = 440.5}})]])
+    for _, g in pairs(s.find_entities_filtered{ name = "entity-ghost", area = { { 430, 430 }, { 450, 450 } } }) do
+      g.destroy()
+    end
+    assert(first.unpowered == 1 and second.unpowered == nil and check == 0, serpent.line({ first, second, check }))
+  end)
+end)
+
 describe("kc.nearest_pole (query helper)", function()
   it("finds the closest real pole and ignores ghosts", function()
     local s = game.surfaces[1]

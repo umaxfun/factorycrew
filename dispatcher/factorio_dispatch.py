@@ -158,14 +158,42 @@ def open_chat(ctx, cfg, st, ask):
     return slot
 
 
+SCRIPTS = (  # (name used in the header, unicode ranges)
+    ("Russian or another Cyrillic language", ((0x0400, 0x04FF),)),
+    ("Chinese", ((0x4E00, 0x9FFF),)),
+    ("Japanese", ((0x3040, 0x30FF),)),
+    ("Korean", ((0xAC00, 0xD7AF),)),
+)
+
+
+def reply_language(text):
+    """The language the answer must be in, from the letters of the question itself.
+
+    The model kept answering an English question in Russian because the run was named "Ран 1"
+    (and its memory is partly Russian); a rule about it did not hold, a direct instruction does.
+    Returns None when the letters do not decide it."""
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return None
+    for name, ranges in SCRIPTS:
+        n = sum(1 for ch in letters if any(a <= ord(ch) <= b for a, b in ranges))
+        if n * 2 >= len(letters):
+            return name
+    if all(ch.isascii() for ch in letters):
+        return "English"
+    return None
+
+
 def render(ask):
+    lang = reply_language(ask["text"])
+    reply_in = f" · reply in {lang}" if lang else ""
     where = ""
     p = ask.get("player")
     if isinstance(p, dict) and "x" in p and "y" in p:
         who = f"player {p['name']} " if p.get("name") else "player "
         where = f" · {who}at ({p['x']}, {p['y']}) on {p.get('surface') or '?'}"
     return (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
-            f"tick {ask.get('tick')}{where}]\n{ask['text']}")
+            f"tick {ask.get('tick')}{where}{reply_in}]\n{ask['text']}")
 
 
 # ── loop ─────────────────────────────────────────────────────────────────

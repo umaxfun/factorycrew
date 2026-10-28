@@ -367,6 +367,11 @@ class Bridge(asyncio.DatagramProtocol):
             sent = self.deliver({"type": "trace", "run_id": key[0], "chat": chat, "kind": kind,
                                  "text": text[:TRACE_MAX]})
             return 200, {"ok": True, "sent": sent}
+        if method == "POST" and path == "/alive":
+            # the agent is busy off the game (factorio_compute): a step, or just a heartbeat
+            text = body.get("text") if isinstance(body.get("text"), str) else ""
+            n = self.activity(None, text, step=body.get("step", True) is not False) if body.get("_agent") else 0
+            return 200, {"ok": True, "updated": n}
         if method == "POST" and path == "/progress":
             chat, text = body.get("chat"), body.get("text")
             if not isinstance(chat, str) or not isinstance(text, str):
