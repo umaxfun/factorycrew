@@ -11,6 +11,7 @@ M.HEARTBEAT_TICKS = 300 -- 5 s
 M.PONG_TIMEOUT_TICKS = 900 -- 15 s without pong => "no connection"
 M.ACK_TIMEOUT_TICKS = 180 -- 3 s without ack on an ask => "no connection" on that message
 M.FEED_LIMIT = 30 -- messages kept per tab
+M.TRACE_LIMIT = 12 -- live steps of a running turn shown under the question
 M.MARK_PREFIX = "[KC] "
 
 -- ── storage ──────────────────────────────────────────────────────────────
@@ -87,12 +88,25 @@ local function push(tab, entry)
 end
 
 --- Record a player question in its tab and return the `ask` message for the bridge.
-function M.ask(chat, text)
+--- Where the asking player stands, so "build here" / "near me" has a default place.
+local function whereabouts(player)
+  player = player or game.connected_players[1]
+  if not (player and player.valid) then return nil end
+  local p = player.position
+  return {
+    name = player.name, surface = player.surface.name,
+    x = math.floor(p.x * 10 + 0.5) / 10, y = math.floor(p.y * 10 + 0.5) / 10,
+  }
+end
+
+--- Record a player question in its tab and return the `ask` message for the bridge.
+function M.ask(chat, text, player)
   local id = next_id("ask")
   push(M.tab(chat), { from = "player", text = text, id = id, acked = false })
   return {
     type = "ask", id = id, chat = chat, text = text,
     run_id = storage.kc.run_id, run_name = storage.kc.run_name, tick = game.tick,
+    player = whereabouts(player),
   }
 end
 
@@ -354,7 +368,7 @@ function M.handle(msg)
   local t = msg.type
   local kc = storage.kc
   -- reply/status addressed to another run (a queued answer for a save that is no longer loaded)
-  if (t == "reply" or t == "status") and msg.run_id and msg.run_id ~= kc.run_id then
+  if (t == "reply" or t == "status" or t == "trace") and msg.run_id and msg.run_id ~= kc.run_id then
     return {}
   end
   if t == "query" then
@@ -375,10 +389,37 @@ function M.handle(msg)
     if e then e.acked = true end
   elseif t == "reply" then
     local tab = M.tab(msg.chat)
+    -- the live trace folds into one line above the answer, so the feed keeps its history
+    if tab.trace and #tab.trace > 0 then
+      local secs = tab.thinking_since and math.floor((game.tick - tab.thinking_since) / 60)
+      push(tab, { from = "trace_summary", text = (tab.steps or #tab.trace) .. " steps" ..
+        (secs and (", " .. secs .. " s") or "") })
+    end
+    tab.trace = nil
     push(tab, { from = "kira", text = msg.text, id = msg.id })
     tab.state, tab.note = "idle", nil
+    tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
+  elseif t == "trace" then
+    -- a step of the running turn: what Kira wrote between tool calls, or which tool ran
+    local tab = M.tab(msg.chat)
+    tab.trace = tab.trace or {}
+    local last = tab.trace[#tab.trace]
+    if last and last.kind == "tool" and msg.kind == "tool" and last.text == msg.text then
+      last.n = (last.n or 1) + 1
+    else
+      tab.trace[#tab.trace + 1] = { kind = msg.kind or "text", text = msg.text or "" }
+      while #tab.trace > M.TRACE_LIMIT do table.remove(tab.trace, 1) end
+    end
   elseif t == "status" then
     local tab = M.tab(msg.chat)
+    if msg.state == "thinking" then
+      -- progress of a running turn: the first status starts the clock, later ones add steps
+      if tab.state ~= "thinking" then tab.thinking_since, tab.trace = game.tick, nil end
+      tab.steps, tab.activity = msg.steps, msg.activity
+    else
+      tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
+      tab.trace = nil
+    end
     tab.state, tab.note = msg.state, msg.note
   end
   return {}
@@ -394,7 +435,8 @@ function M.state()
   local kc = storage.kc
   local tabs = {}
   for chat, t in pairs(kc.tabs) do
-    tabs[chat] = { feed = t.feed, state = t.state, note = t.note }
+    tabs[chat] = { feed = t.feed, state = t.state, note = t.note, steps = t.steps, activity = t.activity,
+                   thinking_since = t.thinking_since, trace = t.trace }
   end
   return {
     run_id = kc.run_id, run_name = kc.run_name, tick = game.tick,

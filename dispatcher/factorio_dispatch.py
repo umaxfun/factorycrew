@@ -71,6 +71,7 @@ def load_state(path: Path) -> dict:
     s.setdefault("runs", {})  # run_id -> {"folder": id, "name": str}
     s.setdefault("slots", {})  # "<run_id>\t<tab>" -> slot key
     s.setdefault("attempts", {})  # ask id -> failures
+    s.setdefault("gen", {})  # "<run_id>\t<tab>" -> slot key generation (bumped on not_creator)
     return s
 
 
@@ -136,9 +137,9 @@ def run_folder(ctx, cfg, st, run_id, run_name):
     return fid
 
 
-def slot_key(run_id, tab):
+def slot_key(run_id, tab, gen=0):
     h = hashlib.sha1(f"{run_id}\t{tab}".encode()).hexdigest()[:12]
-    return f"factorio-{h}"
+    return f"factorio-{h}" if not gen else f"factorio-{h}-{gen}"
 
 
 def open_chat(ctx, cfg, st, ask):
@@ -148,7 +149,8 @@ def open_chat(ctx, cfg, st, ask):
         return st["slots"][k]
     folder = run_folder(ctx, cfg, st, run_id, ask.get("run_name"))
     res = _private_post(ctx, "/api/chat/slots", {
-        "name": slot_key(run_id, tab), "title": tab, "folder_id": folder, "agent": cfg["agent"],
+        "name": slot_key(run_id, tab, st["gen"].get(k, 0)), "title": tab, "folder_id": folder,
+        "agent": cfg["agent"],
     })
     slot = res["key"]
     ctx.set_session_mode(slot, "trust_reads")
@@ -157,17 +159,122 @@ def open_chat(ctx, cfg, st, ask):
 
 
 def render(ask):
+    where = ""
+    p = ask.get("player")
+    if isinstance(p, dict) and "x" in p and "y" in p:
+        who = f"player {p['name']} " if p.get("name") else "player "
+        where = f" · {who}at ({p['x']}, {p['y']}) on {p.get('surface') or '?'}"
     return (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
-            f"tick {ask.get('tick')}]\n{ask['text']}")
+            f"tick {ask.get('tick')}{where}]\n{ask['text']}")
 
 
 # ── loop ─────────────────────────────────────────────────────────────────
 
 
-def handle(ctx, cfg, st, ask):
+# ── live trace of a running turn ─────────────────────────────────────────
+#
+# The bridge sees only tool calls. What Kira writes between them is in the chat transcript,
+# which the gateway appends to as the turn runs. While a turn is on, follow that file and send
+# each new step to the tab. The transcript is Kiro Crew's own storage, read-only here; if its
+# shape changes the trace stops and nothing else breaks.
+
+TOOL_LABELS = {
+    "factorio_query": "running a Lua query",
+    "factorio_mark": "placing map marks",
+    "factorio_unmark": "removing marks",
+    "factorio_list_marks": "listing marks",
+}
+TRACE_MAX = 220  # chars per line in the window
+TRACE_IDLE = 300.0  # stop following a chat after this long without new lines
+
+
+def transcript_path(slot):
+    home = os.environ.get("KIROCREW_HOME") or str(Path.home() / ".kiro" / "crew")
+    return Path(home) / "sessions" / f"dashboard_{slot}.jsonl"
+
+
+def trace_lines(row):
+    """(kind, text, done) for one transcript row; done=True once the answer went to the game."""
+    role, content = row.get("role"), row.get("content")
+    if role == "assistant" and isinstance(content, str) and content.strip():
+        text = " ".join(content.split())
+        return [("text", text if len(text) <= TRACE_MAX else text[:TRACE_MAX - 1] + "…", False)]
+    if role == "tool":
+        meta = row.get("meta") or {}
+        name = str(content or "").rsplit("/", 1)[-1].strip()
+        if name == "factorio_reply":
+            return [("", "", True)]
+        if name == "factorio_progress":
+            return []  # already shown as the activity line
+        if not name.startswith("factorio_") and not meta.get("mcp_server"):
+            return []
+        label = TOOL_LABELS.get(name) or name
+        return [("tool", label, False)] if label else []
+    return []
+
+
+class Tracer:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.watch = {}  # slot -> {"chat", "run_id", "pos", "seen"}
+
+    def start(self, slot, ask):
+        p = transcript_path(slot)
+        pos = p.stat().st_size if p.exists() else 0  # only what this turn adds
+        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "pos": pos, "seen": time.monotonic()}
+
+    def poll(self):
+        for slot, w in list(self.watch.items()):
+            p = transcript_path(slot)
+            try:
+                with open(p, "rb") as f:
+                    f.seek(w["pos"])
+                    data = f.read()
+            except OSError:
+                data = b""
+            # only whole lines; a half-written one waits for the next poll
+            end = data.rfind(b"\n") + 1
+            w["pos"] += end
+            done = False
+            for raw in data[:end].splitlines():
+                try:
+                    row = json.loads(raw)
+                except ValueError:
+                    continue
+                for kind, text, fin in trace_lines(row):
+                    if fin:
+                        done = True
+                        break
+                    w["seen"] = time.monotonic()
+                    try:
+                        bridge(self.cfg, "POST", "/trace", {"chat": w["chat"], "kind": kind, "text": text}, timeout=5)
+                    except (urllib.error.URLError, OSError, ValueError):
+                        pass
+                if done:
+                    break
+            if done or time.monotonic() - w["seen"] > TRACE_IDLE:
+                del self.watch[slot]
+
+
+def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
-        ctx.send_to_session(slot, render(ask))
+        try:
+            ctx.send_to_session(slot, render(ask))
+        except Exception as exc:  # noqa: BLE001
+            if "not_creator" not in str(exc):
+                raise
+            # A chat only takes messages from the cron job that opened it, and an app cron gets a
+            # new id on every reinstall or off/on. That chat belongs to a previous install: open
+            # a fresh one for this tab (next key generation, same title and folder) and resend.
+            k = f"{ask['run_id']}\t{ask['chat']}"
+            print(f"chat {slot} was opened by an earlier cron job; opening a new one for [{ask['chat']}]")
+            st["slots"].pop(k, None)
+            st["gen"][k] = st["gen"].get(k, 0) + 1
+            slot = open_chat(ctx, cfg, st, ask)
+            ctx.send_to_session(slot, render(ask))
+        if tracer is not None:
+            tracer.start(slot, ask)
     except Exception as exc:  # noqa: BLE001 - every failure is retried, then reported
         n = st["attempts"].get(ask["id"], 0) + 1
         st["attempts"][ask["id"]] = n
@@ -219,7 +326,9 @@ def run(ctx):
     handled = 0
     parent = os.getppid()
     stamp = source_stamp()
+    tracer = Tracer(cfg)
     while time.monotonic() < deadline:
+        tracer.poll()
         if os.getppid() != parent:
             # The gateway that started this wake is gone (stopped or restarted) and does not
             # reap script children: exit, or two dispatchers end up sharing the queue.
@@ -230,7 +339,8 @@ def run(ctx):
             # keeps serving for up to run_seconds (it once sent a stale chat header).
             print("dispatcher script updated, exiting so the next wake runs the new code")
             return
-        wait = max(0, min(cfg["poll_wait"], int(deadline - time.monotonic()) - 1))
+        # while a turn is being traced, come back every second instead of every poll_wait
+        wait = max(0, min(1 if tracer.watch else cfg["poll_wait"], int(deadline - time.monotonic()) - 1))
         try:
             # lease shorter than our retry path, so a crash mid-ask returns it quickly
             asks = bridge(cfg, "GET", f"/asks?wait={wait}&lease=60", timeout=wait + 15)["asks"]
@@ -239,7 +349,7 @@ def run(ctx):
             time.sleep(5)
             continue
         for ask in asks:
-            if handle(ctx, cfg, st, ask):
+            if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
             save_state(path, st)
     print(f"dispatcher wake done, {handled} asks")

@@ -23,6 +23,8 @@ VERSION = 1
 PACKET_MAX = 4000  # bytes per UDP packet to the game; see encode()
 MAX_PARTS = 1024
 OUTBOX_LIMIT = 200  # replies/statuses waiting for an offline game
+ACTIVITY_MAX = 80  # chars of a progress note shown in the window's status line
+TRACE_MAX = 240  # chars of one trace line (what Kira wrote / which tool she ran) for the window
 
 log = logging.getLogger("factorio-bridge")
 
@@ -150,6 +152,7 @@ class Bridge(asyncio.DatagramProtocol):
         self.ask_event = asyncio.Event()
         self.outbox: deque[dict] = deque()  # reply/status for an offline game
         self.idle_timers: dict[tuple, asyncio.TimerHandle] = {}
+        self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
         self.ids = itertools.count(1)
 
     # ── UDP side ──
@@ -189,7 +192,7 @@ class Bridge(asyncio.DatagramProtocol):
             if msg.get("id") in self.seen_asks:
                 return
             self.seen_asks.append(msg.get("id"))
-            self.asks.append({k: msg.get(k) for k in ("id", "chat", "text", "run_id", "run_name", "tick")})
+            self.asks.append({k: msg.get(k) for k in ("id", "chat", "text", "run_id", "run_name", "tick", "player")})
             self.ask_event.set()
             log.info("ask %s [%s] %r", msg.get("id"), msg.get("chat"), msg.get("text"))
         elif t == "result":
@@ -281,14 +284,38 @@ class Bridge(asyncio.DatagramProtocol):
 
     def set_thinking(self, run_id, chat) -> None:
         key = (run_id, chat)
+        self.working[key] = {"steps": 0, "activity": ""}
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "thinking"})
+        self.arm_idle(key)
+
+    def arm_idle(self, key) -> None:
         old = self.idle_timers.pop(key, None)
         if old:
             old.cancel()
         self.idle_timers[key] = asyncio.get_running_loop().call_later(self.s.idle_after, self.idle_timeout, key)
 
+    def activity(self, chat: str | None, text: str, step: bool = True) -> int:
+        """A sign of life from a running turn: count the step, show what it does, restart the idle clock.
+
+        The agent's tool calls carry no ask id, and factorio_query carries no chat, so a call without
+        a chat counts for every tab of the current run that is thinking (normally exactly one).
+        Returns how many tabs were updated.
+        """
+        keys = [k for k in self.working if k[0] == self.game.run_id and (chat is None or k[1] == chat)]
+        for key in keys:
+            w = self.working[key]
+            if step:
+                w["steps"] += 1
+            if text:
+                w["activity"] = text[:ACTIVITY_MAX]
+            self.deliver({"type": "status", "run_id": key[0], "chat": key[1], "state": "thinking",
+                          "steps": w["steps"], "activity": w["activity"]})
+            self.arm_idle(key)
+        return len(keys)
+
     def idle_timeout(self, key) -> None:
         self.idle_timers.pop(key, None)
+        self.working.pop(key, None)
         run_id, chat = key
         log.info("no reply in %ss for [%s], sending idle", self.s.idle_after, chat)
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": "no_reply"})
@@ -298,6 +325,7 @@ class Bridge(asyncio.DatagramProtocol):
         timer = self.idle_timers.pop((run_id, chat), None)
         if timer:
             timer.cancel()
+        self.working.pop((run_id, chat), None)
         msg = {"type": "reply", "id": f"r{next(self.ids)}", "run_id": run_id, "chat": chat, "text": text}
         sent = self.deliver(msg)
         return {"ok": True, "delivered": sent, "queued": not sent}
@@ -327,7 +355,26 @@ class Bridge(asyncio.DatagramProtocol):
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, self.reply(chat, text)
+        if method == "POST" and path == "/trace":
+            # a step of a running turn, from the dispatcher following the chat transcript
+            chat, text, kind = body.get("chat"), body.get("text"), body.get("kind") or "text"
+            if not isinstance(chat, str) or not isinstance(text, str):
+                raise BridgeError("bad_request", "chat and text are required strings")
+            key = (self.game.run_id, chat)
+            if key not in self.working:
+                return 200, {"ok": True, "sent": False}  # the turn already answered or timed out
+            self.arm_idle(key)
+            sent = self.deliver({"type": "trace", "run_id": key[0], "chat": chat, "kind": kind,
+                                 "text": text[:TRACE_MAX]})
+            return 200, {"ok": True, "sent": sent}
+        if method == "POST" and path == "/progress":
+            chat, text = body.get("chat"), body.get("text")
+            if not isinstance(chat, str) or not isinstance(text, str):
+                raise BridgeError("bad_request", "chat and text are required strings")
+            return 200, {"ok": True, "updated": self.activity(chat, text, step=False)}
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
+            chat = body.get("chat") if isinstance(body.get("chat"), str) else None
+            self.activity(chat, "")
             msg = {k: v for k, v in body.items() if k not in ("id", "type", "v", "timeout")}
             msg["type"] = path[1:]
             if path == "/query" and not isinstance(body.get("lua"), str):

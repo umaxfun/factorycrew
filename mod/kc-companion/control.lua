@@ -50,7 +50,7 @@ script.on_nth_tick(60, function()
 end)
 
 -- what changes the window when it arrives from the bridge
-local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true }
+local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true, trace = true }
 
 script.on_event(defines.events.on_udp_packet_received, function(e)
   local msg = protocol.decode(e.payload)

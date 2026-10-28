@@ -101,9 +101,23 @@ TOOLS = [
             "required": ["chat", "text"],
         },
     },
+    {
+        "name": "factorio_progress",
+        "description": (
+            "Show the player what you are doing during a long turn, e.g. 'planning the layout', "
+            "'placing 120 lamp ghosts'. One short line (≤80 chars) under 'thinking…' in the tab; it does "
+            "not end the turn and is not an answer. The window already counts your tool calls."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"chat": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["chat", "text"],
+        },
+    },
 ]
 
 ROUTES = {
+    "factorio_progress": "/progress",
     "factorio_query": "/query",
     "factorio_mark": "/mark",
     "factorio_unmark": "/unmark",

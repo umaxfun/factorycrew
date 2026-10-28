@@ -131,6 +131,56 @@ def test_answers_in_the_players_language(player):
     assert cyrillic(text) and "20" in text
 
 
+def test_tab_from_an_earlier_install_still_answers(player):
+    """'General' keeps its chat across runs, and every run reinstalls the app (a new cron id):
+    the dispatcher must replace the chat the old job opened instead of failing with not_creator."""
+    text, _, t_all = player.ask_and_wait("General", "say hi in one word")
+    print(f"\nGeneral reply ({t_all:.1f}s): {text}")
+    assert "not_creator" not in text and "Could not pass" not in text, text
+
+
+def test_long_build_shows_progress(player):
+    """A minute-long build: the window must show time, steps and what Kira does while she works."""
+    tab = f"Build {STAMP}"
+    me = lua('local p = game.get_player(1) return {x = p.position.x, y = p.position.y}')
+    player.open_tab(tab)
+    t0 = time.monotonic()
+    assert player.ui("ui_confirm", "kc_input", "draw kirocrew ghost logo with colored lamps at about 1 chunk of size")
+    seen, shot = {"steps": 0, "activity": set(), "secs": 0}, False
+    while time.monotonic() - t0 < 300:
+        t = player.tab(tab)
+        if t.get("steps"):
+            seen["steps"] = max(seen["steps"], t["steps"])
+        if t.get("activity"):
+            seen["activity"].add(t["activity"])
+        for s in t.get("trace") or []:
+            seen.setdefault("trace", {})[s["text"]] = s["kind"]
+        if t["state"] == "thinking" and t.get("thinking_since"):
+            seen["secs"] = int(time.monotonic() - t0)
+            if not shot and seen["activity"] and seen["secs"] > 20:
+                lua('game.take_screenshot{player = game.get_player(1), show_gui = true, resolution = {1600, 1000}, '
+                    'path = "kc/app-e2e-progress.png"} return true')
+                shot = True
+        kira = [e for e in t["feed"] if e.get("from") == "kira"]
+        if kira:
+            break
+        time.sleep(1.5)
+    total = time.monotonic() - t0
+    print(f"\nbuild reply ({total:.0f}s, max step {seen['steps']}, activity {sorted(seen['activity'])}): "
+          f"{kira[-1]['text'] if kira else None}")
+    assert kira, "no reply in 300 s"
+    assert seen["steps"] >= 2 and seen["activity"], seen
+    # Kira's own words between tool calls reached the tab WHILE she worked, not only at the end
+    trace = seen.get("trace") or {}
+    print(f"trace lines seen live: {len(trace)}; e.g. {list(trace)[:3]}")
+    assert any(k == "text" for k in trace.values()) and any(k == "tool" for k in trace.values()), trace
+    assert t["feed"][-2]["from"] == "trace_summary", t["feed"][-2:]
+    ghosts = lua(f'return #game.surfaces[1].find_entities_filtered{{name = "entity-ghost", ghost_name = "small-lamp", '
+                 f'position = {{{me["x"]}, {me["y"]}}}, radius = 96}}')
+    print(f"lamp ghosts within 96 tiles of the player: {ghosts}")
+    assert ghosts >= 20
+
+
 def test_it_was_the_apps_agent(player):
     """The chats live in the dev gateway and the turns used the app's own MCP server."""
     st = json.loads((KC_HOME / "factorio" / "dispatch-state.json").read_text())

@@ -151,6 +151,34 @@ def test_idle_after_timeout_without_reply(stack):
     assert t["note"] == "no_reply"
 
 
+def test_long_turn_progress_reaches_the_tab(stack, mcp):
+    ask_id = stack.ask("Logo", "draw a logo with lamps")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    wait_until(lambda: stack.tab("Logo")["state"] == "thinking", what="thinking")
+    # tool calls count as steps even without a chat (factorio_query has none)
+    assert mcp.tool("factorio_query", lua="return 1")["ok"]
+    assert mcp.tool("factorio_query", lua="return 2")["ok"]
+    assert mcp.tool("factorio_progress", chat="Logo", text="placing 140 lamp ghosts")["updated"] == 1
+    # the dispatcher's live trace (what Kira writes between tool calls) reaches the tab
+    assert http("POST", "/trace", {"chat": "Logo", "kind": "text", "text": "Planning the K first."})["sent"]
+    wait_until(lambda: any(s["text"] == "Planning the K first." for s in stack.tab("Logo").get("trace") or []),
+               what="trace line in the tab")
+    t = wait_until(lambda: (lambda t: t if t.get("activity") else None)(stack.tab("Logo")), what="activity")
+    assert t["steps"] == 2 and t["activity"] == "placing 140 lamp ghosts" and t["thinking_since"]
+    # a long turn that keeps working is not "did not answer": each step restarts the idle clock
+    for _ in range(4):
+        time.sleep(1.5)
+        assert mcp.tool("factorio_query", lua="return 3")["ok"]
+    assert stack.tab("Logo")["state"] == "thinking", stack.tab("Logo")
+    assert mcp.tool("factorio_reply", chat="Logo", text="done")["delivered"]
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Logo")), what="idle")
+    assert t.get("steps") is None and t.get("note") is None and t.get("trace") is None
+    assert t["feed"][-2]["from"] == "trace_summary" and t["feed"][-1]["text"] == "done", t["feed"][-2:]
+    # after the answer, a late trace line is dropped instead of reopening the turn
+    assert http("POST", "/trace", {"chat": "Logo", "kind": "text", "text": "late"})["sent"] is False
+
+
 def test_asks_wait_while_dispatcher_is_away(stack):
     a = stack.ask(CHAT, "first")
     b = stack.ask("Power", "second")

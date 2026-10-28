@@ -76,7 +76,7 @@ Four components.
 The dispatcher long-polls the bridge for new questions (`GET /asks?wait=25`). The bridge leases a question: if the dispatcher has not confirmed it (`POST /asks/done`) within 120 seconds, it goes back to the queue. The dispatcher confirms after `send_to_session`, so a question is not lost if the dispatcher dies halfway. For each question it:
 1. Finds or creates the `Factorio` folder and the run folder inside it. It looks folders up with `ctx.list_session_folders()` and creates one only if it is missing. The public `ctx.create_session_folder(name)` can only create top-level folders, so the dispatcher creates the nested one with the private `ctx._post("/api/chat/folders", {"name": ..., "parent_id": ...})`. That call is wrapped to fail with a clear error if a Kiro Crew update breaks it. The request to add `parent_id` to the public method: [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210). We switch once it lands.
 2. Opens the chat with the private `ctx._post("/api/chat/slots", {name, title, folder_id, agent="factorio-companion"})` and, on first open, calls `ctx.set_session_mode(slot, "trust_reads")`. The public `open_session` does not fit: it sends one string as both key and title, and the session key is global, so "Logistics" of two runs would land in one chat. The key is `factorio-<hash of run_id and tab>`, the title is the tab name.
-3. Sends the message: `ctx.send_to_session(slot, message)`. If any of this fails, the question is not confirmed and returns by lease (60 s). After the third failure the tab gets "Could not pass the question to Kiro Crew: <reason>", and the question is dropped.
+3. Sends the message: `ctx.send_to_session(slot, message)`. A chat only takes messages from the cron job that opened it, and an app cron gets a new id on every reinstall and every disable/enable. On `not_creator` the dispatcher opens a fresh chat for the tab (key `factorio-<hash>-<gen>`, same title and folder) and resends; the old chat stays in the sidebar with its history, and the new one starts without the agent's memory of it. If any of this fails, the question is not confirmed and returns by lease (60 s). After the third failure the tab gets "Could not pass the question to Kiro Crew: <reason>", and the question is dropped.
 
 It keeps "`run_id` + tab → slot" and "`run_id` → folder" in `~/.kirocrew-factorio/factorio/dispatch-state.json`. The key is `run_id`, not the name. Renaming a run after its folder exists is not carried over to the folder yet (open question). If two different runs have the same name, the second folder gets a `run_id` suffix.
 
@@ -95,7 +95,7 @@ Each UDP packet holds one JSON string `{"v":1,"id":"…","type":"…",...}`. A l
 
 The game sends the bridge:
 - `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick` and the list of tabs;
-- `ask`: `chat` and `text`, the player's question;
+- `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds);
 - `result`: the answer to `query`, `mark` or `unmark`, with the same `id` and `ok`, `data` or `error`.
 
 The bridge sends the game:
@@ -106,7 +106,10 @@ The bridge sends the game:
 - `unmark`: `chat` and one of `ids`, `all_in_chat` or `all`;
 - `list_marks`: `chat?`, return the live marks;
 - `reply`: `chat` and `text`, the agent's answer into the tab;
-- `status`: `chat` and `state` (`thinking` or `idle`), for the "thinking…" indicator.
+- `status`: `chat` and `state` (`thinking` or `idle`), for the "thinking…" indicator; while thinking also `steps` (the agent's tool calls so far) and `activity` (its latest `factorio_progress` line);
+- `trace`: `chat`, `kind` (`text` or `tool`) and `text`, one step of the running turn.
+
+Long turns. The window shows "thinking… N s · step K · <activity>" and, under the question, the turn as it runs: what Kira writes between tool calls and which tools ran (repeats fold into "×N"), up to 12 lines. On the answer the trace folds into one gray line "(worked: K steps, N s)". Sources: the bridge counts every MCP call (a call without a chat counts for every thinking tab of the run, normally one); `factorio_progress(chat, text)` sets the activity; the dispatcher follows the chat transcript (`<KIROCREW_HOME>/sessions/dashboard_<slot>.jsonl`, appended as the turn runs) and posts each new line to the bridge's `/trace` until `factorio_reply`. Every such sign of life restarts the 90-second "did not answer" clock, so a long turn that keeps working is not cut off. The transcript is Kiro Crew's own storage: if its shape changes, the trace stops and nothing else breaks. Measured on the real client: the 47-second logo build showed 33 steps and Kira's text from second ~5.
 
 Who sets the status: the bridge sends `thinking` when the dispatcher picks up the question and `idle` after a `reply` into that tab. If there is no `reply` for 90 seconds, the bridge sends `idle` itself and the tab shows "Kira did not answer here; the answer may be in the chat".
 
@@ -144,7 +147,7 @@ On "remove", "clear", "enough marks" (in any language) call `factorio_unmark`.
 
 If the save has several surfaces (Space Age), say which surfaces were searched.
 
-Do not change the world. If the player asks to change something, explain that in v1 this is done by hand, and say exactly where and what.
+Building is done with ghosts only (build plans the player's robots or hands complete), near the player by default, on free ground (`can_place_entity`), with a mark at the center. Existing entities are never removed, rotated or reconfigured, and no real entities or items are created. This is an agent rule, not a sandbox.
 
 ## In-game window
 

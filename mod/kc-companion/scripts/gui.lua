@@ -9,6 +9,7 @@ local M = {}
 local ROOT = "kc_main"
 local DEFAULT_TAB = "General"
 local WIDTH = 460
+local TRACE_COLOR = "[color=0.62,0.62,0.62]" -- live steps of a turn: quieter than the answer
 
 local function view(player)
   local kc = storage.kc
@@ -157,7 +158,14 @@ local function status_text(tab)
     parts[#parts + 1] = "[color=green]online[/color]"
   end
   if tab.state == "thinking" then
-    parts[#parts + 1] = "[color=yellow]thinking…[/color]"
+    -- refreshed every second by M.tick, so the clock runs while a long turn works
+    local s = "thinking…"
+    if tab.thinking_since then s = s .. " " .. math.floor((game.tick - tab.thinking_since) / 60) .. " s" end
+    if tab.steps and tab.steps > 0 then s = s .. " · step " .. tab.steps end
+    parts[#parts + 1] = "[color=yellow]" .. s .. "[/color]"
+    if tab.activity and tab.activity ~= "" then
+      parts[#parts + 1] = "[color=yellow]" .. tab.activity .. "[/color]"
+    end
   elseif tab.note == "no_reply" then
     parts[#parts + 1] = "[color=orange]Kira did not answer here; the answer may be in the chat[/color]"
   end
@@ -183,12 +191,28 @@ local function refresh_feed(player, frame)
         warn = " [color=red](not delivered: no connection)[/color]"
       end
       who = "[font=default-bold][color=0.6,0.8,1]You:[/color][/font] " .. e.text .. warn
+    elseif e.from == "trace_summary" then
+      who = TRACE_COLOR .. "(worked: " .. e.text .. ")[/color]"
     else
       who = "[img=kc-kira] [font=default-bold][color=1,0.8,0.4]Kira:[/color][/font] " .. e.text
     end
     local l = pane.add{ type = "label", caption = who }
     l.style.single_line = false
     l.style.maximal_width = WIDTH - 40
+  end
+  -- the running turn, step by step: Kira's own words between tool calls, and the tools
+  if tab.state == "thinking" and tab.trace then
+    for _, s in ipairs(tab.trace) do
+      local text
+      if s.kind == "tool" then
+        text = TRACE_COLOR .. "  › " .. s.text .. ((s.n or 1) > 1 and (" ×" .. s.n) or "") .. "[/color]"
+      else
+        text = TRACE_COLOR .. "  " .. s.text .. "[/color]"
+      end
+      local l = pane.add{ type = "label", caption = text }
+      l.style.single_line = false
+      l.style.maximal_width = WIDTH - 40
+    end
   end
   if #tab.feed == 0 then
     pane.add{ type = "label", caption = "[color=gray]Ask anything about this run.[/color]" }
@@ -260,7 +284,7 @@ local function submit(player, send)
   local text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
   if text == "" then return end
   field.text = ""
-  send(protocol.ask(view(player).tab, text))
+  send(protocol.ask(view(player).tab, text, player))
   M.refresh(player)
   field.focus()
 end
