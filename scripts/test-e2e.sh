@@ -17,6 +17,30 @@ if ! "$ROOT/scripts/kc.sh" cron list 2>/dev/null | grep -q factorio-dispatch; th
     --script "${FC_KC_HOME:-$HOME/.kirocrew-factorio}/crons/factorio_dispatch.py:run" \
     --timeout 3600 --timeout-secs 3610 --no-persistent-session --minimal-context --hide-in-chat
 fi
+# A wake compiles the dispatcher once and lives up to an hour. Wait until the wake serving
+# this run started after the installed script (an older wake exits within ~25 s when it sees
+# the new file); start one with `cron trigger` when none is running.
+KC_HOME="${FC_KC_HOME:-$HOME/.kirocrew-factorio}"
+JOB="$("$ROOT/scripts/kc.sh" cron list 2>/dev/null | awk '/factorio-dispatch/ {print $2; exit}')"
+fresh_wake() {
+  python3 - "$KC_HOME" <<'EOF'
+import glob, json, os, sys
+home = sys.argv[1]
+src = os.stat(f"{home}/crons/factorio_dispatch.py").st_mtime
+for p in glob.glob(f"{home}/cron-running/*.json"):
+    m = json.load(open(p))
+    if m.get("name") == "factorio-dispatch":
+        sys.exit(0 if m["started_at"] >= src else 2)
+sys.exit(1)  # no wake running
+EOF
+}
+for i in $(seq 1 90); do
+  rc=0; fresh_wake || rc=$?
+  [ "$rc" = 0 ] && break
+  if [ "$rc" = 1 ] && [ $((i % 15)) = 1 ]; then "$ROOT/scripts/kc.sh" cron trigger "$JOB" >/dev/null; fi
+  sleep 1
+done
+fresh_wake || { echo "no dispatcher wake with the installed script after 90 s" >&2; exit 1; }
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || \
   docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.23 -t "$IMAGE" "$ROOT/docker"

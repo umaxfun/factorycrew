@@ -1,4 +1,4 @@
--- In-game window (SPEC.md, "Окно в игре"). State lives in storage.kc (protocol.lua);
+-- In-game window (SPEC.md, "In-game window"). State lives in storage.kc (protocol.lua);
 -- per-player view state (selected tab, mark cursor) in storage.kc.ui[player_index].
 
 local protocol = require("scripts.protocol")
@@ -7,7 +7,7 @@ local mod_gui = require("mod-gui")
 local M = {}
 
 local ROOT = "kc_main"
-local DEFAULT_TAB = "Общий"
+local DEFAULT_TAB = "General"
 local WIDTH = 460
 
 local function view(player)
@@ -73,32 +73,42 @@ local function build(player)
   grip.style.horizontally_stretchable = true
   grip.style.height = 24
   bar.add{ type = "sprite-button", name = "kc_close", sprite = "utility/close", style = "frame_action_button",
-           tooltip = "Закрыть (Ctrl+Shift+K)" }
+           tooltip = "Close (Ctrl+Shift+K)" }
 
   local inner = frame.add{ type = "frame", name = "kc_inner", direction = "vertical", style = "inside_shallow_frame_with_padding" }
   inner.style.width = WIDTH
 
-  inner.add{ type = "flow", name = "kc_run_row", direction = "horizontal" }
-  inner.add{ type = "flow", name = "kc_tabs_row", direction = "horizontal" }
-  inner.add{ type = "flow", name = "kc_status_row", direction = "horizontal" }
+  local kc_run_row = inner.add{ type = "flow", name = "kc_run_row", direction = "horizontal" }
+  kc_run_row.style.vertical_align = "center"
+  local kc_tabs_row = inner.add{ type = "flow", name = "kc_tabs_row", direction = "horizontal" }
+  kc_tabs_row.style.vertical_align = "center"
+  local kc_status_row = inner.add{ type = "flow", name = "kc_status_row", direction = "horizontal" }
+  kc_status_row.style.vertical_align = "center"
 
   local feed = inner.add{ type = "scroll-pane", name = "kc_feed", direction = "vertical",
                           horizontal_scroll_policy = "never" }
   feed.style.height = 300
   feed.style.horizontally_stretchable = true
 
-  inner.add{ type = "flow", name = "kc_marks_row", direction = "horizontal" }
+  local kc_marks_row = inner.add{ type = "flow", name = "kc_marks_row", direction = "horizontal" }
+  kc_marks_row.style.vertical_align = "center"
 
   local input_row = inner.add{ type = "flow", name = "kc_input_row", direction = "horizontal" }
+  input_row.style.vertical_align = "center"
   local field = input_row.add{ type = "textfield", name = "kc_input", lose_focus_on_confirm = false,
-                               tooltip = "Enter — отправить" }
+                               tooltip = "Enter to send" }
   field.style.horizontally_stretchable = true
   field.style.maximal_width = 0
-  input_row.add{ type = "button", name = "kc_send", caption = "Отправить" }
+  input_row.add{ type = "button", name = "kc_send", caption = "Send" }
   return frame
 end
 
 -- ── refresh parts ────────────────────────────────────────────────────────
+
+local function tool(parent, name, sprite, tooltip, enabled, style)
+  return parent.add{ type = "sprite-button", name = name, sprite = sprite, tooltip = tooltip,
+                     style = style or "tool_button", enabled = enabled ~= false }
+end
 
 local function refresh_run(player, frame)
   local row = find(frame, "kc_run_row")
@@ -106,13 +116,12 @@ local function refresh_run(player, frame)
   local v = view(player)
   if v.renaming then
     local f = row.add{ type = "textfield", name = "kc_run_name_input", text = storage.kc.run_name,
-                       tooltip = "Enter — сохранить" }
+                       tooltip = "Enter to save" }
     f.style.horizontally_stretchable = true
     f.focus()
   else
-    row.add{ type = "label", caption = { "", "[font=default-bold]Ран:[/font] ", storage.kc.run_name } }
-    row.add{ type = "button", name = "kc_run_rename", caption = "✎", tooltip = "Переименовать ран",
-             style = "mini_button" }
+    row.add{ type = "label", caption = { "", "[font=default-bold]Run:[/font] ", storage.kc.run_name } }
+    tool(row, "kc_run_rename", "utility/rename_icon", "Rename the run")
   end
 end
 
@@ -121,36 +130,36 @@ local function refresh_tabs(player, frame)
   row.clear()
   local v = view(player)
   for _, chat in ipairs(storage.kc.tab_order) do
-    local selected = chat == v.tab
-    local caption = selected and ("[font=default-bold]▸ " .. chat .. "[/font]") or chat
-    local b = row.add{ type = "button", name = "kc_tab:" .. chat, caption = caption, tags = { kc_tab = chat } }
+    local b = row.add{ type = "button", name = "kc_tab:" .. chat, caption = chat, tags = { kc_tab = chat },
+                       toggled = chat == v.tab }
     b.style.minimal_width = 0
     b.style.horizontal_align = "center"
   end
   if v.adding then
-    local f = row.add{ type = "textfield", name = "kc_new_tab_input", tooltip = "Имя вкладки, Enter — создать" }
+    local f = row.add{ type = "textfield", name = "kc_new_tab_input", tooltip = "Tab name, Enter to create" }
     f.style.width = 120
     f.focus()
   else
-    row.add{ type = "button", name = "kc_tab_add", caption = "+", tooltip = "Новая вкладка", style = "mini_button" }
+    tool(row, "kc_tab_add", "utility/add", "New tab")
   end
-  row.add{ type = "button", name = "kc_tab_close", caption = "✕",
-           tooltip = "Закрыть вкладку (чат в Kiro Crew останется)", style = "mini_button" }
+  local filler = row.add{ type = "empty-widget" }
+  filler.style.horizontally_stretchable = true
+  tool(row, "kc_tab_close", "utility/close_black", "Close the tab (its Kiro Crew chat stays)")
 end
 
 local function status_text(tab)
   local parts = {}
   if protocol.udp_state == "off" then
-    parts[#parts + 1] = "[color=red]UDP выключен: запустите игру с --enable-lua-udp 34200[/color]"
+    parts[#parts + 1] = "[color=red]UDP is off: start the game with --enable-lua-udp 34200[/color]"
   elseif not protocol.connected() then
-    parts[#parts + 1] = "[color=red]нет связи с Kira[/color]"
+    parts[#parts + 1] = "[color=red]Kira is offline[/color]"
   else
-    parts[#parts + 1] = "[color=green]на связи[/color]"
+    parts[#parts + 1] = "[color=green]online[/color]"
   end
   if tab.state == "thinking" then
-    parts[#parts + 1] = "[color=yellow]думаю…[/color]"
+    parts[#parts + 1] = "[color=yellow]thinking…[/color]"
   elseif tab.note == "no_reply" then
-    parts[#parts + 1] = "[color=orange]Kira не ответила, ответ может прийти в чат[/color]"
+    parts[#parts + 1] = "[color=orange]Kira did not answer here; the answer may be in the chat[/color]"
   end
   return table.concat(parts, "   ")
 end
@@ -171,9 +180,9 @@ local function refresh_feed(player, frame)
     if e.from == "player" then
       local warn = ""
       if not e.acked and now - e.tick > protocol.ACK_TIMEOUT_TICKS then
-        warn = " [color=red](нет связи, вопрос не ушёл)[/color]"
+        warn = " [color=red](not delivered: no connection)[/color]"
       end
-      who = "[font=default-bold][color=0.6,0.8,1]Вы:[/color][/font] " .. e.text .. warn
+      who = "[font=default-bold][color=0.6,0.8,1]You:[/color][/font] " .. e.text .. warn
     else
       who = "[img=kc-kira] [font=default-bold][color=1,0.8,0.4]Kira:[/color][/font] " .. e.text
     end
@@ -182,7 +191,7 @@ local function refresh_feed(player, frame)
     l.style.maximal_width = WIDTH - 40
   end
   if #tab.feed == 0 then
-    pane.add{ type = "label", caption = "[color=gray]Спросите что-нибудь про этот ран.[/color]" }
+    pane.add{ type = "label", caption = "[color=gray]Ask anything about this run.[/color]" }
   end
   pane.scroll_to_bottom()
 end
@@ -194,16 +203,13 @@ local function refresh_marks(player, frame)
   local marks = protocol.chat_marks(v.tab)
   if v.mark > #marks then v.mark = #marks end
   local where = v.mark > 0 and (" (" .. v.mark .. "/" .. #marks .. ")") or ""
-  row.add{ type = "label", caption = "Метки: " .. #marks .. where }
+  row.add{ type = "label", caption = "Marks: " .. #marks .. where }
   local filler = row.add{ type = "empty-widget" }
   filler.style.horizontally_stretchable = true
   local enabled = #marks > 0
-  row.add{ type = "button", name = "kc_mark_prev", caption = "◀", tooltip = "К предыдущей метке",
-           style = "mini_button", enabled = enabled }
-  row.add{ type = "button", name = "kc_mark_next", caption = "▶", tooltip = "К следующей метке",
-           style = "mini_button", enabled = enabled }
-  row.add{ type = "button", name = "kc_mark_clear", caption = "Убрать", tooltip = "Убрать все метки этой вкладки",
-           enabled = enabled }
+  tool(row, "kc_mark_prev", "utility/left_arrow", "Previous mark (map view, Esc to return)", enabled)
+  tool(row, "kc_mark_next", "utility/right_arrow", "Next mark (map view, Esc to return)", enabled)
+  tool(row, "kc_mark_clear", "utility/trash", "Remove all marks of this tab", enabled, "tool_button_red")
 end
 
 function M.refresh(player)
@@ -327,6 +333,45 @@ function M.on_confirmed(e, send)
     if name ~= "" then storage.kc.run_name = name end
     M.refresh_all()
   end
+end
+
+-- ── driving the window from outside (UI iteration loop, tools/ui_dev.py) ──
+
+local function player_of(index)
+  return game.get_player(index or 1)
+end
+
+--- Open the window if it is closed (toggle closes an open one, which a script rarely wants).
+function M.open(index)
+  local player = player_of(index)
+  if not root(player) then M.toggle(player) end
+  return root(player) ~= nil
+end
+
+function M.close(index)
+  local player = player_of(index)
+  if root(player) then M.toggle(player) end
+end
+
+--- Press a button by element name, or a tab by its chat name ("kc_tab:<chat>").
+function M.click(name, send, index)
+  local player = player_of(index)
+  local frame = root(player)
+  local el = frame and find(frame, name) or mod_gui.get_button_flow(player)[name]
+  if not el then return false end
+  M.on_click({ element = el, player_index = player.index }, send)
+  return true
+end
+
+--- Type into a text field and press Enter.
+function M.confirm(name, text, send, index)
+  local player = player_of(index)
+  local frame = root(player)
+  local el = frame and find(frame, name)
+  if not el then return false end
+  el.text = text
+  M.on_confirmed({ element = el, player_index = player.index }, send)
+  return true
 end
 
 return M

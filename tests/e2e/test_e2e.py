@@ -89,8 +89,13 @@ def key(c):
     return (round(c["x"], 2), round(c["y"], 2))
 
 
+def cyrillic(text):
+    return any("\u0400" <= ch <= "\u04ff" for ch in text)
+
+
 def test_chests_without_filter_are_marked(player):
-    text, t_pick, t_all = player.ask_and_wait("Логистика", "найди жёлтые сундуки без фильтра и отметь их на карте")
+    text, t_pick, t_all = player.ask_and_wait(
+        "Logistics", "find yellow chests without a filter and mark them on the map")
     print(f"\nreply ({t_pick:.1f}s to pickup, {t_all:.1f}s total): {text}")
     kc, other = player.kc_tags()
     # The agent may round positions; a mark counts if it is within a tile of the chest.
@@ -98,27 +103,36 @@ def test_chests_without_filter_are_marked(player):
     assert len(kc) == 7, kc
     assert all(any(near(c, t) for t in kc) for c in player.expected), kc
     assert "7" in text
-    assert [o["text"] for o in other] == ["моя база"]
+    assert not cyrillic(text), "asked in English, answered in another language"
+    assert [o["text"] for o in other] == ["my base"]
 
 
 def test_follow_up_uses_chat_context(player):
-    text, _, t_all = player.ask_and_wait("Логистика", "сколько ты их отметил? ответь одним числом")
+    text, _, t_all = player.ask_and_wait("Logistics", "how many did you mark? answer with one number")
     print(f"\nreply ({t_all:.1f}s): {text}")
     assert "7" in text
 
 
 def test_remove_marks(player):
-    text, _, t_all = player.ask_and_wait("Логистика", "убери метки")
+    text, _, t_all = player.ask_and_wait("Logistics", "remove the marks")
     print(f"\nreply ({t_all:.1f}s): {text}")
     kc, other = player.kc_tags()
     assert kc == []
-    assert [o["text"] for o in other] == ["моя база"]
+    assert [o["text"] for o in other] == ["my base"]
 
 
 def test_other_tab_is_a_separate_chat(player):
-    tab = time.strftime("Поезда %H:%M:%S")  # a tab this chat history has never seen
+    tab = time.strftime("Trains %H:%M:%S")  # a tab this chat history has never seen
     text, t_pick, t_all = player.ask_and_wait(
-        tab, "что я спрашивал в этом чате до этого вопроса? если ничего, ответь словом НИЧЕГО")
+        tab, "what did I ask in this chat before this question? if nothing, answer with the single word NOTHING")
     print(f"\nnew tab reply ({t_pick:.1f}s to pickup, {t_all:.1f}s total): {text}")
-    assert "ничего" in text.lower()
-    assert "сундук" not in text.lower()
+    assert "nothing" in text.lower()
+    assert "chest" not in text.lower()
+
+
+def test_answers_in_the_players_language(player):
+    tab = time.strftime("Склад %H:%M:%S")
+    text, _, t_all = player.ask_and_wait(tab, "Сколько всего на карте жёлтых сундуков? Ответь одной короткой фразой.")
+    print(f"\nreply in Russian ({t_all:.1f}s): {text}")
+    assert cyrillic(text), "asked in Russian, answered in another language"
+    assert "20" in text

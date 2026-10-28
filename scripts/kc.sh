@@ -34,9 +34,15 @@ install_files() {
   mkdir -p "$KIRO_HOME/agents" "$KIROCREW_HOME/crons"
   # agent template with absolute paths to this checkout
   sed "s#__ROOT__#$ROOT#g" "$ROOT/agent/factorio-companion.json" > "$KIRO_HOME/agents/factorio-companion.json"
-  cp "$ROOT/dispatcher/factorio_dispatch.py" "$KIROCREW_HOME/crons/factorio_dispatch.py"
   echo "installed agent -> $KIRO_HOME/agents/factorio-companion.json"
-  echo "installed dispatcher -> $KIROCREW_HOME/crons/factorio_dispatch.py"
+  # Copy only on change: a running wake exits when this file's mtime moves (it compiled the
+  # old source), so an identical copy would restart it for nothing.
+  if cmp -s "$ROOT/dispatcher/factorio_dispatch.py" "$KIROCREW_HOME/crons/factorio_dispatch.py"; then
+    echo "dispatcher unchanged -> $KIROCREW_HOME/crons/factorio_dispatch.py"
+  else
+    cp "$ROOT/dispatcher/factorio_dispatch.py" "$KIROCREW_HOME/crons/factorio_dispatch.py"
+    echo "installed dispatcher -> $KIROCREW_HOME/crons/factorio_dispatch.py (running wake restarts)"
+  fi
 }
 
 case "${1:-status}" in

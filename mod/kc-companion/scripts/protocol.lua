@@ -1,4 +1,4 @@
--- Wire protocol between the mod and the bridge (SPEC.md, "Протокол мод ↔ мост").
+-- Wire protocol between the mod and the bridge (SPEC.md, "Mod <-> bridge protocol").
 -- Pure functions over storage/game so FactorioTest can exercise them without UDP.
 
 local M = {}
@@ -24,7 +24,7 @@ function M.init_storage()
     local seed = game.surfaces[1] and game.surfaces[1].map_gen_settings.seed or 0
     kc.run_id = string.format("%08x-%x", seed, game.tick)
   end
-  kc.run_name = kc.run_name or "Ран 1"
+  kc.run_name = kc.run_name or "Run 1"
   kc.tabs = kc.tabs or {} -- chat -> {feed = {...}, state = "idle"|"thinking", note = nil}
   kc.tab_order = kc.tab_order or {}
   kc.marks = kc.marks or {} -- chat -> tag_number -> {tag = LuaCustomChartTag, surface, position, text}
@@ -125,7 +125,7 @@ local function query_env(surface_name)
     pairs = pairs, ipairs = ipairs, next = next, select = select, type = type,
     tostring = tostring, tonumber = tonumber, pcall = pcall, error = error,
     table = table, string = string, math = math, table_size = table_size,
-    serpent = serpent, log = log,
+    serpent = serpent, log = log, remote = remote,
   }
 end
 

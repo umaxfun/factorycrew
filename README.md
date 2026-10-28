@@ -42,7 +42,7 @@ The HTTP API has no authentication: whoever reaches the port can run Lua in the 
 
 ## Tests
 
-Three levels (SPEC.md, "Тесты"). Only level 3 is end to end.
+Three levels (SPEC.md, "Tests"). Only level 3 is end to end.
 
 | Level | What | Command | Factorio |
 |---|---|---|---|
@@ -52,7 +52,20 @@ Three levels (SPEC.md, "Тесты"). Only level 3 is end to end.
 
 Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet the mod receives ([forum report](https://forums.factorio.com/viewtopic.php?t=134790), fixed in 2.1). Each image is built on first use (~1 min); runs take ~10 s and ~20 s. Logs of the last level 2 run: `.test-data/integration/`.
 
-Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model: ~35 s and 4 agent turns per run.
+Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model, 5 agent turns per run, and checks that Kira answers in the player's language (one question in Russian).
+
+## UI loop (screenshots of the real window)
+
+A real 2.0.77 client under `umaxfun`, from the player's copy `/Users/Shared/factorio.app`, with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with the game under `gamer`:
+
+```bash
+tools/ui_dev.py start                                   # deploy mod, start bridge + game, wait until online
+tools/ui_dev.py shot window open 'reply:General=Hello'  # drive the window, then screenshot with GUI
+tools/ui_dev.py restart                                 # after a mod change
+tools/ui_dev.py stop
+```
+
+Screenshots land in `~/.factorycrew-dev/factorio/script-output/kc/`. The full step list is in the script's docstring.
 
 ## Installing the mod for the player (account `gamer`)
 

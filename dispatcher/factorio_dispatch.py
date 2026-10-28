@@ -1,7 +1,7 @@
 """Factorio dispatcher: a script-cron of the factorycrew Kiro Crew gateway.
 
 Takes questions the game sent to the bridge and puts each one into its chat
-`Factorio/<run>/<tab>` (SPEC.md, "Диспетчер"). One wake runs a long-poll loop for
+`Factorio/<run>/<tab>` (SPEC.md, "Dispatcher"). One wake runs a long-poll loop for
 almost the whole script timeout (Kiro Crew caps it at 3600 s), then returns; the
 cron fires it again within `every` seconds. Questions that arrive in between wait
 in the bridge's queue.
@@ -14,7 +14,7 @@ update that breaks them fails with a clear message:
   * POST /api/chat/folders with parent_id: the public create_session_folder() has no
     parent (github.com/kirodotdev/KiroCrew/issues/25210);
   * POST /api/chat/slots with a title separate from the key: open_session() sends one
-    string as both, and slot keys are global, so two runs' "Логистика" would share a slot.
+    string as both, and slot keys are global, so two runs' "Logistics" would share a slot.
 """
 from __future__ import annotations
 
@@ -157,8 +157,8 @@ def open_chat(ctx, cfg, st, ask):
 
 
 def render(ask):
-    return (f"[Factorio · ран «{ask.get('run_name') or ask['run_id']}» · вкладка «{ask['chat']}» · "
-            f"тик {ask.get('tick')}]\n{ask['text']}")
+    return (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
+            f"tick {ask.get('tick')}]\n{ask['text']}")
 
 
 # ── loop ─────────────────────────────────────────────────────────────────
@@ -175,10 +175,18 @@ def handle(ctx, cfg, st, ask):
         if n < cfg["max_attempts"]:
             return False  # not confirmed: the lease puts it back
         bridge(cfg, "POST", "/reply", {
-            "chat": ask["chat"], "text": f"Не получилось передать вопрос в Kiro Crew: {str(exc)[:200]}"})
+            "chat": ask["chat"], "text": f"Could not pass the question to Kiro Crew: {str(exc)[:200]}"})
     st["attempts"].pop(ask["id"], None)
     bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
     return True
+
+
+def source_stamp():
+    """mtime of this script; a wake compiles it once, so a newer install needs a new wake."""
+    try:
+        return os.stat(__file__).st_mtime_ns
+    except (NameError, OSError):
+        return None
 
 
 def run(ctx):
@@ -190,11 +198,17 @@ def run(ctx):
     deadline = time.monotonic() + float(cfg["run_seconds"])
     handled = 0
     parent = os.getppid()
+    stamp = source_stamp()
     while time.monotonic() < deadline:
         if os.getppid() != parent:
             # The gateway that started this wake is gone (stopped or restarted) and does not
             # reap script children: exit, or two dispatchers end up sharing the queue.
             print("gateway gone, dispatcher exiting")
+            return
+        if source_stamp() != stamp:
+            # scripts/kc.sh install put a new version in place: without this the old code
+            # keeps serving for up to run_seconds (it once sent a stale chat header).
+            print("dispatcher script updated, exiting so the next wake runs the new code")
             return
         wait = max(0, min(cfg["poll_wait"], int(deadline - time.monotonic()) - 1))
         try:

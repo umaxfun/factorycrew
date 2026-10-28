@@ -96,6 +96,17 @@ remote.add_interface("kc", {
     storage.kc.run_name = name
     gui.refresh_all()
   end,
+  -- window, for the UI iteration loop (tools/ui_dev.py) and tests
+  ui_open = function(index) return gui.open(index) end,
+  ui_close = function(index) gui.close(index) end,
+  ui_click = function(name, index) return gui.click(name, send, index) end,
+  ui_confirm = function(name, text, index) return gui.confirm(name, text, send, index) end,
+  -- a bridge message delivered locally (status, reply, ...), for UI work without a bridge
+  ui_inject = function(msg)
+    for _, r in ipairs(protocol.handle(msg)) do send(r) end
+    gui.refresh_all()
+    return true
+  end,
 })
 
 if script.active_mods["factorio-test"] then

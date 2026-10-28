@@ -19,14 +19,14 @@ end)
 
 describe("mark / unmark / list_marks", function()
   it("places tags and remembers them per chat", function()
-    local r = protocol.mark("Логистика", {
-      { surface = "nauvis", position = { x = 10, y = 20 }, text = "без фильтра" },
-      { position = { 30, 40 }, text = "ещё" },
+    local r = protocol.mark("Logistics", {
+      { surface = "nauvis", position = { x = 10, y = 20 }, text = "no filter" },
+      { position = { 30, 40 }, text = "another" },
     })
     assert(#r.ids == 2 and #r.failed == 0)
-    local list = protocol.list_marks("Логистика")
+    local list = protocol.list_marks("Logistics")
     assert(#list == 2)
-    assert(list[1].text == "[KC] без фильтра" and list[1].surface == "nauvis")
+    assert(list[1].text == "[KC] no filter" and list[1].surface == "nauvis")
     assert(kc_tags() == 2)
   end)
 
@@ -73,31 +73,31 @@ end)
 
 describe("tabs, ask, ack, reply, status", function()
   it("records an ask and builds the bridge message", function()
-    local msg = protocol.ask("Поезда", "где пробка?")
-    assert(msg.type == "ask" and msg.chat == "Поезда" and msg.run_id == storage.kc.run_id)
-    local feed = storage.kc.tabs["Поезда"].feed
-    assert(feed[#feed].text == "где пробка?" and feed[#feed].acked == false)
+    local msg = protocol.ask("Trains", "where is the jam?")
+    assert(msg.type == "ask" and msg.chat == "Trains" and msg.run_id == storage.kc.run_id)
+    local feed = storage.kc.tabs["Trains"].feed
+    assert(feed[#feed].text == "where is the jam?" and feed[#feed].acked == false)
   end)
 
   it("marks the ask acknowledged on ack", function()
-    local msg = protocol.ask("Поезда", "q")
+    local msg = protocol.ask("Trains", "q")
     protocol.handle({ type = "ack", id = msg.id })
-    local feed = storage.kc.tabs["Поезда"].feed
+    local feed = storage.kc.tabs["Trains"].feed
     assert(feed[#feed].acked == true)
   end)
 
   it("appends a reply and clears thinking", function()
-    protocol.handle({ type = "status", chat = "Поезда", state = "thinking", run_id = storage.kc.run_id })
-    assert(storage.kc.tabs["Поезда"].state == "thinking")
-    protocol.handle({ type = "reply", chat = "Поезда", text = "на развязке", id = "r1", run_id = storage.kc.run_id })
-    local t = storage.kc.tabs["Поезда"]
-    assert(t.state == "idle" and t.feed[#t.feed].from == "kira" and t.feed[#t.feed].text == "на развязке")
+    protocol.handle({ type = "status", chat = "Trains", state = "thinking", run_id = storage.kc.run_id })
+    assert(storage.kc.tabs["Trains"].state == "thinking")
+    protocol.handle({ type = "reply", chat = "Trains", text = "at the junction", id = "r1", run_id = storage.kc.run_id })
+    local t = storage.kc.tabs["Trains"]
+    assert(t.state == "idle" and t.feed[#t.feed].from == "kira" and t.feed[#t.feed].text == "at the junction")
   end)
 
   it("ignores a reply meant for another run", function()
-    local before = #protocol.tab("Поезда").feed
-    protocol.handle({ type = "reply", chat = "Поезда", text = "чужой", run_id = "other-run" })
-    assert(#protocol.tab("Поезда").feed == before)
+    local before = #protocol.tab("Trains").feed
+    protocol.handle({ type = "reply", chat = "Trains", text = "from another run", run_id = "other-run" })
+    assert(#protocol.tab("Trains").feed == before)
   end)
 
   it("keeps the feed at FEED_LIMIT", function()
@@ -118,7 +118,7 @@ end)
 
 describe("framing with non-ASCII text", function()
   it("does not split UTF-8 sequences across parts", function()
-    local text = string.rep("ж", 6000) -- 12000 bytes, odd chunk boundaries would cut a letter
+    local text = string.rep("ж", 6000) -- Cyrillic on purpose: 12000 bytes, odd chunk boundaries would cut a letter
     local packets = protocol.encode({ type = "reply", id = "u8", text = text })
     assert(#packets > 1)
     local msg

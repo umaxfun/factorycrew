@@ -1,11 +1,11 @@
-"""Level 2: mod + bridge + MCP integration (SPEC.md, "Тесты", уровень 2). Not e2e: Kiro Crew is not in the loop."""
+"""Level 2: mod + bridge + MCP integration (SPEC.md, "Tests", level 2). Not e2e: Kiro Crew is not in the loop."""
 from __future__ import annotations
 
 import time
 
 from conftest import ROOT, http, wait_until
 
-CHAT = "Логистика"
+CHAT = "Logistics"
 
 SETUP_CHESTS = """
 local s = game.surfaces[1]
@@ -22,7 +22,7 @@ for i = 1, 20 do
   if i % 3 ~= 1 then e.storage_filter = "iron-plate" end -- i = 1,4,7,10,13,16,19 stay unfiltered
   made[#made + 1] = {x = e.position.x, y = e.position.y, filtered = e.storage_filter ~= nil}
 end
-game.forces.player.add_chart_tag(s, {position = {100, 100}, text = "моя база"})
+game.forces.player.add_chart_tag(s, {position = {100, 100}, text = "my base"})
 return made
 """
 
@@ -57,9 +57,9 @@ def test_handshake(stack):
 
 
 def test_ask_reaches_dispatcher_with_ack_and_thinking(stack):
-    ask_id = stack.ask(CHAT, "найди жёлтые сундуки без фильтра")
+    ask_id = stack.ask(CHAT, "find yellow chests without a filter")
     asks = http("GET", "/asks?wait=10")["asks"]
-    assert [(a["id"], a["chat"], a["text"]) for a in asks] == [(ask_id, CHAT, "найди жёлтые сундуки без фильтра")]
+    assert [(a["id"], a["chat"], a["text"]) for a in asks] == [(ask_id, CHAT, "find yellow chests without a filter")]
     assert asks[0]["run_id"] == stack.mod_state()["run_id"]
     assert http("POST", "/asks/done", {"ids": [ask_id]})["confirmed"] == 1
 
@@ -81,12 +81,12 @@ def test_unfiltered_chests_marked_and_unmarked(stack, mcp):
     assert {key(p) for p in found["data"]} == expected
 
     marked = mcp.tool("factorio_mark", chat=CHAT,
-                      marks=[{"surface": "nauvis", "position": p, "text": "сундук без фильтра"} for p in found["data"]])
+                      marks=[{"surface": "nauvis", "position": p, "text": "chest without filter"} for p in found["data"]])
     assert marked["ok"] and len(marked["data"]["ids"]) == 7 and marked["data"]["failed"] == [], marked
 
     tags = mcp.tool("factorio_query", lua=TAGS)["data"]
     assert {key(p) for p in tags["kc"]} == expected
-    assert all(p["text"] == "[KC] сундук без фильтра" for p in tags["kc"])
+    assert all(p["text"] == "[KC] chest without filter" for p in tags["kc"])
 
     listed = mcp.tool("factorio_list_marks", chat=CHAT)
     assert sorted(m["id"] for m in listed["data"]) == sorted(marked["data"]["ids"])
@@ -95,11 +95,11 @@ def test_unfiltered_chests_marked_and_unmarked(stack, mcp):
     assert removed["ok"] and removed["data"]["removed"] == 7
     tags = mcp.tool("factorio_query", lua=TAGS)["data"]
     assert tags.get("kc") in (None, [], {})  # table_to_json renders an empty table as {}
-    assert [p["text"] for p in tags["other"]] == ["моя база"]
+    assert [p["text"] for p in tags["other"]] == ["my base"]
 
-    sent = mcp.tool("factorio_reply", chat=CHAT, text="7 сундуков без фильтра, отметил на карте.")
+    sent = mcp.tool("factorio_reply", chat=CHAT, text="7 chests without a filter, marked on the map.")
     assert sent["ok"] and sent["delivered"]
-    wait_until(lambda: stack.tab(CHAT)["feed"][-1]["text"] == "7 сундуков без фильтра, отметил на карте."
+    wait_until(lambda: stack.tab(CHAT)["feed"][-1]["text"] == "7 chests without a filter, marked on the map."
                and stack.tab(CHAT)["state"] == "idle", what="reply in the tab")
 
 
@@ -115,7 +115,7 @@ def test_mark_failure_is_reported(mcp):
 def test_query_errors_and_large_results(mcp):
     r = mcp.tool("factorio_query", lua="return nosuch.x")
     assert not r["ok"] and r["error"] == "runtime_error"
-    # ~40 KB result: chunked game -> bridge, with Cyrillic so slices must not split UTF-8.
+    # ~40 KB result: chunked game -> bridge, Cyrillic on purpose so slices must not split UTF-8.
     r = mcp.tool("factorio_query", lua="local t = {} for i = 1, 2000 do t[i] = 'ящик-' .. i end return t")
     assert r["ok"] and len(r["data"]) == 2000 and r["data"][-1] == "ящик-2000"
     r = mcp.tool("factorio_query", lua="local t = {} for i = 1, 20000 do t[i] = 'xxxxx' end return t")
@@ -123,7 +123,7 @@ def test_query_errors_and_large_results(mcp):
 
 
 def test_large_reply_reaches_the_tab(stack, mcp):
-    text = "длинный ответ " * 1500  # ~40 KB of UTF-8, chunked bridge -> game
+    text = "длинный ответ " * 1500  # Cyrillic on purpose: ~40 KB of UTF-8, chunked bridge -> game
     assert mcp.tool("factorio_reply", chat="big", text=text)["delivered"]
     wait_until(lambda: (stack.tab("big") or {}).get("feed", [{}])[-1].get("text") == text, what="large reply")
 
@@ -142,18 +142,18 @@ def test_bridge_packets_fit_the_games_initial_buffer():
 
 
 def test_idle_after_timeout_without_reply(stack):
-    ask_id = stack.ask("Поезда", "где пробка?")
+    ask_id = stack.ask("Trains", "where is the jam?")
     assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
     http("POST", "/asks/done", {"ids": [ask_id]})  # handed to the chat; the agent then never replies
-    wait_until(lambda: stack.tab("Поезда")["state"] == "thinking", what="thinking")
-    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Поезда")),
+    wait_until(lambda: stack.tab("Trains")["state"] == "thinking", what="thinking")
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Trains")),
                    timeout=10, what="idle after timeout")
     assert t["note"] == "no_reply"
 
 
 def test_asks_wait_while_dispatcher_is_away(stack):
-    a = stack.ask(CHAT, "первый")
-    b = stack.ask("Энергия", "второй")
+    a = stack.ask(CHAT, "first")
+    b = stack.ask("Power", "second")
     wait_until(lambda: http("GET", "/health")["queued_asks"] == 2, what="two queued asks")
     # a dispatcher takes them and dies before confirming: they come back after the lease
     first = http("GET", "/asks?wait=5&lease=1")["asks"]
@@ -171,13 +171,13 @@ def test_game_offline_and_reply_queue(stack, mcp):
         wait_until(lambda: not http("GET", "/health")["game_online"], timeout=10, what="bridge sees the game offline")
         r = mcp.tool("factorio_query", lua="return 1")
         assert r["error"] == "game_offline"
-        q = mcp.tool("factorio_reply", chat=CHAT, text="ответ, пока игры нет")
+        q = mcp.tool("factorio_reply", chat=CHAT, text="an answer while the game is away")
         assert q["ok"] and q["queued"] and not q["delivered"]
         assert http("GET", "/health")["outbox"] >= 1
     finally:
         stack.resume_game()
     stack.wait_online()
-    wait_until(lambda: stack.tab(CHAT)["feed"][-1]["text"] == "ответ, пока игры нет", what="queued reply delivered")
+    wait_until(lambda: stack.tab(CHAT)["feed"][-1]["text"] == "an answer while the game is away", what="queued reply delivered")
     assert http("GET", "/health")["outbox"] == 0
 
 

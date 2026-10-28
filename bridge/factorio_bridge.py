@@ -5,7 +5,7 @@ Stdlib only. One asyncio loop holds:
   * a UDP socket the game sends to (BRIDGE_PORT, mod constant 34199);
   * an HTTP API for the dispatcher (long-poll asks) and the MCP server (query/mark/unmark/reply).
 
-Protocol: SPEC.md, "Протокол мод ↔ мост".
+Protocol: SPEC.md, "Mod <-> bridge protocol".
 """
 from __future__ import annotations
 

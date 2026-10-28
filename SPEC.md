@@ -1,254 +1,265 @@
-# Factorio ↔ Kiro Crew: спека первой версии
+# Factorio ↔ Kiro Crew: v1 spec
 
-## Зачем
+## Why
 
-Во время игры задавать Kira вопросы про текущий ран, не выходя из игры. Пример: «найди жёлтые сундуки без фильтра, из-за них утекают лишние предметы». Агент сам смотрит живое состояние сейва, отвечает текстом в окне игры и ставит метки на карте. Когда метки больше не нужны, они убираются из чата или кнопкой.
+Ask Kira about the current run while playing, without leaving the game. Example: "find yellow chests without a filter, extra items leak into them". The agent looks at the live state of the save itself, answers with text in the in-game window and puts marks on the map. When the marks are no longer needed, they are removed from the chat or with a button.
 
-У игрока несколько тематических чатов («Логистика», «Поезда», «Энергия»). Каждая вкладка в игре соответствует отдельному чату Kiro Crew. Чаты разложены в сайдбаре по ранам:
+The player has several topic chats ("Logistics", "Trains", "Power"). Each in-game tab is a separate Kiro Crew chat. Chats are grouped in the sidebar by run:
 
 ```
 Factorio/
-  Мегабаза-2/
-    Логистика
-    Поезда
-  Space Age ран/
-    Логистика
+  Megabase-2/
+    Logistics
+    Trains
+  Space Age run/
+    Logistics
 ```
 
-Поэтому у разговора есть память («а теперь покажи следующий»), его можно продолжить из дашборда, а «Логистика» из разных ранов не смешивается.
+So a conversation has memory ("now show the next one"), it can be continued from the dashboard, and "Logistics" of different runs never mix.
 
-## Что входит в v1
+## Language
 
-Задавать вопросы из окна в игре, во вкладках-чатах.
+Everything in the repo and in the game is in English: docs, code, the window, the agent rules. Kira answers in the language the player writes in; the e2e checks this with an English and a Russian question.
 
-Агент читает состояние игры Lua-запросами, ставит метки на карте и убирает их, отвечает в окно.
+## In v1
 
-Метки можно убрать тремя способами: попросить агента («убери метки»), нажать кнопку во вкладке, удалить вручную на карте.
+Ask questions from an in-game window, in chat tabs.
 
-Переход камеры к меткам кнопками «к следующей» и «к предыдущей».
+The agent reads the game state with Lua queries, puts marks on the map and removes them, answers into the window.
 
-Папка на каждый ран, чат на каждую вкладку внутри неё.
+Marks can be removed three ways: ask the agent ("remove the marks"), press the button in the tab, delete them by hand on the map.
 
-Автотесты на трёх уровнях, описанных ниже: логика мода, интеграция мод + мост + MCP и e2e через Kiro Crew.
+Jump the camera between marks with "next" and "previous" buttons.
 
-## Что не входит в v1
+One folder per run, one chat per tab inside it.
 
-Изменения мира агентом: поставить фильтр, переставить, удалить объект. Это следующая версия, с кнопкой «применить» в игре.
+Automated tests on the three levels below: mod logic, mod + bridge + MCP integration, and e2e through Kiro Crew.
 
-Мультиплеер. В v1 только одиночная игра.
+## Not in v1
 
-Публикация мода на портале.
+The agent changing the world: setting a filter, moving or deleting an entity. That is the next version, with an "apply" button in the game.
 
-Подключение уже существующих чатов Kiro Crew. Чаты Factorio создаёт сам диспетчер, см. ограничение `not_creator` ниже.
+Multiplayer. v1 is single player only.
 
-## Где что запущено
+Publishing the mod on the portal.
 
-Всё на одном Mac. Игра идёт под аккаунтом `gamer`, мост, MCP-сервер, диспетчер и Kiro Crew работают под `umaxfun`. Loopback (127.0.0.1) общий для всех аккаунтов одного Mac, поэтому UDP между игрой и мостом ходит без сети. Пока игрок под `gamer`, процессы `umaxfun` продолжают работать в фоне через быструю смену пользователей. Выходить из `umaxfun` нельзя, можно только переключаться.
+Attaching existing Kiro Crew chats. Factorio chats are created by the dispatcher itself, see the `not_creator` restriction below.
 
-Kiro Crew для Factorio — отдельный гейтвей, а не основной: `scripts/kc.sh`, порт 5477, данные в `~/.kirocrew-factorio`. Основной гейтвей (5476, `~/.kiro/crew`, `~/.kiro/agents`) он не трогает: у него свой `KIROCREW_HOME` и свой домашний каталог kiro-cli `KIRO_HOME=$KIROCREW_HOME/kiro`. Это раскладка, которую Kiro Crew считает личным каталогом агентов экземпляра (`isolated_agents_dir`), так же устроены его изолированные pod'ы. Поэтому шаблон агента, диспетчер, cron и `agent.session_control` живут в этом гейтвее, и ставит их `scripts/kc.sh install`. Гейтвей запускается с чистым окружением: переменные запускающей сессии (её `TMPDIR`, scratch) иначе протекают внутрь, и песочница cron отказывается запускать скрипт. Модель эмбеддингов этому экземпляру не нужна (`KIROCREW_SKIP_MODEL_DOWNLOAD=1`), поиск по памяти идёт по ключевым словам.
+## What runs where
 
-`/Users/gamer/Library` закрыта для `umaxfun` (`drwx------`). Поэтому мод лежит в общей папке `/Users/Shared/kc-companion/`, а в папке модов игры под `gamer` на неё стоит симлинк. Правки мода делаются в `/Users/Shared`, в игре достаточно перезагрузить сейв.
+Everything is on one Mac. The game runs under the `gamer` account; the bridge, MCP server, dispatcher and Kiro Crew run under `umaxfun`. Loopback (127.0.0.1) is shared by all accounts of one Mac, so UDP between the game and the bridge needs no network. While the player is in `gamer`, the `umaxfun` processes keep running in the background through fast user switching. `umaxfun` must not log out, only switch.
 
-## Как устроено
+Kiro Crew for Factorio is a separate gateway, not the main one: `scripts/kc.sh`, port 5477, data in `~/.kirocrew-factorio`. It does not touch the main gateway (5476, `~/.kiro/crew`, `~/.kiro/agents`): it has its own `KIROCREW_HOME` and its own kiro-cli home `KIRO_HOME=$KIROCREW_HOME/kiro`. Kiro Crew treats that layout as the instance's private agent directory (`isolated_agents_dir`), the same way its isolated pods work. So the agent template, dispatcher, cron and `agent.session_control` live in this gateway, and `scripts/kc.sh install` puts them there. The gateway starts with a clean environment: otherwise the launching session's variables (its `TMPDIR`, scratch) leak in and the cron sandbox refuses to run the script. This instance does not need the embedding model (`KIROCREW_SKIP_MODEL_DOWNLOAD=1`); memory search falls back to keywords.
 
-Цепочка такая:
+`/Users/gamer/Library` is closed to `umaxfun` (`drwx------`). So the mod lives in the shared folder `/Users/Shared/kc-companion/`, and the game's mods folder under `gamer` has a symlink to it. Mod changes are made in `/Users/Shared`; in the game, restarting is enough (a reload of the save for `control.lua`, a full restart for graphics and prototypes).
 
-```
-окно в игре ──send_udp──▶ мост ◀──long-poll── диспетчер (script-cron в KC) ──send_to_session──▶ чат Factorio/<ран>/<вкладка>
-     ▲                     ▲                                                                        │
-     └──────UDP────────────┴──────HTTP 127.0.0.1──── MCP-сервер factorio ◀── вызовы инструментов ────┘
-```
+## How it works
 
-Компонентов четыре.
-
-**Мод `kc-companion`** (Lua, Factorio 2.x). Отвечает за окно с вкладками, выполнение запросов, метки и приём и отправку UDP. В `on_nth_tick(10)` вызывает `helpers.recv_udp()`, а данные получает в событии `on_udp_packet_received`. Запросы выполняет через `load(текст, имя, "t", env)`: текстовые чанки в Factorio разрешены, запрещены только бинарные.
-
-**Мост** (Python, asyncio, отдельный фоновый процесс под `umaxfun`). Слушает UDP от игры и держит HTTP-API на 127.0.0.1 для диспетчера и MCP-сервера. Сопоставляет запросы с ответами по `id`, режет большие ответы на куски и собирает их обратно. Держит две очереди: `reply` на время, пока игра недоступна, и `ask` на время, пока диспетчер не забрал вопрос (например, лежит между перезапусками).
-
-**MCP-сервер `factorio`** (stdio, Python). Даёт агенту инструменты и ходит в мост по HTTP.
-
-**Диспетчер** (script-cron гейтвея factorycrew, `~/.kirocrew-factorio/crons/factorio_dispatch.py:run`, исходник `dispatcher/factorio_dispatch.py`). Kiro Crew ограничивает подпроцесс скрипта 3600 секундами, поэтому один запуск крутит long-poll 3500 секунд и выходит, а cron с `every=30` (Kiro Crew округлил до минуты), `timeout=3600`, `timeout_secs=3610` поднимает следующий; одновременно идёт только один. Вопросы в промежутке ждут в очереди моста. `ctx.message` — необязательный JSON, переопределяющий настройки (адрес моста, длительность запуска). Cron нельзя пересоздавать без нужды: открытые им чаты принимают сообщения только от того же задания (`not_creator`). Остановленный гейтвей не убивает дочерний скрипт, поэтому диспетчер сам выходит, когда его родитель-гейтвей сменился, иначе после перезапуска гейтвея два диспетчера делят одну очередь (так и было один раз).
-
-Диспетчер делает long-poll к мосту на новые вопросы (`GET /asks?wait=25`). Мост выдаёт вопрос в аренду: если диспетчер не подтвердил его (`POST /asks/done`) за 120 секунд, вопрос возвращается в очередь. Подтверждать нужно после `send_to_session`, тогда вопрос не теряется, если диспетчер упал посередине. Для каждого вопроса:
-1. Находит или создаёт папку `Factorio`, а внутри неё папку рана. Поиск идёт через `ctx.list_session_folders()`, создание только если папки нет. Публичный `ctx.create_session_folder(name)` пока умеет только верхний уровень, поэтому вложенную папку диспетчер создаёт приватным `ctx._post("/api/chat/folders", {"name": ..., "parent_id": ...})`. Этот вызов закрыт обёрткой с понятной ошибкой, на случай если обновление Kiro Crew его сломает. Просьба добавить `parent_id` в публичный метод: [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210). Когда её сделают, переключаемся.
-2. Открывает чат через приватный `ctx._post("/api/chat/slots", {name, title, folder_id, agent="factorio-companion"})` и при первом открытии вызывает `ctx.set_session_mode(slot, "trust_reads")`. Публичный `open_session` не подходит: он шлёт одну строку и как ключ, и как заголовок, а ключ сессии глобальный, так что «Логистика» двух ранов попала бы в один чат. Ключ — `factorio-<хеш run_id и вкладки>`, заголовок — имя вкладки.
-3. Шлёт сообщение: `ctx.send_to_session(slot, сообщение)`. Если что-то из этого упало, вопрос не подтверждается и возвращается по аренде (60 с). После третьей неудачи в вкладку уходит «Не получилось передать вопрос в Kiro Crew: <причина>», и вопрос снимается.
-
-Соответствие «`run_id` + вкладка → slot» и «`run_id` → папка» он хранит в `~/.kirocrew-factorio/factorio/dispatch-state.json`. Ключ — `run_id`, а не название. Переименование рана после создания папки пока не переносится на папку (открытый вопрос). Если два разных рана названы одинаково, у второй папки к имени добавляется хвост `run_id`.
-
-**Агент `factorio-companion`** (шаблон агента Kiro Crew, `agent/factorio-companion.json`, правила в `agent/factorio-companion.md`). Инструменты только `@factorio`, все без подтверждения; оболочки и файлов у агента нет. `scripts/kc.sh install` кладёт шаблон в `~/.kirocrew-factorio/kiro/agents/` с абсолютными путями к этому репозиторию. Проверено на e2e: на вопрос, ответ на который очевиден («НИЧЕГО»), модель один раз ответила текстом в чат и не вызвала `factorio_reply`, игрок ничего не увидел. После того как в промпте прямо сказано, что игрок видит только `factorio_reply`, это не повторилось. Страховка на такой случай — «думаю…» гаснет через 90 секунд с «Kira не ответила».
-
-## Что такое «ран»
-
-Lua API Factorio не отдаёт имя файла сейва: в `runtime-api.json` версии 2.1.24 нет ни такого поля, ни события сохранения. Есть только `script.level` (`freeplay`/`base` для обычной игры), он ран не различает. Поэтому ран определяет сам мод:
-- в `on_init` (новая игра или первое подключение мода к старому сейву) генерируется `run_id` и кладётся в `storage`. Он переживает сохранение и загрузку;
-- название рана игрок вводит в окне мода один раз, по умолчанию «Ран 1». Его можно поменять позже;
-- «Сохранить как» в новый файл оставляет тот же ран: игра та же. Новая карта даёт новый ран.
-
-## Протокол мод ↔ мост
-
-Каждый UDP-пакет содержит одну JSON-строку вида `{"v":1,"id":"…","type":"…",...}`. Длинное сообщение режется на куски с полями `part` и `parts`, получатель собирает их по `id`. Мост шлёт игре пакеты не больше 4000 байт: приёмный буфер игры начинается с 4 КБ и удваивается, только когда уже выбросил пакет, который не влез (измерено на 2.1.23: пакет в 8000 байт потерян, следом 8150 дошёл). Мод режет по 4096 байт исходного JSON, не разрывая UTF-8; его пакеты доходят до ~8 КБ, мосту это не мешает. Мост слушает фиксированный порт (по умолчанию 34199), игра слушает порт из `--enable-lua-udp`, HTTP-API моста на 127.0.0.1:34198. Авторизации у HTTP-API нет: кто достучится до порта, тот выполнит Lua в игре. Поэтому мост слушает только loopback.
-
-Игра отправляет мосту:
-- `hello` при загрузке и `heartbeat` раз в 5 секунд, с полями `run_id`, `run_name`, `tick` и списком вкладок;
-- `ask`: поля `chat` и `text`, то есть вопрос игрока;
-- `result`: ответ на `query`, `mark` или `unmark`, с тем же `id`, полями `ok`, `data` или `error`.
-
-Мост отправляет игре:
-- `pong`: ответ на `hello` и `heartbeat`. По нему окно знает, что связь есть;
-- `ack`: поле `id`, подтверждение, что `ask` принят и поставлен в очередь;
-- `query`: поля `lua` и `surface?`. Выполнить запрос и вернуть результат;
-- `mark`: поля `chat` и `marks: [{surface, position, text, icon?}]`;
-- `unmark`: поле `chat` и одно из `ids`, `all_in_chat` или `all`;
-- `list_marks`: поле `chat?`, вернуть живые метки;
-- `reply`: поля `chat` и `text`, ответ агента в вкладку;
-- `status`: поля `chat` и `state` (`thinking` или `idle`), для индикатора «думаю…».
-
-Кто ставит статус: `thinking` мост шлёт, когда диспетчер забрал вопрос, `idle` — после `reply` в эту вкладку. Если `reply` нет 90 секунд, мост шлёт `idle` сам, а вкладка показывает «Kira не ответила, ответ может прийти в чат».
-
-Если от игры нет `heartbeat` дольше 15 секунд, мост считает её недоступной. Запросы от MCP в это время сразу возвращают ошибку `game_offline`, а `reply` копятся в очереди и доставляются после следующего `hello`.
-
-Если от моста нет `pong` дольше 15 секунд, окно показывает «нет связи с Kira» постоянно, не дожидаясь вопроса. Если на `ask` нет `ack` в течение 3 секунд, вкладка показывает то же самое у этого сообщения. Когда `pong` возвращается, индикатор гаснет сам.
-
-Игра на паузе не принимает пакеты, потому что тики не идут. Это нормально: ответ придёт, когда игра продолжится. Открытое окно мода игру не останавливает.
-
-## Инструменты агента (MCP `factorio`)
-
-`factorio_query(lua, surface?)`. Выполняет Lua-тело на сейве и возвращает JSON (то, что вернул `return`). Нужен для любых вопросов о состоянии игры. В окружении запроса доступны `game`, `helpers`, `defines`, `surface` (текущая поверхность игрока или переданная) и `player`. Размер результата ограничен 64 КБ. Если результат больше, возвращается ошибка `result_too_large` с подсказкой сузить запрос. Запрос выполняется внутри игрового тика: пока он считает, игра стоит. Лимита инструкций в Lua Factorio нет, поэтому бесконечный цикл повесит игру. В ответе инструмента есть `ms`, чтобы агент видел, во что обходятся его запросы. Это круговое время через мост вместе с ожиданием опроса (до ~170 мс): Lua в Factorio не даёт прочитать время выполнения числом. Пустая таблица Lua приходит из игры как `{}`. В полях-списках (`ids`, `failed`, список меток) мост превращает её в `[]`, а в произвольном результате запроса агент должен ждать и то, и другое.
-
-`factorio_mark(chat, marks)`. Ставит метки на карте и возвращает `ids` поставленных и список не поставленных с причиной (`add_chart_tag` вернул `nil`, например позиция за пределами карты или несуществующая поверхность). Неразведанность причиной не является: тег ставится и на неразведанный чанк (проверено на 2.1.23 и тестом уровня 1 на 2.0.77). Метка — это chart tag с префиксом `[KC]` в тексте. Мод помнит каждую метку в `storage.kc.marks[chat][id]`.
-
-`factorio_unmark(chat, ids? | all_in_chat? | all?)`. Убирает метки и возвращает, сколько убрано. Убирает только метки, которые поставил мод, теги игрока не трогает.
-
-`factorio_list_marks(chat?)`. Список живых меток с позициями и текстом. Нужен для вопросов вроде «что ты там понаставил» и «убери те, что на Наувисе».
-
-`factorio_reply(chat, text)`. Показывает ответ во вкладке. Если в чат пришёл вопрос из игры, агент обязан закончить ход этим вызовом.
-
-Запись в мир в v1 не ограничена технически, потому что Lua-запрос может вызвать что угодно. Чтение без изменений задано правилом агента, а не песочницей. Это осознанный риск v1: игра одиночная, сейв ваш, а каждый запрос виден в чате. Песочница с read-only прокси может появиться в v2 вместе с записью через подтверждение.
-
-## Правила агента (steering `factorio-companion`)
-
-Отвечать коротко, в несколько строк: окно в игре маленькое. Подробности, если нужны, писать в чат, а в игре давать краткую выжимку.
-
-Запросы писать узкими и сразу агрегировать на стороне Lua: считать, группировать, возвращать координаты. Дамп сущностей не возвращать. Запрос замораживает игру на время выполнения: искать по области или по фильтру, а не перебором всей карты. Если запрос шёл дольше 100 мс, следующий делать уже.
-
-Если ответ указывает на места на карте, ставить метки. Перед новой серией меток по той же теме убирать старые метки этого чата, если игрок не просил их оставить. Если часть мест не отмечена, сказать об этом и почему.
-
-На просьбу «убери», «очисти», «хватит меток» вызывать `factorio_unmark`.
-
-Если на сейве несколько поверхностей (Space Age), явно говорить, по каким поверхностям шёл поиск.
-
-Мир не менять. Если игрок просит что-то поменять, объяснить, что в v1 это делается руками, и сказать точно, где и что.
-
-## Окно в игре
-
-Горячая клавиша `Ctrl+Shift+K`, кнопка на верхней панели дублирует её.
-
-Над вкладками название рана, его можно поменять по клику.
-
-Вверху вкладки. Кнопка «+» создаёт новую вкладку с запросом имени, крестик закрывает вкладку. Закрытие вкладки чат в Kiro Crew не удаляет, вкладку с тем же именем можно открыть снова.
-
-Во вкладке:
-- лента сообщений с последними 30 репликами;
-- поле ввода, кнопка «Отправить» и отправка по Enter;
-- индикатор «думаю…»;
-- индикатор связи «нет связи с Kira», по `pong`;
-- строка меток вида «Метки: 14 ◀ ▶ Убрать». Стрелки открывают вид карты на предыдущей и следующей метке через `player.set_controller{type=remote, position, surface}` (в 2.0 `zoom_to_world` нет), Esc возвращает к персонажу; «Убрать» снимает все метки вкладки.
-
-Ран, вкладки, лента и метки хранятся в `storage` и переживают сохранение и загрузку.
-
-Если игрок сам удалил метку `[KC]` на карте (событие `on_chart_tag_removed`), мод вычёркивает её из `storage`, и агент её больше не видит.
-
-## Сообщение, которое диспетчер кладёт в чат
+The chain:
 
 ```
-[Factorio · ран «Мегабаза-2» · вкладка «Логистика» · тик 12345678]
-найди жёлтые сундуки без фильтра
+in-game window ──send_udp──▶ bridge ◀──long-poll── dispatcher (KC script-cron) ──send_to_session──▶ chat Factorio/<run>/<tab>
+     ▲                         ▲                                                                       │
+     └──────UDP────────────────┴──────HTTP 127.0.0.1──── MCP server factorio ◀── tool calls ───────────┘
 ```
 
-Агент видит, из какой вкладки пришёл вопрос, и отвечает в неё. Если игрок пишет в этот же чат из дашборда, агент отвечает в дашборде как обычно, а в игру пишет только по просьбе.
+Four components.
 
-## Что нужно включить
+**Mod `kc-companion`** (Lua, Factorio 2.x). Owns the window with tabs, query execution, marks, and UDP send and receive. It calls `helpers.recv_udp()` in `on_nth_tick(10)` and gets the data in `on_udp_packet_received`. It runs queries through `load(text, name, "t", env)`: Factorio allows text chunks and forbids only binary ones.
 
-В гейтвее factorycrew `agent.session_control = true`, без неё диспетчер получает отказ `session_control_disabled`. Ставит `scripts/test-e2e.sh` (или `scripts/kc.sh config set agent.session_control true`).
+**Bridge** (Python, asyncio, a separate background process under `umaxfun`). Listens to UDP from the game and serves an HTTP API on 127.0.0.1 for the dispatcher and the MCP server. Matches requests to results by `id`, chunks large messages and reassembles them. Holds two queues: `reply` while the game is unreachable, and `ask` until the dispatcher picks the question up (for example between dispatcher restarts).
 
-Регистрация script-cron `factorio-dispatch` в гейтвее factorycrew. Делает `scripts/test-e2e.sh`, если задания ещё нет.
+**MCP server `factorio`** (stdio, Python). Gives the agent its tools and talks to the bridge over HTTP.
 
-Шаблон агента `factorio-companion`: `scripts/kc.sh install`. В общий `~/.kiro/agents/` ничего класть не нужно.
+**Dispatcher** (a script-cron of the factorycrew gateway, `~/.kirocrew-factorio/crons/factorio_dispatch.py:run`, source `dispatcher/factorio_dispatch.py`). Kiro Crew caps the script subprocess at 3600 seconds, so one wake long-polls for 3500 seconds and exits, and the cron with `every=30` (Kiro Crew rounded it to a minute), `timeout=3600`, `timeout_secs=3610` starts the next one; only one runs at a time. Questions asked in between wait in the bridge queue. `ctx.message` is optional JSON that overrides settings (bridge address, wake length). Do not recreate the cron without need: the chats it opened accept messages only from the same job (`not_creator`). A stopped gateway does not kill its child script, so the dispatcher exits by itself when its parent gateway has changed; otherwise after a gateway restart two dispatchers share one queue (this happened once). A wake compiles the script once, so it also exits when the installed file changes (`scripts/kc.sh install` copies only on change); otherwise old code keeps serving for up to an hour (it once sent a stale chat header). `scripts/test-e2e.sh` waits until the wake serving the run started after the installed script.
 
-Под аккаунтом `gamer`:
-- параметр запуска `--enable-lua-udp 34200` в Steam;
-- симлинк `~/Library/Application Support/factorio/mods/kc-companion` → `/Users/Shared/kc-companion` и включение мода.
+The dispatcher long-polls the bridge for new questions (`GET /asks?wait=25`). The bridge leases a question: if the dispatcher has not confirmed it (`POST /asks/done`) within 120 seconds, it goes back to the queue. The dispatcher confirms after `send_to_session`, so a question is not lost if the dispatcher dies halfway. For each question it:
+1. Finds or creates the `Factorio` folder and the run folder inside it. It looks folders up with `ctx.list_session_folders()` and creates one only if it is missing. The public `ctx.create_session_folder(name)` can only create top-level folders, so the dispatcher creates the nested one with the private `ctx._post("/api/chat/folders", {"name": ..., "parent_id": ...})`. That call is wrapped to fail with a clear error if a Kiro Crew update breaks it. The request to add `parent_id` to the public method: [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210). We switch once it lands.
+2. Opens the chat with the private `ctx._post("/api/chat/slots", {name, title, folder_id, agent="factorio-companion"})` and, on first open, calls `ctx.set_session_mode(slot, "trust_reads")`. The public `open_session` does not fit: it sends one string as both key and title, and the session key is global, so "Logistics" of two runs would land in one chat. The key is `factorio-<hash of run_id and tab>`, the title is the tab name.
+3. Sends the message: `ctx.send_to_session(slot, message)`. If any of this fails, the question is not confirmed and returns by lease (60 s). After the third failure the tab gets "Could not pass the question to Kiro Crew: <reason>", and the question is dropped.
 
-Добавление мода в существующий сейв мир не ломает. Но с любым модом Steam-достижения на этом сейве больше не засчитываются, остаются только локальные «модовые». Код, который мод выполняет через `load`, отдельно ничего не отключает: отключает консольная `/c`, а не мод.
+It keeps "`run_id` + tab → slot" and "`run_id` → folder" in `~/.kirocrew-factorio/factorio/dispatch-state.json`. The key is `run_id`, not the name. Renaming a run after its folder exists is not carried over to the folder yet (open question). If two different runs have the same name, the second folder gets a `run_id` suffix.
 
-Мост и гейтвей factorycrew в автозапуске: `scripts/services.sh install` ставит launchd-агенты `dev.factorycrew.bridge` и `dev.factorycrew.gateway` (KeepAlive, RunAtLoad), `uninstall` снимает. Мод для игры копирует `scripts/deploy-mod.sh` в `/Users/Shared/kc-companion`.
+**Agent `factorio-companion`** (a Kiro Crew agent template, `agent/factorio-companion.json`, rules in `agent/factorio-companion.md`). Tools are `@factorio` only, all auto-approved; the agent has no shell and no files. `scripts/kc.sh install` puts the template into `~/.kirocrew-factorio/kiro/agents/` with absolute paths into this repo. Seen in e2e: on a question with an obvious answer ("NOTHING") the model once answered with text in the chat and did not call `factorio_reply`, so the player saw nothing. Once the prompt said plainly that the player sees only `factorio_reply`, it did not happen again. The safety net for that case: "thinking…" goes out after 90 seconds with "Kira did not answer here".
 
-## Тесты
+## What a "run" is
 
-Уровни называются так: 1 — логика мода, 2 — интеграционный тест мод + мост + MCP без Kiro Crew, 3 — e2e, полный цикл от действия в игре через Kiro Crew и обратно. e2e — только уровень 3.
+The Factorio Lua API does not expose the save file name: `runtime-api.json` 2.1.24 has neither such a field nor a save event. There is only `script.level` (`freeplay`/`base` for a normal game), which does not tell runs apart. So the mod defines the run itself:
+- in `on_init` (a new game, or the mod's first time on an old save) it generates a `run_id` and stores it in `storage`. It survives save and load;
+- the player names the run once in the mod window, default "Run 1", and can rename it later;
+- "Save as" to a new file keeps the same run: it is the same game. A new map gives a new run.
 
-Окружение для уровней 1 и 2 (проверено 2026-10-28 на этом Mac):
-- Docker-образ `linux/amd64` (`docker/Dockerfile`): `factoriotools/factorio` плюс `node:22-slim` и Python. На Apple Silicon он идёт через Rosetta, бинарник запускается напрямую. Образ `arm64` того же тега внутри гоняет x64-бинарник через `box64`, и прямой запуск в нём падает с ошибкой Rosetta. Берём `amd64`.
-- Headless-серверу нужны `auto_pause: false` в `server-settings.json` (иначе без игроков тики не идут и `recv_udp` не вызывается) и открытый stdin (на EOF сервер выходит).
-- Мод `factorio-test` с портала требует логин и токен Factorio. Вместо этого он собирается из исходников при сборке образа и кладётся в `mods` тестового каталога данных. Для Factorio 2.0 нужен тег `cli-v3.5.1` (мод 3.0.2): начиная с 3.6.0 мод требует 2.1. CLI той же версии, `factorio-test-cli@3.5.1`, вызывает `npx fmtk`, поэтому в образе стоит ещё `factoriomod-debug`. Кредов не нужно.
-- Headless-сервер 2.0.77 падает на первом же UDP-пакете, который получает мод (`TickClosure.cpp:91: Trying to add invalid input action`). Это баг игры, исправлен в 2.1: [forums.factorio.com, t=134790](https://forums.factorio.com/viewtopic.php?t=134790). Одиночную игру на клиенте он, по описанию бага, не касается: падает только сервер, у которого нет игрока для пакета. Поэтому уровень 1 идёт на 2.0.77 (UDP там не нужен), а уровень 2 на headless 2.1.23. Тестовая копия мода объявляет `factorio_version` той версии, на которой запущена. Сам UDP на 2.0.77 проверяется в настоящей игре на уровне 3.
+## Mod ↔ bridge protocol
 
-**Уровень 1, логика мода, на каждую правку.** [FactorioTest](https://github.com/GlassBricks/FactorioTest), headless 2.0.77 в Docker под `umaxfun`, команда `./scripts/test-mod.sh`, ~10 секунд вместе со стартом контейнера. Есть: выполнение `query` и форма ответа, ошибки запроса, предел 64 КБ, нарезка больших сообщений (в том числе без разрыва UTF-8), `mark`/`unmark`/`list_marks` по `ids`, по чату и все сразу, причины неудачных меток, ручное удаление тега, чужие теги не трогаются, `run_id`, вкладки, `ask`/`ack`/`reply`/`status`, `reply` для чужого рана игнорируется, лента режется до 30. Окно: в headless-прогоне FactorioTest есть LuaPlayer, поэтому дерево GUI строится по-настоящему и проверяется программно: кнопка на верхней панели, открытие и закрытие, вкладка по умолчанию, индикатор связи до и после `pong`, отправка по Enter в выбранную вкладку, «думаю…», ответ, «Kira не ответила», новая, переключение, закрытие и повторное открытие вкладки с лентой, переименование рана, счётчик меток, ◀ ▶ по кругу и «Убрать» только своей вкладки. Как окно выглядит, видно только в настоящей игре. Переживание сохранения и загрузки — тоже там.
+Each UDP packet holds one JSON string `{"v":1,"id":"…","type":"…",...}`. A long message is split into parts with `part` and `parts` fields; the receiver reassembles them by `id`. The bridge sends the game packets of at most 4000 bytes: the game's receive buffer starts at 4 KB and doubles only after it has dropped a packet that did not fit (measured on 2.1.23: an 8000-byte packet lost, the next 8150-byte one arrived). The mod slices 4096 bytes of source JSON without breaking UTF-8; its packets reach ~8 KB, which the bridge handles. The bridge listens on a fixed port (34199 by default), the game on the port from `--enable-lua-udp`, the bridge HTTP API on 127.0.0.1:34198. The HTTP API has no authentication: whoever reaches the port can run Lua in the game. So the bridge binds to loopback only.
 
-**Уровень 2, интеграция мод + мост + MCP, на каждую правку моста или протокола.** Kiro Crew в этом цикле нет, роль диспетчера и агента играет тест. Headless Factorio 2.1.23, мост, MCP-сервер и pytest в одном контейнере: UDP только на loopback, поэтому сетевой namespace общий. За игрока тест действует по RCON (`remote.call("kc", "ask", …)`) и по нему же читает состояние мода; код под тестом RCON не использует. Скорость игры поднята до 4, чтобы тиковые таймауты мода проходили за секунды. Команда `./scripts/test-integration.sh`, ~20 секунд. Сценарий: 20 сундуков `storage-chest`, у 7 нет фильтра. Тест через MCP вызывает `factorio_query` так, как это делал бы агент, ставит `factorio_mark` и проверяет 7 тегов `[KC]` на нужных координатах. Затем `factorio_unmark(all_in_chat)`: тегов `[KC]` 0, тег игрока на месте, и `factorio_reply` доходит во вкладку. Отдельно: `ask` доходит до диспетчера с `ack` и `thinking`; ошибки меток и запросов; большие сообщения в обе стороны с кириллицей; размер пакетов моста; `idle` по таймауту без `reply`; очередь `ask` и возврат неподтверждённого вопроса по аренде; `game_offline` и очередь `reply`, пока процесс игры остановлен (SIGSTOP), и доставка после возврата; пропажа `pong` при выключенном мосте и восстановление.
+The game sends the bridge:
+- `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick` and the list of tabs;
+- `ask`: `chat` and `text`, the player's question;
+- `result`: the answer to `query`, `mark` or `unmark`, with the same `id` and `ok`, `data` or `error`.
 
-**Уровень 3, e2e, перед тем как отдать вам.** Полный цикл: вопрос из игры → мост → диспетчер → чат Kiro Crew `Factorio/<тестовый ран>/test` → агент `factorio-companion` с MCP → метки и ответ в игре. Две части:
-- автоматическая, `./scripts/test-e2e.sh`: свежий headless 2.1.23 с мостом в Docker (HTTP моста и RCON опубликованы только на 127.0.0.1 хоста), настоящие диспетчер, гейтвей factorycrew и агент с реальной моделью. Новый стенд — новый `run_id`, поэтому у каждого прогона своя папка `Factorio/e2e MM-DD HH:MM` и пустые чаты. Вопросы задаются по RCON в окно мода. Проверяется: 7 сундуков без фильтра найдены и отмечены (метка в пределах клетки от сундука, тег игрока на месте), уточнение «сколько отметил» отвечает из контекста чата, «убери метки» снимает все, новая вкладка — отдельный чат без чужой истории. Прогон ~35 с, 4 хода агента. Замер 2026-10-28: вопрос доходит до чата за 0,2–0,3 с, ответ с поиском и метками ~20 с, первый вопрос в новую вкладку ~6–9 с;
-- e2e временно снимает мост хоста с launchd (его порт 34198 нужен стенду) и возвращает после прогона;
-- ручная под `gamer` на 2.0.77: то же из настоящего окна, плюс UDP на 2.0.77 и скриншот окна через `game.take_screenshot(show_gui=true)`. Он ложится в `script-output` под `gamer`, и Kiro его оттуда не прочитает, поэтому файл нужно скопировать в `/Users/Shared`.
+The bridge sends the game:
+- `pong`: the answer to `hello` and `heartbeat`. The window knows the link is up from it;
+- `ack`: `id`, confirms that the `ask` was accepted and queued;
+- `query`: `lua` and `surface?`. Run the query and return the result;
+- `mark`: `chat` and `marks: [{surface, position, text, icon?}]`;
+- `unmark`: `chat` and one of `ids`, `all_in_chat` or `all`;
+- `list_marks`: `chat?`, return the live marks;
+- `reply`: `chat` and `text`, the agent's answer into the tab;
+- `status`: `chat` and `state` (`thinking` or `idle`), for the "thinking…" indicator.
 
-## Критерии готовности v1
+Who sets the status: the bridge sends `thinking` when the dispatcher picks up the question and `idle` after a `reply` into that tab. If there is no `reply` for 90 seconds, the bridge sends `idle` itself and the tab shows "Kira did not answer here; the answer may be in the chat".
 
-На вашем сейве вопрос про сундуки без фильтра из окна в игре получает ответ во вкладку, а метки стоят на всех таких сундуках. До начала хода агента проходит не больше 5 секунд для уже открытого чата. Первый вопрос в новую вкладку мерится отдельно: там добавляется холодный старт сессии. Весь ответ приходит в пределах минуты.
+If there is no `heartbeat` from the game for more than 15 seconds, the bridge considers it unreachable. MCP requests then fail at once with `game_offline`, and `reply` messages queue up and are delivered after the next `hello`.
 
-«Убери метки» в чате и кнопка «Убрать» снимают все метки вкладки и не трогают ваши собственные теги.
+If there is no `pong` from the bridge for more than 15 seconds, the window shows "Kira is offline" all the time, without waiting for a question. If an `ask` gets no `ack` within 3 seconds, the tab marks that message as not delivered. When `pong` returns, the indicator clears by itself.
 
-Две вкладки дают два отдельных чата в папке рана, и контекст между ними не смешивается. Два рана дают две папки внутри `Factorio`, и «Логистика» одного рана не видит «Логистику» другого.
+A paused game does not receive packets, because no ticks run. That is fine: the answer arrives when the game resumes. The mod window does not pause the game.
 
-После перезагрузки сейва ран, вкладки, лента и метки на месте, и вопросы идут в те же чаты.
+## Agent tools (MCP `factorio`)
 
-Если мост выключен, окно показывает «нет связи» и не зависает. Когда мост снова поднят, связь восстанавливается сама. Вопрос, заданный, пока диспетчер перезапускается, не теряется.
+`factorio_query(lua, surface?)`. Runs a Lua body on the save and returns JSON (whatever `return` gave). Used for any question about the game state. The query environment has `game`, `helpers`, `defines`, `surface` (the player's current surface or the one passed) and `player`. The result is capped at 64 KB; a larger one returns `result_too_large` with a hint to narrow the query. The query runs inside a game tick: while it computes, the game stands still. Factorio Lua has no instruction limit, so an infinite loop hangs the game. The tool result has `ms` so the agent sees what its queries cost. It is the round trip through the bridge including the polling wait (up to ~170 ms): Factorio Lua cannot read execution time as a number. An empty Lua table comes from the game as `{}`. In list fields (`ids`, `failed`, the list of marks) the bridge turns it into `[]`; in an arbitrary query result the agent must expect both.
 
-Если агент не ответил, «думаю…» не висит вечно.
+`factorio_mark(chat, marks)`. Puts marks on the map and returns the `ids` placed and the list not placed with a reason (`add_chart_tag` returned `nil`, for example a position off the map or a surface that does not exist). Uncharted territory is not a reason: a tag is placed on an uncharted chunk too (checked on 2.1.23 and by a level 1 test on 2.0.77). A mark is a chart tag with a `[KC]` prefix in its text. The mod remembers each mark in `storage.kc.marks[chat][id]`.
 
-Тесты уровней 1 и 2 проходят командами из README, e2e уровня 3 пройден.
+`factorio_unmark(chat, ids? | all_in_chat? | all?)`. Removes marks and returns how many were removed. Only marks the mod placed; the player's tags are left alone.
 
-## Решено
+`factorio_list_marks(chat?)`. The live marks with positions and text. For questions like "what did you mark" and "remove the ones on Nauvis".
 
-**Где запущена игра.** На этом же Mac под аккаунтом `gamer`, см. «Где что запущено». Сеть и туннели не нужны.
+`factorio_reply(chat, text)`. Shows the answer in the tab. If the question came from the game, the agent must end its turn with this call.
 
-**`load` в рантайме мода.** Доступен для текстовых чанков (документация Lua API Factorio, раздел Libraries). `factorio_query` на произвольном Lua делаем, запасной план с примитивами не нужен.
+Writing to the world is not technically restricted in v1, because a Lua query can call anything. Read-only is an agent rule, not a sandbox. This is a deliberate v1 risk: the game is single player, the save is yours, and every query is visible in the chat. A sandbox with a read-only proxy may come in v2 together with writes behind confirmation.
 
-**Достижения.** Их отключает сам факт подключения мода, а не код через `load`. См. «Что нужно включить».
+## Agent rules (steering `factorio-companion`)
 
-**Ключ чата.** `run_id` + имя вкладки, папка на каждый ран.
+Answer in the player's language, whatever language the rules and the window use.
 
-**Имя сейва в Lua API.** Его нет (проверено по `runtime-api.json` 2.1.24). Ран определяется через `run_id` в `storage`, название даёт игрок.
+Answer briefly, a few lines: the in-game window is small. Put details in the chat if needed and give a summary in the game.
 
-**FactorioTest на headless.** Работает: CLI по умолчанию и запускает headless. Уровень 1 идёт в Docker под `umaxfun`, игра под `gamer` для тестов не нужна. Подробности в «Тесты».
+Write narrow queries and aggregate on the Lua side: count, group, return coordinates. Do not return entity dumps. A query freezes the game while it runs: search by area or filter, not by walking the whole map. If a query took more than 100 ms, make the next one narrower.
 
-**Headless Factorio в Docker на Apple Silicon.** Работает в образе `linux/amd64` через Rosetta. Пробный мод на headless-сервере 2.1.23 проверил весь путь протокола:
-- UDP в обе стороны;
-- `load` с собственным окружением;
-- ошибка компиляции или выполнения возвращается текстом;
-- `run_id` из `on_init`;
-- круговая задержка ~85 мс на 10 пингах (опрос раз в 10 тиков даёт до ~166 мс сверху).
+If the answer points at places on the map, mark them. Before a new series of marks on the same topic, remove this chat's old marks unless the player asked to keep them. If some places were not marked, say so and why.
 
-Тем же прогоном подтверждено, что запись в мир из запроса проходит (`game.speed = 2` сработал): песочницы нет, как и сказано выше.
+On "remove", "clear", "enough marks" (in any language) call `factorio_unmark`.
 
-**Метки на неразведанной территории.** Ставятся, `add_chart_tag` вернул тег на нечарченном чанке.
+If the save has several surfaces (Space Age), say which surfaces were searched.
 
-## Открытые вопросы
+Do not change the world. If the player asks to change something, explain that in v1 this is done by hand, and say exactly where and what.
 
-**Приватные вызовы `_post`.** Вложенные папки — до [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210); заголовок сессии отдельно от ключа — в issue пока не попросили.
+## In-game window
 
-**Переименование рана.** Папка получает имя рана при первом вопросе; смена имени потом на папку не переносится. Нужен PATCH папки, которого в `ScriptContext` нет.
+Hotkey `Ctrl+Shift+K`; a button with Kira's face on the top bar does the same.
 
+Above the tabs: the run name, renamed with the pencil button.
 
-**Версия игры.** 2.0.77 под `gamer`. Мод объявляет `factorio_version: "2.0"`. Уровень 1 идёт на headless 2.0.77, уровень 2 на 2.1.23 из-за бага UDP в headless 2.0 (см. «Тесты»). UDP на 2.0.77 проверим только в настоящей игре, на уровне 3.
+Tabs on top. "+" creates a new tab and asks for its name, the close button closes the tab. Closing a tab does not delete its Kiro Crew chat; a tab with the same name can be opened again.
+
+In a tab:
+- a feed of the last 30 messages, Kira's lines with her icon;
+- an input field, a "Send" button, and Enter to send;
+- a "thinking…" indicator;
+- a link indicator ("online" / "Kira is offline" / "UDP is off"), from `pong`;
+- a marks row "Marks: 14 ◀ ▶ 🗑". The arrows open the map view on the previous and next mark with `player.set_controller{type=remote, position, surface}` (2.0 has no `zoom_to_world`), Esc returns to the character; the trash button removes all marks of the tab.
+
+The run, tabs, feed and marks live in `storage` and survive save and load.
+
+If the player deletes a `[KC]` mark on the map (`on_chart_tag_removed`), the mod drops it from `storage` and the agent no longer sees it.
+
+## The message the dispatcher puts in the chat
+
+```
+[Factorio · run "Megabase-2" · tab "Logistics" · tick 12345678]
+find yellow chests without a filter
+```
+
+The agent sees which tab the question came from and answers into it. If the player writes into the same chat from the dashboard, the agent answers in the dashboard as usual and writes into the game only when asked.
+
+## What to enable
+
+In the factorycrew gateway `agent.session_control = true`; without it the dispatcher gets `session_control_disabled`. `scripts/test-e2e.sh` sets it (or `scripts/kc.sh config set agent.session_control true`).
+
+The `factorio-dispatch` script-cron in the factorycrew gateway. `scripts/test-e2e.sh` registers it if it is missing.
+
+The `factorio-companion` agent template: `scripts/kc.sh install`. Nothing goes into the shared `~/.kiro/agents/`.
+
+Under the `gamer` account:
+- the Steam launch option `--enable-lua-udp 34200`;
+- the symlink `~/Library/Application Support/factorio/mods/kc-companion` → `/Users/Shared/kc-companion`, and the mod enabled.
+
+Adding the mod to an existing save does not break the world. But with any mod, Steam achievements no longer count on that save; only the local "modded" ones remain. The code the mod runs through `load` disables nothing extra: the console `/c` does, not the mod.
+
+The bridge and the factorycrew gateway start automatically: `scripts/services.sh install` installs the launchd agents `dev.factorycrew.bridge` and `dev.factorycrew.gateway` (KeepAlive, RunAtLoad), `uninstall` removes them. `scripts/deploy-mod.sh` copies the mod to `/Users/Shared/kc-companion` for the game.
+
+## Tests
+
+The levels: 1 is mod logic, 2 is an integration test of mod + bridge + MCP without Kiro Crew, 3 is e2e, the full cycle from an action in the game through Kiro Crew and back. Only level 3 is e2e.
+
+Environment for levels 1 and 2 (checked 2026-10-28 on this Mac):
+- a `linux/amd64` Docker image (`docker/Dockerfile`): `factoriotools/factorio` plus `node:22-slim` and Python. On Apple Silicon it runs through Rosetta and the binary starts directly. The `arm64` image of the same tag runs the x64 binary through `box64` inside, and a direct start there fails with a Rosetta error. We use `amd64`.
+- The headless server needs `auto_pause: false` in `server-settings.json` (otherwise with no players no ticks run and `recv_udp` is never called) and an open stdin (it exits on EOF).
+- The `factorio-test` mod on the portal needs a Factorio login and token. Instead it is built from source when the image is built and placed in the test data dir's `mods`. Factorio 2.0 needs tag `cli-v3.5.1` (mod 3.0.2): from 3.6.0 the mod requires 2.1. The CLI of the same version, `factorio-test-cli@3.5.1`, calls `npx fmtk`, so the image also has `factoriomod-debug`. No credentials needed.
+- The 2.0.77 headless server crashes on the first UDP packet the mod receives (`TickClosure.cpp:91: Trying to add invalid input action`). It is a game bug fixed in 2.1: [forums.factorio.com, t=134790](https://forums.factorio.com/viewtopic.php?t=134790). The client is not affected: UDP works in the real 2.0.77 game (checked with the UI loop below). So level 1 runs on 2.0.77 (it needs no UDP) and level 2 on headless 2.1.23. The test copy of the mod declares the `factorio_version` it runs on.
+
+**Level 1, mod logic, on every change.** [FactorioTest](https://github.com/GlassBricks/FactorioTest), headless 2.0.77 in Docker under `umaxfun`, `./scripts/test-mod.sh`, ~10 seconds including container start. Covers: `query` and its result shape, query errors, the 64 KB cap, chunking of large messages (including without breaking UTF-8), `mark`/`unmark`/`list_marks` by `ids`, by chat and all at once, reasons for failed marks, manual tag deletion, other tags left alone, `run_id`, tabs, `ask`/`ack`/`reply`/`status`, a `reply` for another run ignored, the feed capped at 30. The window: a headless FactorioTest run has a LuaPlayer, so the GUI tree is really built and checked in code: the top-bar button, open and close, the default tab, the link indicator before and after `pong`, Enter sends to the selected tab, "thinking…", the answer, "Kira did not answer here", new, switch, close and reopen a tab with its feed, run rename, the marks counter, ◀ ▶ wrapping around, and the trash button touching only its own tab. How the window looks is checked with the UI loop.
+
+**Level 2, mod + bridge + MCP integration, on every bridge or protocol change.** No Kiro Crew in this loop; the test plays the dispatcher and the agent. Headless Factorio 2.1.23, bridge, MCP server and pytest in one container: UDP is loopback only, so they share a network namespace. The test acts for the player over RCON (`remote.call("kc", "ask", …)`) and reads the mod state the same way; the code under test does not use RCON. Game speed is raised to 4 so the mod's tick timeouts pass in seconds. `./scripts/test-integration.sh`, ~20 seconds. Scenario: 20 `storage-chest`s, 7 without a filter. Through MCP the test calls `factorio_query` the way the agent would, places `factorio_mark` and checks 7 `[KC]` tags at the right coordinates. Then `factorio_unmark(all_in_chat)`: 0 `[KC]` tags, the player's tag in place, and `factorio_reply` reaches the tab. Also: an `ask` reaches the dispatcher with `ack` and `thinking`; mark and query errors; large messages both ways in Cyrillic (on purpose, to catch broken UTF-8); bridge packet size; `idle` by timeout without `reply`; the `ask` queue and a lease returning an unconfirmed question; `game_offline` and the `reply` queue while the game process is stopped (SIGSTOP), and delivery after it resumes; losing `pong` when the bridge is down, and recovery.
+
+**Level 3, e2e, before handing over.** The full cycle: a question from the game → bridge → dispatcher → Kiro Crew chat `Factorio/<test run>/<tab>` → agent `factorio-companion` with MCP → marks and answer in the game. Parts:
+- automated, `./scripts/test-e2e.sh`: a fresh headless 2.1.23 with a bridge in Docker (bridge HTTP and RCON published on the host's 127.0.0.1 only), the real dispatcher, factorycrew gateway and agent with a real model. A new stand is a new `run_id`, so every run gets its own folder `Factorio/e2e MM-DD HH:MM` and empty chats. Questions go into the mod window over RCON. Checks: the 7 unfiltered chests are found and marked (a mark within a tile of each chest, the player's tag in place) and the answer is in English; the follow-up "how many did you mark" is answered from the chat context; "remove the marks" removes them all; a new tab is a separate chat without the other tab's history; a question in Russian is answered in Russian. Measured 2026-10-28 (before the language check): a question reaches the chat in 0.2–0.3 s, an answer with a search and marks in ~20 s, the first question in a new tab in ~6–9 s;
+- the e2e takes the host bridge out of launchd for the run (the stand needs its port 34198) and puts it back afterwards;
+- by hand under `gamer` on 2.0.77: the same from the real window, and save/load.
+
+**UI loop, while working on the window.** `tools/ui_dev.py` runs a real 2.0.77 client under `umaxfun` from the player's copy `/Users/Shared/factorio.app`, with its own data dir `~/.factorycrew-dev/factorio` and a dev bridge on ports 34298/34299/34300, so it never clashes with the game under `gamer`. `start` deploys the mod, starts bridge and game and waits until the mod is online; `shot NAME [STEP ...]` drives the window over the bridge (open, click, type, reply, status) and takes `game.take_screenshot{show_gui=true}` into `~/.factorycrew-dev/factorio/script-output/kc/NAME.png`. The client renders while the console is on `gamer`.
+
+## v1 done criteria
+
+On your save, a question about unfiltered chests from the in-game window gets an answer in the tab, and every such chest is marked. The agent's turn starts within 5 seconds for an already open chat. The first question in a new tab is measured separately: it adds a cold session start. The whole answer arrives within a minute.
+
+"Remove the marks" in the chat and the trash button remove all marks of the tab and leave your own tags alone.
+
+Two tabs give two separate chats in the run folder, and their context does not mix. Two runs give two folders inside `Factorio`, and "Logistics" of one run does not see "Logistics" of the other.
+
+After reloading the save the run, tabs, feed and marks are in place, and questions go to the same chats.
+
+With the bridge down the window shows "Kira is offline" and does not hang. When the bridge is back, the link recovers by itself. A question asked while the dispatcher restarts is not lost.
+
+If the agent did not answer, "thinking…" does not hang forever.
+
+Kira answers in the language of the question.
+
+Level 1 and 2 tests pass with the commands from the README, and the level 3 e2e passes.
+
+## Decided
+
+**Where the game runs.** On this Mac under the `gamer` account, see "What runs where". No network or tunnels.
+
+**`load` in the mod runtime.** Available for text chunks (Factorio Lua API docs, Libraries). `factorio_query` takes arbitrary Lua; no fallback to primitives.
+
+**Achievements.** Turned off by the mod being added at all, not by code through `load`. See "What to enable".
+
+**Chat key.** `run_id` + tab name, one folder per run.
+
+**Save name in the Lua API.** Not there (checked in `runtime-api.json` 2.1.24). The run is a `run_id` in `storage`, the name comes from the player.
+
+**FactorioTest on headless.** Works: the CLI starts headless by default. Level 1 runs in Docker under `umaxfun`; the game under `gamer` is not needed for tests. Details in "Tests".
+
+**Headless Factorio in Docker on Apple Silicon.** Works in the `linux/amd64` image through Rosetta. A probe mod on a 2.1.23 headless server checked the whole protocol path:
+- UDP both ways;
+- `load` with its own environment;
+- a compile or runtime error comes back as text;
+- `run_id` from `on_init`;
+- round trip ~85 ms over 10 pings (polling every 10 ticks adds up to ~166 ms).
+
+The same run confirmed that a query can write to the world (`game.speed = 2` worked): there is no sandbox, as said above.
+
+**Marks on uncharted territory.** Placed: `add_chart_tag` returned a tag on an uncharted chunk.
+
+**Game version.** 2.0.77 under `gamer`. The mod declares `factorio_version: "2.0"`. Level 1 runs on headless 2.0.77, level 2 on 2.1.23 because of the headless 2.0 UDP bug. UDP on the 2.0.77 client works (UI loop and the player's own game).
+
+**Screenshots for UI work.** `game.take_screenshot{show_gui=true}` needs a real client; headless renders nothing. Solved with the UI loop above.
+
+## Open questions
+
+**Private `_post` calls.** Nested folders until [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210); a session title separate from its key is not requested in an issue yet.
+
+**Run rename.** A folder gets the run name at the first question; a later rename is not carried over. That needs a folder PATCH, which `ScriptContext` does not have.
