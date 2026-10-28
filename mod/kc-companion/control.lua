@@ -110,5 +110,5 @@ remote.add_interface("kc", {
 })
 
 if script.active_mods["factorio-test"] then
-  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks", "tests/test-gui" })
+  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks", "tests/test-gui", "tests/test-helpers" })
 end

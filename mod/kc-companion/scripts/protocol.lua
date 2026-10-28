@@ -1,6 +1,8 @@
 -- Wire protocol between the mod and the bridge (SPEC.md, "Mod <-> bridge protocol").
 -- Pure functions over storage/game so FactorioTest can exercise them without UDP.
 
+local helpers_lib = require("scripts.helpers") -- `kc` in the query environment
+
 local M = {}
 
 M.VERSION = 1
@@ -140,6 +142,7 @@ local function query_env(surface_name)
     tostring = tostring, tonumber = tonumber, pcall = pcall, error = error,
     table = table, string = string, math = math, table_size = table_size,
     serpent = serpent, log = log, remote = remote,
+    kc = helpers_lib,
   }
 end
 

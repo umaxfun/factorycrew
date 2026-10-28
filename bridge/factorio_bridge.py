@@ -373,9 +373,12 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, {"ok": True, "updated": self.activity(chat, text, step=False)}
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
-            chat = body.get("chat") if isinstance(body.get("chat"), str) else None
-            self.activity(chat, "")
-            msg = {k: v for k, v in body.items() if k not in ("id", "type", "v", "timeout")}
+            # Only the agent's own calls (the MCP server flags them) are steps of a turn: tests,
+            # tools/ui_dev.py or anything else polling the game must not move the counter.
+            if body.get("_agent"):
+                chat = body.get("chat") if isinstance(body.get("chat"), str) else None
+                self.activity(chat, "")
+            msg = {k: v for k, v in body.items() if k not in ("id", "type", "v", "timeout", "_agent")}
             msg["type"] = path[1:]
             if path == "/query" and not isinstance(body.get("lua"), str):
                 raise BridgeError("bad_request", "lua is required")

@@ -36,7 +36,8 @@ TOOLS = [
         "name": "factorio_query",
         "description": (
             "Run a Lua body on the live save and return what it `return`s, as JSON. "
-            "Env: game, helpers, defines, prototypes, surface (player's surface or the one given), player. "
+            "Env: game, helpers, defines, prototypes, surface (player's surface or the one given), player, "
+            "kc (helpers: kc.poles() best researched electric poles, kc.nearest_pole(surface, pos, radius)). "
             "The game is FROZEN while the query runs and Lua has no instruction limit: search by area or "
             "filter, aggregate in Lua (counts, groups, positions), never dump entities. Result cap 64 KB. "
             "`ms` in the answer is the round trip through the bridge (includes up to ~170 ms of polling)."
@@ -145,7 +146,8 @@ def call_tool(name: str, args: dict) -> dict:
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}
-    return bridge_post(path, args or {})
+    # _agent: tells the bridge this call is a step of Kira's turn (the window counts those)
+    return bridge_post(path, {**(args or {}), "_agent": True})
 
 
 def handle(req: dict) -> dict | None:

@@ -159,6 +159,8 @@ def test_long_turn_progress_reaches_the_tab(stack, mcp):
     # tool calls count as steps even without a chat (factorio_query has none)
     assert mcp.tool("factorio_query", lua="return 1")["ok"]
     assert mcp.tool("factorio_query", lua="return 2")["ok"]
+    # ...but not someone else polling the game (this test, tools/ui_dev.py): no _agent flag
+    assert http("POST", "/query", {"lua": "return 0"})["ok"]
     assert mcp.tool("factorio_progress", chat="Logo", text="placing 140 lamp ghosts")["updated"] == 1
     # the dispatcher's live trace (what Kira writes between tool calls) reaches the tab
     assert http("POST", "/trace", {"chat": "Logo", "kind": "text", "text": "Planning the K first."})["sent"]

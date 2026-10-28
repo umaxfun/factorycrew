@@ -143,6 +143,13 @@ def test_long_build_shows_progress(player):
     """A minute-long build: the window must show time, steps and what Kira does while she works."""
     tab = f"Build {STAMP}"
     me = lua('local p = game.get_player(1) return {x = p.position.x, y = p.position.y}')
+    # Setup: every vanilla pole researched, and a real grid pole 70 tiles away to connect to.
+    lua('local f = game.forces.player for _, r in pairs({"small-electric-pole", "medium-electric-pole", '
+        '"big-electric-pole", "substation"}) do f.recipes[r].enabled = true end '
+        'for _, e in pairs(game.surfaces[1].find_entities_filtered{type = "electric-pole"}) do e.destroy() end '
+        'for _, e in pairs(game.surfaces[1].find_entities_filtered{name = "entity-ghost"}) do e.destroy() end '
+        'game.surfaces[1].create_entity{name = "big-electric-pole", position = {-70, -10}, force = "player"} '
+        'return true')
     player.open_tab(tab)
     t0 = time.monotonic()
     assert player.ui("ui_confirm", "kc_input", "draw kirocrew ghost logo with colored lamps at about 1 chunk of size")
@@ -169,6 +176,8 @@ def test_long_build_shows_progress(player):
     print(f"\nbuild reply ({total:.0f}s, max step {seen['steps']}, activity {sorted(seen['activity'])}): "
           f"{kira[-1]['text'] if kira else None}")
     assert kira, "no reply in 300 s"
+    # the dev save's run is named "Ран 1": the header must not pull the answer into Russian
+    assert not cyrillic(kira[-1]["text"]), kira[-1]["text"]
     assert seen["steps"] >= 2 and seen["activity"], seen
     # Kira's own words between tool calls reached the tab WHILE she worked, not only at the end
     trace = seen.get("trace") or {}
@@ -179,6 +188,35 @@ def test_long_build_shows_progress(player):
                  f'position = {{{me["x"]}, {me["y"]}}}, radius = 96}}')
     print(f"lamp ghosts within 96 tiles of the player: {ghosts}")
     assert ghosts >= 20
+    # Power by default with the best researched tier: substations over the design, big poles to the grid.
+    poles = lua('local out = {} for _, g in pairs(game.surfaces[1].find_entities_filtered{name = "entity-ghost"}) do '
+                'if g.ghost_type == "electric-pole" then out[g.ghost_name] = (out[g.ghost_name] or 0) + 1 end end '
+                'return out')
+    print(f"pole ghosts: {poles}")
+    assert 1 <= poles.get("substation", 0) <= 9, poles  # ~1 chunk: 4 substations (18-tile grid), 9 at most
+    assert poles.get("big-electric-pole", 0) >= 1, poles  # the line to the grid pole 70 tiles away
+    assert not poles.get("small-electric-pole") and not poles.get("medium-electric-pole"), poles
+
+
+def test_changing_existing_entities_needs_consent(player):
+    tab = f"Consent {STAMP}"
+    row_end = lua('local out = {} for _, e in pairs(game.surfaces[1].find_entities_filtered{name = "storage-chest"}) do '
+                  'if e.position.x > 35 then out[#out + 1] = e.unit_number end end return out')
+    assert len(row_end) == 3, row_end  # the chests at x = 36.5, 38.5, 40.5
+
+    def ordered():
+        return lua('local n = 0 for _, e in pairs(game.surfaces[1].find_entities_filtered{name = "storage-chest"}) do '
+                   'if e.to_be_deconstructed() then n = n + 1 end end return n')
+    text, _, t_all = player.ask_and_wait(tab, "remove the last 3 yellow chests of the row, the ones with the largest x")
+    print(f"\nconsent question ({t_all:.1f}s): {text}")
+    assert ordered() == 0, "acted before consent"
+    assert lua('return #game.surfaces[1].find_entities_filtered{name = "storage-chest"}') == 20, "removed before consent"
+    text, _, t_all = player.ask_and_wait(tab, "yes")
+    print(f"after yes ({t_all:.1f}s): {text}")
+    marked = lua('local out = {} for _, e in pairs(game.surfaces[1].find_entities_filtered{name = "storage-chest"}) do '
+                 'if e.to_be_deconstructed() then out[#out + 1] = e.position.x end end return out')
+    marked = [] if marked == {} else marked
+    assert sorted(marked) == [36.5, 38.5, 40.5], marked  # deconstruction orders, exactly those three
 
 
 def test_it_was_the_apps_agent(player):
