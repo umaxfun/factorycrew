@@ -40,6 +40,25 @@ script.on_event(defines.events.on_udp_packet_received, function(e)
   end
 end)
 
+script.on_event(defines.events.on_chart_tag_removed, function(e)
+  protocol.on_tag_removed(e.tag)
+end)
+
+-- Entry points for the in-game window (next step) and for level 2 tests over RCON.
+remote.add_interface("kc", {
+  ask = function(chat, text)
+    local msg = protocol.ask(chat, text)
+    send(msg)
+    return msg.id
+  end,
+  state = function()
+    return protocol.state()
+  end,
+  set_run_name = function(name)
+    storage.kc.run_name = name
+  end,
+})
+
 if script.active_mods["factorio-test"] then
-  require("__factorio-test__/init")({ "tests/test-protocol" })
+  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks" })
 end

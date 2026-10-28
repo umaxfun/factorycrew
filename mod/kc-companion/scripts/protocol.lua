@@ -9,6 +9,9 @@ M.MAX_RESULT = 64 * 1024 -- query result cap, bytes of JSON
 M.CHUNK_RAW = 4096 -- raw slice per part; JSON escaping can roughly double it, staying near 8 KB
 M.HEARTBEAT_TICKS = 300 -- 5 s
 M.PONG_TIMEOUT_TICKS = 900 -- 15 s without pong => "no connection"
+M.ACK_TIMEOUT_TICKS = 180 -- 3 s without ack on an ask => "no connection" on that message
+M.FEED_LIMIT = 30 -- messages kept per tab
+M.MARK_PREFIX = "[KC] "
 
 -- ── storage ──────────────────────────────────────────────────────────────
 
@@ -22,8 +25,59 @@ function M.init_storage()
     kc.run_id = string.format("%08x-%x", seed, game.tick)
   end
   kc.run_name = kc.run_name or "Ран 1"
-  kc.marks = kc.marks or {}
-  kc.last_pong_tick = kc.last_pong_tick or nil
+  kc.tabs = kc.tabs or {} -- chat -> {feed = {...}, state = "idle"|"thinking", note = nil}
+  kc.tab_order = kc.tab_order or {}
+  kc.marks = kc.marks or {} -- chat -> tag_number -> {tag = LuaCustomChartTag, surface, position, text}
+  kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
+  kc.seq = kc.seq or 0
+end
+
+local function next_id(prefix)
+  storage.kc.seq = storage.kc.seq + 1
+  return string.format("%s-%d-%d", prefix, game.tick, storage.kc.seq)
+end
+
+-- ── tabs ─────────────────────────────────────────────────────────────────
+
+function M.tab(chat)
+  local kc = storage.kc
+  local t = kc.tabs[chat]
+  if not t then
+    t = { feed = {}, state = "idle" }
+    kc.tabs[chat] = t
+    kc.tab_order[#kc.tab_order + 1] = chat
+  end
+  return t
+end
+
+local function push(tab, entry)
+  entry.tick = game.tick
+  tab.feed[#tab.feed + 1] = entry
+  while #tab.feed > M.FEED_LIMIT do
+    table.remove(tab.feed, 1)
+  end
+  return entry
+end
+
+--- Record a player question in its tab and return the `ask` message for the bridge.
+function M.ask(chat, text)
+  local id = next_id("ask")
+  push(M.tab(chat), { from = "player", text = text, id = id, acked = false })
+  return {
+    type = "ask", id = id, chat = chat, text = text,
+    run_id = storage.kc.run_id, run_name = storage.kc.run_name, tick = game.tick,
+  }
+end
+
+--- Player messages whose ask was not acknowledged within ACK_TIMEOUT_TICKS.
+function M.unacked(chat)
+  local out = {}
+  for _, e in ipairs(M.tab(chat).feed) do
+    if e.from == "player" and not e.acked and game.tick - e.tick > M.ACK_TIMEOUT_TICKS then
+      out[#out + 1] = e.id
+    end
+  end
+  return out
 end
 
 -- ── query execution ──────────────────────────────────────────────────────
@@ -75,7 +129,127 @@ function M.run_query(lua, surface_name)
   return { ok = true, data = res }
 end
 
+-- ── marks ────────────────────────────────────────────────────────────────
+
+local function to_position(p)
+  if type(p) ~= "table" then return nil end
+  local x, y = p.x or p[1], p.y or p[2]
+  if type(x) ~= "number" or type(y) ~= "number" then return nil end
+  return { x = x, y = y }
+end
+
+local function forget_mark(tag_number)
+  local kc = storage.kc
+  local chat = kc.mark_chat[tag_number]
+  if not chat then return nil end
+  kc.mark_chat[tag_number] = nil
+  local m = kc.marks[chat] and kc.marks[chat][tag_number]
+  if kc.marks[chat] then
+    kc.marks[chat][tag_number] = nil
+    if next(kc.marks[chat]) == nil then kc.marks[chat] = nil end
+  end
+  return m
+end
+
+--- Place chart tags for a chat. Returns {ids = {...}, failed = {{index, reason}}}.
+function M.mark(chat, marks)
+  local kc = storage.kc
+  local force = game.forces.player
+  local ids, failed = {}, {}
+  for i, spec in ipairs(marks or {}) do
+    local surface = game.surfaces[spec.surface or 1]
+    local pos = to_position(spec.position)
+    if not surface then
+      failed[#failed + 1] = { index = i, reason = "no_such_surface" }
+    elseif not pos then
+      failed[#failed + 1] = { index = i, reason = "bad_position" }
+    else
+      local text = M.MARK_PREFIX .. tostring(spec.text or "")
+      local tagspec = { position = pos, text = text }
+      if spec.icon then tagspec.icon = { type = "item", name = spec.icon } end
+      local ok, tag = pcall(force.add_chart_tag, surface, tagspec)
+      if not ok then
+        failed[#failed + 1] = { index = i, reason = "error", message = tostring(tag) }
+      elseif not tag then
+        failed[#failed + 1] = { index = i, reason = "add_chart_tag_nil" }
+      else
+        local n = tag.tag_number
+        kc.marks[chat] = kc.marks[chat] or {}
+        kc.marks[chat][n] = { tag = tag, surface = surface.name, position = tag.position, text = text }
+        kc.mark_chat[n] = chat
+        ids[#ids + 1] = n
+      end
+    end
+  end
+  return { ids = ids, failed = failed }
+end
+
+--- Remove mod-owned marks: by ids within a chat, all of a chat, or all. Returns {removed = n}.
+function M.unmark(chat, opts)
+  local kc = storage.kc
+  local targets = {}
+  if opts.all then
+    for n in pairs(kc.mark_chat) do targets[#targets + 1] = n end
+  elseif opts.all_in_chat then
+    for n in pairs(kc.marks[chat] or {}) do targets[#targets + 1] = n end
+  else
+    for _, n in ipairs(opts.ids or {}) do
+      if kc.mark_chat[n] == chat then targets[#targets + 1] = n end
+    end
+  end
+  local removed = 0
+  for _, n in ipairs(targets) do
+    local m = forget_mark(n)
+    if m then
+      if m.tag.valid then m.tag.destroy() end
+      removed = removed + 1
+    end
+  end
+  return { removed = removed }
+end
+
+--- Live marks, optionally of one chat. Drops entries whose tag is gone.
+function M.list_marks(chat)
+  local kc = storage.kc
+  local out = {}
+  for c, by_id in pairs(kc.marks) do
+    if chat == nil or c == chat then
+      for n, m in pairs(by_id) do
+        if m.tag.valid then
+          out[#out + 1] = { id = n, chat = c, surface = m.surface, position = m.position, text = m.text }
+        end
+      end
+    end
+  end
+  -- forget tags that vanished without an event (removal while iterating `pairs` is not safe)
+  local stale = {}
+  for n, c in pairs(kc.mark_chat) do
+    local m = kc.marks[c] and kc.marks[c][n]
+    if not m or not m.tag.valid then stale[#stale + 1] = n end
+  end
+  for _, n in ipairs(stale) do forget_mark(n) end
+  table.sort(out, function(a, b) return a.id < b.id end)
+  return out
+end
+
+--- on_chart_tag_removed: the player deleted a tag on the map (or we did).
+function M.on_tag_removed(tag)
+  if tag and tag.valid then forget_mark(tag.tag_number) end
+end
+
 -- ── framing ──────────────────────────────────────────────────────────────
+
+-- Slice end that does not split a UTF-8 sequence: back off while the next byte is a continuation byte.
+local function utf8_safe_end(s, stop)
+  if stop >= #s then return #s end
+  local e = stop
+  while e > 1 do
+    local b = string.byte(s, e + 1)
+    if b < 0x80 or b >= 0xC0 then break end
+    e = e - 1
+  end
+  return e
+end
 
 --- Encode one message into one or more JSON packets. Large messages become
 --- {type="part", id, part, parts, data=<slice of the full JSON>}.
@@ -85,11 +259,15 @@ function M.encode(msg)
   if #s <= M.CHUNK_RAW then
     return { s }
   end
-  local parts = math.ceil(#s / M.CHUNK_RAW)
+  local slices, start = {}, 1
+  while start <= #s do
+    local stop = utf8_safe_end(s, start + M.CHUNK_RAW - 1)
+    slices[#slices + 1] = string.sub(s, start, stop)
+    start = stop + 1
+  end
   local out = {}
-  for i = 1, parts do
-    local slice = string.sub(s, (i - 1) * M.CHUNK_RAW + 1, i * M.CHUNK_RAW)
-    out[i] = helpers.table_to_json({ v = M.VERSION, type = "part", id = msg.id, part = i, parts = parts, data = slice })
+  for i, slice in ipairs(slices) do
+    out[i] = helpers.table_to_json({ v = M.VERSION, type = "part", id = msg.id, part = i, parts = #slices, data = slice })
   end
   return out
 end
@@ -127,21 +305,54 @@ function M.heartbeat(kind)
     run_id = storage.kc.run_id,
     run_name = storage.kc.run_name,
     tick = game.tick,
-    tabs = {},
+    tabs = storage.kc.tab_order,
   }
+end
+
+local function find_feed_entry(id)
+  for _, t in pairs(storage.kc.tabs) do
+    for _, e in ipairs(t.feed) do
+      if e.id == id then return e end
+    end
+  end
+  return nil
+end
+
+local function result(msg, data)
+  return { type = "result", id = msg.id, ok = true, data = data }
 end
 
 --- Handle one decoded message from the bridge; returns a list of reply messages.
 function M.handle(msg)
   local t = msg.type
+  local kc = storage.kc
+  -- reply/status addressed to another run (a queued answer for a save that is no longer loaded)
+  if (t == "reply" or t == "status") and msg.run_id and msg.run_id ~= kc.run_id then
+    return {}
+  end
   if t == "query" then
     local r = M.run_query(msg.lua, msg.surface)
     r.type = "result"
     r.id = msg.id
     return { r }
+  elseif t == "mark" then
+    return { result(msg, M.mark(msg.chat, msg.marks)) }
+  elseif t == "unmark" then
+    return { result(msg, M.unmark(msg.chat, msg)) }
+  elseif t == "list_marks" then
+    return { result(msg, M.list_marks(msg.chat)) }
   elseif t == "pong" then
-    storage.kc.last_pong_tick = game.tick
-    return {}
+    kc.last_pong_tick = game.tick
+  elseif t == "ack" then
+    local e = find_feed_entry(msg.id)
+    if e then e.acked = true end
+  elseif t == "reply" then
+    local tab = M.tab(msg.chat)
+    push(tab, { from = "kira", text = msg.text, id = msg.id })
+    tab.state, tab.note = "idle", nil
+  elseif t == "status" then
+    local tab = M.tab(msg.chat)
+    tab.state, tab.note = msg.state, msg.note
   end
   return {}
 end
@@ -149,6 +360,19 @@ end
 function M.connected()
   local last = storage.kc and storage.kc.last_pong_tick
   return last ~= nil and (game.tick - last) <= M.PONG_TIMEOUT_TICKS
+end
+
+--- Plain snapshot for tests and the remote interface (no LuaObjects).
+function M.state()
+  local kc = storage.kc
+  local tabs = {}
+  for chat, t in pairs(kc.tabs) do
+    tabs[chat] = { feed = t.feed, state = t.state, note = t.note }
+  end
+  return {
+    run_id = kc.run_id, run_name = kc.run_name, tick = game.tick,
+    connected = M.connected(), tabs = tabs, tab_order = kc.tab_order,
+  }
 end
 
 return M
