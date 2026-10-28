@@ -6,7 +6,7 @@ Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SP
 
 | Path | What |
 |---|---|
-| `mod/kc-companion/` | Factorio 2.0 mod: query execution, map marks, tabs, UDP to the bridge (in-game window: not yet) |
+| `mod/kc-companion/` | Factorio 2.0 mod: in-game window (Ctrl+Shift+K), query execution, map marks, tabs, UDP to the bridge |
 | `bridge/factorio_bridge.py` | Bridge: UDP to the game, HTTP API on 127.0.0.1:34198 for the dispatcher and the MCP server |
 | `mcp/factorio_mcp.py` | MCP server `factorio` (stdio): `factorio_query`, `_mark`, `_unmark`, `_list_marks`, `_reply` |
 | `docker/Dockerfile` | Test image: headless Factorio + FactorioTest (built from source, no portal login) + Python |
@@ -56,13 +56,21 @@ Level 3 starts the factorycrew gateway if needed, installs the agent and dispatc
 
 ## Installing the mod for the player (account `gamer`)
 
-The mod lives where both accounts can reach it:
+As `umaxfun`, once and after every mod change:
 
 ```bash
-# as umaxfun, once
-mkdir -p /Users/Shared/kc-companion && rsync -a --delete mod/kc-companion/ /Users/Shared/kc-companion/
-# as gamer, once
+./scripts/deploy-mod.sh        # -> /Users/Shared/kc-companion
+./scripts/services.sh install  # bridge + factorycrew gateway in launchd (once)
+./scripts/services.sh status
+```
+
+As `gamer`, once:
+
+```bash
+mkdir -p "$HOME/Library/Application Support/factorio/mods"
 ln -s /Users/Shared/kc-companion "$HOME/Library/Application Support/factorio/mods/kc-companion"
 ```
 
-Steam launch options under `gamer`: `--enable-lua-udp 34200`.
+Steam → Factorio → Properties → Launch Options: `--enable-lua-udp 34200`.
+
+Diagnostics as `gamer`: `grep -iE "kc-companion|udp" "$HOME/Library/Application Support/factorio/factorio-current.log"`; copy the log to `/Users/Shared/` to share it. As `umaxfun`: `tail -f ~/.kirocrew-factorio/bridge.launchd.log` shows every question that reaches the bridge.

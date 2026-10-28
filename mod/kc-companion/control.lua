@@ -1,4 +1,5 @@
 local protocol = require("scripts.protocol")
+local gui = require("scripts.gui")
 
 -- recv_udp/send_udp raise when the game was not started with --enable-lua-udp
 -- (e.g. under FactorioTest). Probe once per load and stay quiet afterwards.
@@ -11,12 +12,22 @@ local function send(msg)
   end
 end
 
+local function init_players()
+  for _, p in pairs(game.players) do gui.ensure_button(p) end
+end
+
 script.on_init(function()
   protocol.init_storage()
+  init_players()
 end)
 
 script.on_configuration_changed(function()
   protocol.init_storage()
+  init_players()
+end)
+
+script.on_event(defines.events.on_player_created, function(e)
+  gui.ensure_button(game.get_player(e.player_index))
 end)
 
 script.on_nth_tick(10, function()
@@ -24,7 +35,9 @@ script.on_nth_tick(10, function()
   local ok = pcall(helpers.recv_udp)
   if udp_ok == nil then
     udp_ok = ok
+    protocol.udp_state = ok and "on" or "off"
     if ok then send(protocol.heartbeat("hello")) end
+    gui.refresh_all()
   end
 end)
 
@@ -32,23 +45,48 @@ script.on_nth_tick(protocol.HEARTBEAT_TICKS, function()
   send(protocol.heartbeat())
 end)
 
+script.on_nth_tick(60, function()
+  gui.tick()
+end)
+
+-- what changes the window when it arrives from the bridge
+local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true }
+
 script.on_event(defines.events.on_udp_packet_received, function(e)
   local msg = protocol.decode(e.payload)
   if not msg then return end
+  local was_connected = protocol.connected()
   for _, reply in ipairs(protocol.handle(msg)) do
     send(reply)
+  end
+  if REFRESH[msg.type] or (msg.type == "pong" and not was_connected) then
+    gui.refresh_all()
   end
 end)
 
 script.on_event(defines.events.on_chart_tag_removed, function(e)
   protocol.on_tag_removed(e.tag)
+  gui.refresh_all()
 end)
 
--- Entry points for the in-game window (next step) and for level 2 tests over RCON.
+script.on_event("kc-toggle", function(e)
+  gui.toggle(game.get_player(e.player_index))
+end)
+
+script.on_event(defines.events.on_gui_click, function(e)
+  gui.on_click(e, send)
+end)
+
+script.on_event(defines.events.on_gui_confirmed, function(e)
+  gui.on_confirmed(e, send)
+end)
+
+-- Entry points for level 2/3 tests over RCON (they act as the player).
 remote.add_interface("kc", {
   ask = function(chat, text)
     local msg = protocol.ask(chat, text)
     send(msg)
+    gui.refresh_all()
     return msg.id
   end,
   state = function()
@@ -56,9 +94,10 @@ remote.add_interface("kc", {
   end,
   set_run_name = function(name)
     storage.kc.run_name = name
+    gui.refresh_all()
   end,
 })
 
 if script.active_mods["factorio-test"] then
-  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks" })
+  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks", "tests/test-gui" })
 end

@@ -189,7 +189,13 @@ def run(ctx):
     st = load_state(path)
     deadline = time.monotonic() + float(cfg["run_seconds"])
     handled = 0
+    parent = os.getppid()
     while time.monotonic() < deadline:
+        if os.getppid() != parent:
+            # The gateway that started this wake is gone (stopped or restarted) and does not
+            # reap script children: exit, or two dispatchers end up sharing the queue.
+            print("gateway gone, dispatcher exiting")
+            return
         wait = max(0, min(cfg["poll_wait"], int(deadline - time.monotonic()) - 1))
         try:
             # lease shorter than our retry path, so a crash mid-ask returns it quickly

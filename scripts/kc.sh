@@ -43,6 +43,12 @@ case "${1:-status}" in
   env)
     echo "export KIROCREW_HOME=$KIROCREW_HOME KIRO_HOME=$KIRO_HOME KIROCREW_PORT=$KIROCREW_PORT KIROCREW_SKIP_MODEL_DOWNLOAD=1"
     ;;
+  run)
+    # foreground, for launchd (scripts/services.sh)
+    mkdir -p "$KIROCREW_HOME" "$KIRO_HOME" "$KIROCREW_HOME/tmp"
+    [ -f "$KIRO_HOME/agents/kirocrew.json" ] || "${CLEAN[@]}" kirocrew setup --agent-only || true
+    exec "${CLEAN[@]}" kirocrew gateway --no-open --no-tunnel --port "$KIROCREW_PORT"
+    ;;
   start)
     if up; then echo "already up: $URL"; exit 0; fi
     mkdir -p "$KIROCREW_HOME" "$KIRO_HOME" "$KIROCREW_HOME/tmp"

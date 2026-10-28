@@ -45,10 +45,37 @@ function M.tab(chat)
   if not t then
     t = { feed = {}, state = "idle" }
     kc.tabs[chat] = t
-    kc.tab_order[#kc.tab_order + 1] = chat
   end
+  -- a closed tab keeps its feed; opening it again (or a reply arriving) brings it back
+  local listed = false
+  for _, c in ipairs(kc.tab_order) do
+    if c == chat then listed = true break end
+  end
+  if not listed then kc.tab_order[#kc.tab_order + 1] = chat end
   return t
 end
+
+--- Hide a tab from the window. The chat in Kiro Crew stays; the same name reopens it.
+function M.close_tab(chat)
+  local order = storage.kc.tab_order
+  for i, c in ipairs(order) do
+    if c == chat then table.remove(order, i) return true end
+  end
+  return false
+end
+
+--- Live marks of one chat, in placement order.
+function M.chat_marks(chat)
+  local out = {}
+  for n, m in pairs(storage.kc.marks[chat] or {}) do
+    if m.tag.valid then out[#out + 1] = { id = n, surface = m.surface, position = m.position, text = m.text } end
+  end
+  table.sort(out, function(a, b) return a.id < b.id end)
+  return out
+end
+
+-- "unknown" until the first recv_udp, then "on" or "off" (game started without --enable-lua-udp)
+M.udp_state = "unknown"
 
 local function push(tab, entry)
   entry.tick = game.tick
