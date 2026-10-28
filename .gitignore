@@ -1,0 +1,5 @@
+.test-data/
+__pycache__/
+*.pyc
+.venv/
+.kiro/settings/
