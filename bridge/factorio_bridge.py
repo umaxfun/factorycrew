@@ -37,6 +37,7 @@ class BridgeError(Exception):
 @dataclass
 class Settings:
     host: str = "127.0.0.1"
+    http_host: str = "127.0.0.1"  # 0.0.0.0 only inside a test container whose port is published to host loopback
     udp_port: int = 34199
     game_port: int = 34200
     http_port: int = 34198
@@ -382,9 +383,9 @@ async def serve(settings: Settings) -> None:
     loop = asyncio.get_running_loop()
     bridge = Bridge(settings)
     await loop.create_datagram_endpoint(lambda: bridge, local_addr=(settings.host, settings.udp_port))
-    server = await asyncio.start_server(bridge.handle_http, settings.host, settings.http_port)
+    server = await asyncio.start_server(bridge.handle_http, settings.http_host, settings.http_port)
     log.info("listening udp %s:%d (game at :%d), http %s:%d", settings.host, settings.udp_port,
-             settings.game_port, settings.host, settings.http_port)
+             settings.game_port, settings.http_host, settings.http_port)
     asyncio.create_task(bridge.housekeeping())
     async with server:
         await server.serve_forever()
@@ -396,6 +397,8 @@ def main() -> None:
     p.add_argument("--udp-port", type=int, default=d.udp_port)
     p.add_argument("--game-port", type=int, default=d.game_port)
     p.add_argument("--http-port", type=int, default=d.http_port)
+    p.add_argument("--http-host", default=d.http_host,
+                   help="HTTP bind address; keep 127.0.0.1 except inside a container (no auth!)")
     p.add_argument("--offline-after", type=float, default=d.offline_after)
     p.add_argument("--idle-after", type=float, default=d.idle_after)
     p.add_argument("--request-timeout", type=float, default=d.request_timeout)
@@ -404,8 +407,8 @@ def main() -> None:
     a = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
-    # Always loopback: the API has no auth, anyone who can reach it can run Lua in the game.
-    s = Settings(udp_port=a.udp_port, game_port=a.game_port, http_port=a.http_port,
+    # Loopback by default: the API has no auth, anyone who can reach it can run Lua in the game.
+    s = Settings(udp_port=a.udp_port, game_port=a.game_port, http_port=a.http_port, http_host=a.http_host,
                  offline_after=a.offline_after, idle_after=a.idle_after,
                  request_timeout=a.request_timeout, lease=a.lease)
     try:
