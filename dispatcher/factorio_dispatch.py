@@ -182,15 +182,35 @@ def handle(ctx, cfg, st, ask):
 
 
 def source_stamp():
-    """mtime of this script; a wake compiles it once, so a newer install needs a new wake."""
+    """mtimes of this script and the app config; a wake reads both once, so a change needs a new wake."""
+    stamp = []
+    for p in ("__file__", "config"):
+        try:
+            path = __file__ if p == "__file__" else Path(__file__).resolve().parents[1] / "data" / "config.json"
+            stamp.append(os.stat(path).st_mtime_ns)
+        except (NameError, OSError):
+            stamp.append(None)
+    return tuple(stamp)
+
+
+def app_config() -> dict:
+    """Overrides from <app>/data/config.json when running as a Kiro Crew app cron."""
     try:
-        return os.stat(__file__).st_mtime_ns
-    except (NameError, OSError):
-        return None
+        cfg = json.loads((Path(__file__).resolve().parents[1] / "data" / "config.json").read_text())
+    except (NameError, OSError, ValueError):
+        return {}
+    out = {}
+    if "http_port" in cfg:
+        out["bridge"] = f"http://127.0.0.1:{int(cfg['http_port'])}"
+    for k in ("agent", "state_file"):
+        if k in cfg:
+            out[k] = cfg[k]
+    return out
 
 
 def run(ctx):
     cfg = dict(CONFIG)
+    cfg.update(app_config())
     if ctx.message.strip().startswith("{"):
         cfg.update(json.loads(ctx.message))
     path = state_path(cfg)

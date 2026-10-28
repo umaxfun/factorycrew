@@ -84,8 +84,10 @@ def alive(name):
 def deploy():
     mods = DATA / "mods"
     mods.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["rsync", "-a", "--delete", "--exclude", "tests",
-                    f"{ROOT}/mod/kc-companion/", f"{mods}/kc-companion/"], check=True)
+    # FC_UI_MOD_SRC: take the mod from elsewhere, e.g. the built app (dist/factorycrew/mod/kc-companion)
+    src = os.environ.get("FC_UI_MOD_SRC") or f"{ROOT}/mod/kc-companion"
+    subprocess.run(["rsync", "-a", "--delete", "--exclude", "tests", "--exclude", ".factorycrew-managed",
+                    f"{src.rstrip('/')}/", f"{mods}/kc-companion/"], check=True)
     proto = mods / "kc-companion" / "scripts" / "protocol.lua"
     text = proto.read_text(encoding="utf-8").replace("M.BRIDGE_PORT = 34199", f"M.BRIDGE_PORT = {UDP_BRIDGE}")
     proto.write_text(text, encoding="utf-8")
@@ -112,7 +114,9 @@ def spawn(name, argv, env=None):
 def start():
     DEV.mkdir(parents=True, exist_ok=True)
     deploy()
-    if not alive("bridge"):
+    # FC_UI_EXTERNAL_BRIDGE=1: a bridge on these ports already runs, e.g. the backend of the
+    # factorycrew app in a dev gateway (data/config.json 34298/34299/34300) for an app e2e.
+    if not alive("bridge") and not os.environ.get("FC_UI_EXTERNAL_BRIDGE"):
         spawn("bridge", ["/usr/bin/python3", str(ROOT / "bridge" / "factorio_bridge.py"),
                          "--udp-port", str(UDP_BRIDGE), "--game-port", str(UDP_GAME), "--http-port", str(HTTP)])
         time.sleep(1)

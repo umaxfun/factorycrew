@@ -54,6 +54,17 @@ Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet t
 
 Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model, 5 agent turns per run, and checks that Kira answers in the player's language (one question in Russian).
 
+## Kiro Crew app (the redistributable package)
+
+`scripts/build-app.sh` builds `dist/factorycrew/` (+ zip): the mod, the bridge run by the app backend, the MCP server, the dispatcher as the app's cron, and the Kira agent. A player installs it with `kirocrew app install <dir>`, trusts it (third-party apps need `agent.apps_trusted`), and toggles it with enable/disable.
+
+```bash
+./scripts/app-dev.sh          # build + reinstall + trust + enable on a dev gateway :5479 (~/.kirocrew-factorio-app)
+./scripts/test-app-e2e.sh     # app e2e on the real 2.0.77 client, no Docker
+```
+
+The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod against the app's bridge on the dev ports 34298-34300, and asks through the window's own handlers: 7 chests marked, follow-up from context, the trash button, a Russian question answered in Russian, and the turns used the app's own MCP server. ~50 s, 4 agent turns.
+
 ## UI loop (screenshots of the real window)
 
 A real 2.0.77 client under `umaxfun`, from the player's copy `/Users/Shared/factorio.app`, with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with the game under `gamer`:

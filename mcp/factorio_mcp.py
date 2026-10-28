@@ -9,10 +9,24 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 import urllib.error
 import urllib.request
 
-BRIDGE = os.environ.get("FACTORIO_BRIDGE_URL", "http://127.0.0.1:34198").rstrip("/")
+
+
+def _bridge_url() -> str:
+    """FACTORIO_BRIDGE_URL, else the http_port in <app>/data/config.json (Kiro Crew app install)."""
+    if os.environ.get("FACTORIO_BRIDGE_URL"):
+        return os.environ["FACTORIO_BRIDGE_URL"]
+    try:
+        cfg = json.loads((Path(__file__).resolve().parents[1] / "data" / "config.json").read_text())
+    except (OSError, ValueError):
+        cfg = {}
+    return f"http://127.0.0.1:{int(cfg.get('http_port', 34198))}"
+
+
+BRIDGE = _bridge_url().rstrip("/")
 PROTOCOL_VERSION = "2025-06-18"
 
 POS = {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}
