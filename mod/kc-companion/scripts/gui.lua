@@ -48,8 +48,10 @@ end
 
 function M.ensure_button(player)
   local flow = mod_gui.get_button_flow(player)
+  -- the first version had a text button; swap it for the face
+  if flow.kc_toggle and flow.kc_toggle.type ~= "sprite-button" then flow.kc_toggle.destroy() end
   if not flow.kc_toggle then
-    flow.add{ type = "button", name = "kc_toggle", caption = "Кира", tooltip = "Окно Киры (Ctrl+Shift+K)",
+    flow.add{ type = "sprite-button", name = "kc_toggle", sprite = "kc-kira", tooltip = "Kira (Ctrl+Shift+K)",
               style = mod_gui.button_style }
   end
 end
@@ -62,7 +64,11 @@ local function build(player)
 
   local bar = frame.add{ type = "flow", name = "kc_titlebar", direction = "horizontal" }
   bar.drag_target = frame
-  bar.add{ type = "label", caption = "Кира", style = "frame_title", ignored_by_interaction = true }
+  local face = bar.add{ type = "sprite", sprite = "kc-kira", resize_to_sprite = false, ignored_by_interaction = true }
+  face.style.width = 24
+  face.style.height = 24
+  face.style.stretch_image_to_widget_size = true
+  bar.add{ type = "label", caption = "Kira", style = "frame_title", ignored_by_interaction = true }
   local grip = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
   grip.style.horizontally_stretchable = true
   grip.style.height = 24
@@ -137,14 +143,14 @@ local function status_text(tab)
   if protocol.udp_state == "off" then
     parts[#parts + 1] = "[color=red]UDP выключен: запустите игру с --enable-lua-udp 34200[/color]"
   elseif not protocol.connected() then
-    parts[#parts + 1] = "[color=red]нет связи с Кирой[/color]"
+    parts[#parts + 1] = "[color=red]нет связи с Kira[/color]"
   else
     parts[#parts + 1] = "[color=green]на связи[/color]"
   end
   if tab.state == "thinking" then
     parts[#parts + 1] = "[color=yellow]думаю…[/color]"
   elseif tab.note == "no_reply" then
-    parts[#parts + 1] = "[color=orange]Кира не ответила, ответ может прийти в чат[/color]"
+    parts[#parts + 1] = "[color=orange]Kira не ответила, ответ может прийти в чат[/color]"
   end
   return table.concat(parts, "   ")
 end
@@ -169,7 +175,7 @@ local function refresh_feed(player, frame)
       end
       who = "[font=default-bold][color=0.6,0.8,1]Вы:[/color][/font] " .. e.text .. warn
     else
-      who = "[font=default-bold][color=1,0.8,0.4]Кира:[/color][/font] " .. e.text
+      who = "[img=kc-kira] [font=default-bold][color=1,0.8,0.4]Kira:[/color][/font] " .. e.text
     end
     local l = pane.add{ type = "label", caption = who }
     l.style.single_line = false

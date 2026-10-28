@@ -1,5 +1,6 @@
 local protocol = require("scripts.protocol")
 local gui = require("scripts.gui")
+local mod_gui = require("mod-gui")
 
 -- FactorioTest's headless run may have no LuaPlayer; then the GUI cannot be built and these
 -- tests only report that (the window is then checked in the live game, level 3).
@@ -66,13 +67,15 @@ describe("gui", function()
   it("opens with a default tab, top-bar button and no-connection indicator", function()
     if not player then return end
     gui.ensure_button(player)
+    local btn = mod_gui.get_button_flow(player).kc_toggle
+    assert(btn and btn.type == "sprite-button" and btn.sprite == "kc-kira", "top-bar button is not Kira's face")
     gui.toggle(player)
     local root = player.gui.screen.kc_main
     assert(root, "window not opened")
     assert(storage.kc.tab_order[1] == "Общий")
     assert(find(root, "kc_tab:Общий"))
     local s = joined(root)
-    assert(s:find("нет связи с Кирой", 1, true) or s:find("UDP выключен", 1, true), s)
+    assert(s:find("нет связи с Kira", 1, true) or s:find("UDP выключен", 1, true), s)
     -- a pong turns the indicator green
     protocol.handle({ type = "pong", id = "p" })
     gui.refresh_all()
@@ -107,7 +110,7 @@ describe("gui", function()
     gui.toggle(player)
     protocol.handle({ type = "status", chat = "Общий", state = "idle", note = "no_reply" })
     gui.refresh_all()
-    assert(joined(player.gui.screen.kc_main):find("Кира не ответила", 1, true))
+    assert(joined(player.gui.screen.kc_main):find("Kira не ответила", 1, true))
   end)
 
   it("adds, switches and closes tabs", function()
