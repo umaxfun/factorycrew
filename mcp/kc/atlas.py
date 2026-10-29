@@ -30,6 +30,9 @@ BELT = {"transport-belt", "underground-belt", "splitter", "loader", "loader-1x1"
 MACHINE = {"assembling-machine", "furnace", "rocket-silo", "mining-drill"}
 CHEST = {"container", "logistic-container", "infinity-container"}
 OK_STATUS = {"working", "full_output"}
+# script helpers mods place (Nullius: 32x29 wind collision boxes, 3.8 M of the fixture's 4.2 M tiles):
+# nothing feeds or is fed through them, and indexing them took 1.9 s of a 2.4 s build
+UNINDEXED = {"simple-entity-with-force", "simple-entity-with-owner"}
 
 
 def short(name: str) -> str:
@@ -133,13 +136,18 @@ class Atlas:
         return (e["x"] - e["w"] / 2, e["y"] - e["h"] / 2, e["x"] + e["w"] / 2, e["y"] + e["h"] / 2)
 
     def tiles_of(self, e):
-        x0, y0 = math.floor(e["x"] - e["w"] / 2 + 0.01), math.floor(e["y"] - e["h"] / 2 + 0.01)
-        return [(x0 + i, y0 + j) for i in range(max(1, e["w"])) for j in range(max(1, e["h"]))]
+        w, h = e["w"], e["h"]
+        if w <= 1 and h <= 1:  # most entities: one tile, no loops
+            return [(math.floor(e["x"]), math.floor(e["y"]))]
+        x0, y0 = math.floor(e["x"] - w / 2 + 0.01), math.floor(e["y"] - h / 2 + 0.01)
+        return [(x0 + i, y0 + j) for i in range(max(1, w)) for j in range(max(1, h))]
 
     def _index(self):
         self.at = collections.defaultdict(list)
         self.rail = set()
         for e in self.ents:
+            if e["type"] in UNINDEXED:
+                continue
             for t in self.tiles_of(e):
                 self.at[t].append(e["id"])
             if "rail" in e["type"]:
@@ -220,8 +228,11 @@ class Atlas:
                 a = parent[a]
             return a
         cell = collections.defaultdict(list)
+        boxes = [boxes_of(it) for it in items]
+        hull = [(min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
+                for bs in boxes]
         for i, it in enumerate(items):
-            for (x0, y0, x1, y1) in boxes_of(it):
+            for (x0, y0, x1, y1) in boxes[i]:
                 # grown by the gap, so two footprints within `gap` always share a cell
                 for cx in range(int((x0 - gap) // 32), int((x1 + gap) // 32) + 1):
                     for cy in range(int((y0 - gap) // 32), int((y1 + gap) // 32) + 1):
@@ -232,9 +243,11 @@ class Atlas:
                 for b in ids[n + 1:]:
                     if find(a) == find(b) or not same(items[a], items[b]):
                         continue
+                    if self.gap(hull[a], hull[b]) > gap:  # even the outlines are too far apart
+                        continue
                     best = None
-                    for A in boxes_of(items[a]):
-                        for B in boxes_of(items[b]):
+                    for A in boxes[a]:
+                        for B in boxes[b]:
                             g = self.gap(A, B)
                             if best is None or g < best[0]:
                                 best = (g, A, B)
