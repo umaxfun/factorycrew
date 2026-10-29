@@ -100,3 +100,22 @@ def test_ups_sweep(kira, budget, send_bytes, max_chunks):
     th.join()
     print(f"\nbudget {budget} send {send_bytes} chunks {max_chunks}: UPS {[round(x) for x in samples]}, "
           f"{res['r'].get('data')}")
+
+
+def test_why_the_block_is_slow_names_both_limits(kira):
+    """docs/atlas.md task 2: the rutile source makes 8.47/s of the 25.6/s the block needs, and graphite
+    reaches it on one lane (22.5/s of the 44.8/s needed). Both must be in the answer, with numbers."""
+    tab = f"Atlas slow {STAMP}"
+    kira.open_tab(tab)
+    (x0, y0), (x1, y1) = BOX
+    assert lua(f'return remote.call("kc", "point", {{{{{x0}, {y0}}}, {{{x1}, {y1}}}}})')
+    text, _, t_all = kira.ask_and_wait(tab, "why is this titanium tetrachloride block @1 so slow? check everything",
+                                       timeout=LONG)
+    print(f"\nreply ({t_all:.0f}s): {text}")
+    log = transcript(tab)
+    assert '"level": "trace"' in log or "'level': 'trace'" in log or 'level\\": \\"trace' in log, \
+        "Kira did not trace an input"
+    low = text.lower()
+    assert re.search(r"8[.,]4|8[.,]5", text) and re.search(r"25[.,]6|26", text), "no rutile supply vs need"
+    assert "lane" in low or "полос" in low, "the graphite lane limit is missing"
+    assert re.search(r"22[.,]5", text), "no lane capacity number"

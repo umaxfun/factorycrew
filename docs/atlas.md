@@ -139,6 +139,8 @@ Done when:
 
 Depends on: 1.
 
+Status: unit tests on the fixture and the e2e are done; the planted lane-only case waits for the synthetic saves of task 5. The e2e reply (real client, 109 s): "Block: 32 furnaces on titanium tetrachloride ... Full speed needs: graphite 44.8/s, rutile 25.6/s, chlorine 512/s. 1. Graphite: 0/s. Its stop (-355,-107) has limit 0, set by a wire. No train has it in its schedule. Main cause. 2. Rutile: the mine block at (246,345) makes only 8.5/s, and 6 of its 10 machines have low power. Train 371 waits at the rutile pickup stop with 1797/2500. That stop's limit is 0 too. 3. Belt: graphite and rutile get one lane each of one express belt (22.5/s each). 4. Chlorine: 23 sodium machines make 431/s of the 512/s needed. Fine now, short at full speed. Fix 1 first ..." It found a cause nobody had named (the graphite stop disabled by a wire).
+
 ### 3. Map level and filters
 
 Scope: `level="map"` with `item`, `status`, `feed`, `near`, `min_machines`, `limit`, and `kind=station|train|network`; fix the overview's stuck reason and drill statuses.
