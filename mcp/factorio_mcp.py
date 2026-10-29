@@ -430,6 +430,14 @@ def atlas_tool(args: dict) -> dict:
         return err
     a = c["atlas"]
     level = args.get("level") or "zone"
+    asked = args.get("item")
+    if asked:
+        item, candidates = a.resolve_item(asked)
+        if item is None:
+            return {"ok": False, "error": "unknown_item", "message": f"no item {asked!r} in this base",
+                    "candidates": candidates}
+        args = dict(args, item=item)
+    resolved = {"item": args["item"]} if asked and args["item"] != asked else {}
     limit = max(1, min(int(args.get("limit") or 40), 200))
     tid, at, box = args.get("id"), args.get("at"), args.get("box")
     if level == "map":
@@ -443,6 +451,8 @@ def atlas_tool(args: dict) -> dict:
                           min_machines=int(args.get("min_machines") or (3 if kind == "zone" else 1)),
                           limit=limit if args.get("limit") else 60, live=live)
         view.update(ok=True, surface=a.surface)
+        if resolved:
+            view["resolved_item"] = resolved["item"]
         if c.get("tick_now") is not None and a.tick is not None:
             view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
         return view
@@ -489,6 +499,8 @@ def atlas_tool(args: dict) -> dict:
                 view["box_also_covers_zones"] = [f"Z{z}" for z in others]
     view["ok"] = True
     view["surface"] = a.surface
+    if resolved:
+        view["resolved_item"] = resolved["item"]
     if c.get("tick_now") is not None and a.tick is not None:
         view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
     return view

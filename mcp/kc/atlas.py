@@ -544,6 +544,35 @@ class Atlas:
         b = self.block_at(x, y)
         return None if b is None else self.zone_of[b]
 
+    def known_items(self):
+        if not hasattr(self, "_known"):
+            k = set(self.kind)
+            for b in self.blocks:
+                k |= b["pro"] | b["ing"]
+            for si in range(len(self.stops)):
+                k |= self.stop_items(si)
+            self._known = k
+        return self._known
+
+    def resolve_item(self, name):
+        """the base's own item name for what a player or a model calls it: "glass" is
+        "nullius-glass" in Nullius. Returns (name or None, candidates when it is ambiguous)."""
+        if not name:
+            return None, []
+        known = self.known_items()
+        if name in known:
+            return name, []
+        low = name.lower().strip().replace(" ", "-")
+        exact = sorted(n for n in known if short(n) == low or n.split("-", 1)[-1] == low)
+        if len(exact) == 1:
+            return exact[0], []
+        if exact:
+            return None, exact
+        part = sorted(n for n in known if low in n)
+        if len(part) == 1:
+            return part[0], []
+        return None, part[:20]
+
     def stop_info(self, si):
         s = self.stops[si]
         return {"id": f"S{si}", "name": s.get("s", ""), "x": s["x"], "y": s["y"], "limit": s.get("lim", "")}

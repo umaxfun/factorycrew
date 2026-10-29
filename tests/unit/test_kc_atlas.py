@@ -316,3 +316,10 @@ def test_no_network_edge_for_what_a_block_gets_by_belt(at):
     for (a, b), items in at.edges.items():
         if a[0] == "N" and b[0] == "B":
             assert not set(items) & at.phys_in[b[1]], (a, b, items)
+
+
+def test_item_names_resolve_to_the_bases_own(at):
+    assert at.resolve_item("glass") == ("nullius-glass", [])
+    assert at.resolve_item("nullius-rutile") == ("nullius-rutile", [])
+    name, cands = at.resolve_item("no-such-thing-at-all")
+    assert name is None and cands == []
