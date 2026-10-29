@@ -2,8 +2,8 @@
 """Game stand for e2e: headless Factorio 2.1 + bridge inside one container.
 
 Reuses the level 2 harness (tests/integration/conftest.py) for preparing the save and
-starting the processes. Runs until stdin closes or SIGTERM. Ports published by the
-caller to host loopback: bridge HTTP 34198, RCON 27015.
+starting the processes. Runs until stdin closes or SIGTERM. Inside the container the
+bridge HTTP is 34198 and RCON 27015; scripts/test-e2e.sh publishes them on the slot's ports.
 """
 import signal
 import sys

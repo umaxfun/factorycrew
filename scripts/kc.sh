@@ -10,6 +10,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# A linked git worktree never falls back to the shared default instance: it has its own
+# (scripts/stand.sh, docs/worktrees.md). FC_ALLOW_DEFAULT=1 overrides.
+if [ -z "${FC_KC_HOME:-}" ] && [ -z "${FC_ALLOW_DEFAULT:-}" ] && \
+   [ "$(git -C "$ROOT" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" ]; then
+  echo "kc.sh: this is a worktree; use its own gateway: scripts/stand.sh kc $*" >&2
+  exit 2
+fi
 export KIROCREW_HOME="${FC_KC_HOME:-$HOME/.kirocrew-factorio}"
 export KIRO_HOME="$KIROCREW_HOME/kiro"
 export KIROCREW_PORT="${FC_KC_PORT:-5477}"
@@ -34,7 +41,7 @@ install_files() {
   mkdir -p "$KIRO_HOME/agents" "$KIROCREW_HOME/crons"
   # agent template with absolute paths to this checkout
   # FC_BRIDGE_HTTP: the bridge's HTTP port for this instance's MCP (a stand per worktree, scripts/stand.sh)
-  sed -e "s#__ROOT__#$ROOT#g" -e "s#127.0.0.1:34198#127.0.0.1:${FC_BRIDGE_HTTP:-34198}#" \
+  sed -e "s#__ROOT__#$ROOT#g" -e "s#127.0.0.1:34198#127.0.0.1:${FC_BRIDGE_HTTP:-34198}#g" \
     "$ROOT/agent/factorio-companion.json" > "$KIRO_HOME/agents/factorio-companion.json"
   echo "installed agent -> $KIRO_HOME/agents/factorio-companion.json"
   # Copy only on change: a running wake exits when this file's mtime moves (it compiled the

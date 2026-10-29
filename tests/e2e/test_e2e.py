@@ -4,8 +4,8 @@ game (headless 2.1 in Docker, RCON plays the player) -> mod -> UDP -> bridge (sa
 -> HTTP -> dispatcher (script-cron in the factorycrew gateway) -> chat Factorio/<run>/<tab>
 -> agent factorio-companion -> MCP factorio -> bridge -> game.
 
-Needs: `scripts/kc.sh start`, the dispatcher cron registered, the stand container up with
-bridge HTTP on 127.0.0.1:34198 and RCON on 127.0.0.1:27015 (scripts/test-e2e.sh does it).
+Needs a gateway with the dispatcher cron and the stand container up; scripts/test-e2e.sh
+prepares both on this worktree's slot and passes FC_E2E_BRIDGE, FC_E2E_RCON, KIROCREW_HOME.
 Uses a real model: each test costs a few agent turns.
 """
 from __future__ import annotations
@@ -21,9 +21,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "integration"))
+import conftest  # noqa: E402
 from conftest import Rcon, lua_str, wait_until  # noqa: E402
 
-BRIDGE = "http://127.0.0.1:34198"
+BRIDGE = os.environ.get("FC_E2E_BRIDGE", "http://127.0.0.1:34198")
+conftest.RCON_PORT = int(os.environ.get("FC_E2E_RCON", conftest.RCON_PORT))  # Rcon reads it at connect
 KC_HOME = Path(os.environ.get("KIROCREW_HOME", Path.home() / ".kirocrew-factorio"))
 ANSWER_TIMEOUT = float(os.environ.get("FC_E2E_ANSWER_TIMEOUT", "180"))
 

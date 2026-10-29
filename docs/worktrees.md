@@ -29,10 +29,12 @@ Only what `./scripts/stand.sh env` prints:
 | `FC_KC_PORT` | your Kiro Crew gateway |
 | `FC_UI_HOME` | your Factorio data dir, save, screenshots, process logs |
 | `FC_KC_HOME` | your gateway's home: Kira's agent, the dispatcher, chats |
+| `FC_E2E_*` | the e2e run's bridge and RCON ports, gateway port and home, Docker container name |
+| `FC_APP_*` | the app e2e run's bridge ports, app gateway port and home, client data dir |
 
 Everything else on the host belongs to someone else: other ports, other homes, other gateways, a game you did not start. Do not read it as yours, do not restart it, do not add crons or agents to it, and do not point your dispatcher or Kira at it. A port that answers is not proof it is yours. The bridge, the gateway and the game all answer the same way whoever started them. On 2026-10-29 a worktree's dispatcher pointed at another session's bridge took that session's question. In the same incident, a second `ui_dev.py start` on a shared data dir replaced another session's game.
 
-`up` enforces part of this. It refuses a slot when any of its four ports is held by a process that is not this checkout's stand: a gateway with another `KIROCREW_HOME`, a bridge from another checkout, a game with another data dir.
+The scripts enforce part of this. In a linked worktree, `kc.sh` and `tools/ui_dev.py` refuse to fall back to the shared default instance: call them through `stand.sh kc` / `stand.sh ui`, or with your `FC_*` exports. `deploy-mod.sh` and `services.sh`, which install into the player's game, refuse to run from a worktree at all. `FC_ALLOW_DEFAULT=1` overrides both, deliberately. `up` also It refuses a slot when any of its four ports is held by a process that is not this checkout's stand: a gateway with another `KIROCREW_HOME`, a bridge from another checkout, a game with another data dir.
 
 ## Checking only your own stand
 
@@ -43,7 +45,7 @@ Everything else on the host belongs to someone else: other ports, other homes, o
 - a Lua query makes the round trip and the tick advances, so the game is not paused or sitting in a menu;
 - the running game loaded this checkout's mod (a hash `tools/ui_dev.py` writes when it starts the game, against the checkout now), so an edit without `ui restart` shows up;
 - the gateway on your port has your `KIROCREW_HOME`;
-- Kira's MCP runs this checkout's server against your bridge;
+- Kira's agent file runs this checkout's MCP server with your bridge, and every Kira MCP process running in your gateway dials your bridge (`--bridge` in its command line). The env block of an agent spec does not reach the MCP process, which once sent a worktree's replies to the player's bridge;
 - the installed dispatcher is this checkout's, and its cron polls your bridge.
 
 Run it after `up`, after every restart, and before reporting a result from the stand. A green test against some other bridge or gateway proves nothing about your change.
@@ -66,15 +68,19 @@ Kira's chats from your stand live in your gateway, under `Factorio/<run>/<tab>`.
 
 ## Tests
 
-Unit tests, level 1 (`./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh`) and integration (`./scripts/test-integration.sh`) need no stand. Each run starts its own container with no host ports and writes to this worktree's `.test-data`, so any number can run at once.
+Every test script stays inside the worktree's slot, so any number of worktrees can test at once:
 
-`scripts/test-e2e.sh` and `scripts/test-app-e2e.sh` are not isolated yet. They use fixed host ports and default gateway homes: the e2e publishes 34198 and 27015, stops a host bridge on 34198 for the run, and uses `~/.kirocrew-factorio`; the app e2e uses 34298 and `~/.kirocrew-factorio-app`. Run them only when nobody else on the host uses those ports and homes. Better, move them onto `stand.sh env` before relying on them in parallel.
+- Unit, level 1 (`./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh`) and integration (`./scripts/test-integration.sh`) start their own containers with no host ports and write to this worktree's `.test-data`.
+- `./scripts/test-e2e.sh` claims the slot (`stand.sh claim`) and starts its own gateway on `FC_E2E_KC_PORT` (home `FC_E2E_KC_HOME`). It runs a Docker stand named `FC_E2E_CONTAINER`, published on `FC_E2E_HTTP` / `FC_E2E_RCON`, and stops the gateway afterwards (`FC_E2E_KEEP_GATEWAY=1` keeps it). The headless game is in the container, so no window opens.
+- `./scripts/test-app-e2e.sh` builds the app and installs it into its own gateway on `FC_APP_PORT` (home `FC_APP_HOME`), with the app's bridge on `FC_APP_HTTP`. It starts a second real client with data dir `FC_APP_UI_HOME`, which is a window of its own beside the stand's. It stops both afterwards (`FC_APP_KEEP_GATEWAY=1` keeps the gateway).
+
+They need no running stand; `claim` only reserves the slot. Both e2e use a real model (a few agent turns).
 
 ## Slots, claims, data
 
-- Slot N (1..20 by default): bridge HTTP `34198 + 100·N`, gateway `5500 + N`. Slot 0 would be the default ports of a plain install, so it is never handed out. Override the bases and the count with `FC_STAND_BRIDGE_BASE`, `FC_STAND_GATEWAY_BASE`, `FC_STAND_MAX`.
+- Slot N (1..20 by default), with P = `34198 + 100·N`: stand bridge P (UDP P+1, game P+2) and gateway `5500 + N`; e2e bridge P+10, RCON P+11, gateway `5600 + N`; app e2e bridge P+20 (UDP P+21, game P+22), gateway `5700 + N`. Slot 0 would be the default ports of a plain install, so it is never handed out. Override the bases and the count with `FC_STAND_BRIDGE_BASE`, `FC_STAND_GATEWAY_BASE`, `FC_STAND_MAX`.
 - Claims live in `~/.factorycrew-stands/slot-N/owner` (override with `FC_STAND_DIR`), one per slot, holding the owner checkout's path. Claiming is a `mkdir`, so two agents starting at once cannot take the same slot. A claim whose checkout path no longer exists is stale and is reused. The worktree remembers its slot in `.stand` (git-ignored).
-- Homes are named after the checkout's directory: `~/.factorycrew-dev-<dir>`, `~/.kirocrew-factorio-<dir>`. `release` keeps them, because they hold the save and Kira's chats. Delete them by hand when nothing in them is needed.
+- Homes are named after the checkout's directory: `~/.factorycrew-dev-<dir>`, `~/.kirocrew-factorio-<dir>`, plus `-e2e` and `-app` variants for the test runs. `release` keeps them, because they hold the save and Kira's chats. Delete them by hand when nothing in them is needed.
 
 ## Requirements on the host
 

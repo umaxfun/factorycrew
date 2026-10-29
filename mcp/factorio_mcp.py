@@ -19,7 +19,13 @@ import urllib.request
 
 
 def _bridge_url() -> str:
-    """FACTORIO_BRIDGE_URL, else the http_port in <app>/data/config.json (Kiro Crew app install)."""
+    """`--bridge URL`, else FACTORIO_BRIDGE_URL, else the http_port in <app>/data/config.json.
+
+    The argument comes first: kiro-cli does not pass an agent spec's `env` block to the MCP
+    process (measured 2026-10-29: the variable was missing, so a worktree's Kira talked to the
+    player's bridge on 34198)."""
+    if "--bridge" in sys.argv[1:-1]:
+        return sys.argv[sys.argv.index("--bridge") + 1]
     if os.environ.get("FACTORIO_BRIDGE_URL"):
         return os.environ["FACTORIO_BRIDGE_URL"]
     try:

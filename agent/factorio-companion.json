@@ -16,7 +16,9 @@
     "factorio": {
       "command": "/usr/bin/python3",
       "args": [
-        "__ROOT__/mcp/factorio_mcp.py"
+        "__ROOT__/mcp/factorio_mcp.py",
+        "--bridge",
+        "http://127.0.0.1:34198"
       ],
       "env": {
         "FACTORIO_BRIDGE_URL": "http://127.0.0.1:34198"

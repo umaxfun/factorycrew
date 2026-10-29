@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# App e2e: build the Kiro Crew app, reinstall it into the dev gateway (:5479), run the real
-# Factorio 2.0.77 client against the app's bridge, and drive questions through the window.
-# No Docker. Needs /Users/Shared/factorio.app and a real model (a few agent turns).
+# App e2e: build the Kiro Crew app, reinstall it into a dev gateway, run the real Factorio
+# 2.0.77 client against the app's bridge, and drive questions through the window.
+# No Docker. Needs /Users/Shared/factorio.app (FACTORIO_APP) and a real model (a few agent turns).
+#
+# Isolated per worktree (docs/worktrees.md): this checkout's slot (scripts/stand.sh claim) gives
+# the run its own app gateway (FC_APP_PORT, home FC_APP_HOME), app bridge ports
+# (FC_APP_HTTP/UDP/GAME) and client data dir (FC_APP_UI_HOME). Nothing outside the slot is touched.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export FC_APP_HOME="${FC_APP_HOME:-$HOME/.kirocrew-factorio-app}"
-export FC_KC_HOME="$FC_APP_HOME" FC_KC_PORT="${FC_APP_PORT:-5479}"
+eval "$("$ROOT/scripts/stand.sh" claim)"
+export FC_KC_HOME="$FC_APP_HOME" FC_KC_PORT="$FC_APP_PORT"
+BRIDGE="http://127.0.0.1:$FC_APP_HTTP"
 
-# The dev client's ports (tools/ui_dev.py), never the player's 34198-34200.
-"$ROOT/scripts/app-dev.sh" ports 34298 34299 34300 >/dev/null
+"$ROOT/scripts/app-dev.sh" ports "$FC_APP_HTTP" "$FC_APP_UDP" "$FC_APP_GAME" >/dev/null
 "$ROOT/scripts/app-dev.sh"
 
-for _ in $(seq 1 60); do curl -fsS --max-time 2 http://127.0.0.1:34298/health >/dev/null 2>&1 && break; sleep 1; done
-curl -fsS --max-time 2 http://127.0.0.1:34298/health >/dev/null || { echo "app bridge not up" >&2; exit 1; }
+for _ in $(seq 1 60); do curl -fsS --max-time 2 "$BRIDGE/health" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS --max-time 2 "$BRIDGE/health" >/dev/null || { echo "app bridge not up on $BRIDGE" >&2; exit 1; }
 
 # A wake of the app's dispatcher cron that started after this install.
 JOB="$("$ROOT/scripts/kc.sh" cron list 2>/dev/null | awk '/factorycrew\/factorio-dispatch/ {print $2; exit}')"
@@ -38,9 +42,15 @@ fresh_wake || { echo "no app dispatcher wake after 90 s" >&2; exit 1; }
 
 # The client plays the built app's mod, so the test covers what players get.
 export FC_UI_EXTERNAL_BRIDGE=1 FC_UI_MOD_SRC="$ROOT/dist/factorycrew/mod/kc-companion"
+export FC_UI_HOME="$FC_APP_UI_HOME" FC_UI_HTTP_PORT="$FC_APP_HTTP"
+mkdir -p "$FC_UI_HOME"
 python3 "$ROOT/tools/ui_dev.py" stop >/dev/null
 python3 "$ROOT/tools/ui_dev.py" start
-trap 'python3 "$ROOT/tools/ui_dev.py" stop >/dev/null' EXIT
+cleanup() {
+  python3 "$ROOT/tools/ui_dev.py" stop >/dev/null || true
+  [ -n "${FC_APP_KEEP_GATEWAY:-}" ] || "$ROOT/scripts/kc.sh" stop >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 cd "$ROOT"
-uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/app_e2e "$@"
+FC_APP_BRIDGE="$BRIDGE" uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/app_e2e "$@"

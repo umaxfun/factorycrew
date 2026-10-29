@@ -1,29 +1,35 @@
 #!/usr/bin/env bash
 # Level 3, automatic e2e: game -> bridge -> dispatcher -> Kiro Crew chat -> agent -> game.
 #
-# Uses the separate factorycrew gateway (scripts/kc.sh, port 5477) and a real model, so a run
-# costs a few agent turns (~1-2 credits). A fresh headless 2.1 stand per run = a new run_id,
-# so every run gets its own folder Factorio/<e2e MM-DD HH:MM> and empty chats.
+# Isolated per worktree (docs/worktrees.md): the slot of this checkout (scripts/stand.sh claim)
+# gives the run its own Kiro Crew gateway (FC_E2E_KC_PORT, home FC_E2E_KC_HOME) and its own
+# Docker stand (headless 2.1 + bridge) published on FC_E2E_HTTP / FC_E2E_RCON. Nothing outside
+# the slot is touched, so several worktrees can run it at once. A real model: a run costs a
+# few agent turns (~1-2 credits). A fresh stand per run = a new run_id, so every run gets its
+# own folder Factorio/<e2e MM-DD HH:MM> and empty chats.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="factorycrew-test:2.1.23"
-NAME="fc-e2e"
 
-"$ROOT/scripts/kc.sh" status >/dev/null || "$ROOT/scripts/kc.sh" start
-"$ROOT/scripts/kc.sh" install
-"$ROOT/scripts/kc.sh" config set agent.session_control true >/dev/null
-if ! "$ROOT/scripts/kc.sh" cron list 2>/dev/null | grep -q factorio-dispatch; then
-  "$ROOT/scripts/kc.sh" cron add factorio-dispatch '{}' --every 30 \
-    --script "${FC_KC_HOME:-$HOME/.kirocrew-factorio}/crons/factorio_dispatch.py:run" \
-    --timeout 3600 --timeout-secs 3610 --no-persistent-session --minimal-context --hide-in-chat
+eval "$("$ROOT/scripts/stand.sh" claim)"
+export FC_KC_HOME="$FC_E2E_KC_HOME" FC_KC_PORT="$FC_E2E_KC_PORT" FC_BRIDGE_HTTP="$FC_E2E_HTTP"
+BRIDGE="http://127.0.0.1:$FC_E2E_HTTP"
+K="$ROOT/scripts/kc.sh"
+
+"$K" install # before start: a gateway sees only the agents present when it starts
+"$K" status >/dev/null 2>&1 || "$K" start
+"$K" config set agent.session_control true >/dev/null
+if ! "$K" cron list 2>/dev/null | grep -q factorio-dispatch; then
+  "$K" cron add factorio-dispatch "{\"bridge\": \"$BRIDGE\"}" --every 30 \
+    --script "$FC_KC_HOME/crons/factorio_dispatch.py:run" \
+    --timeout 3600 --timeout-secs 3610 --no-persistent-session --minimal-context --hide-in-chat >/dev/null
 fi
 # A wake compiles the dispatcher once and lives up to an hour. Wait until the wake serving
 # this run started after the installed script (an older wake exits within ~25 s when it sees
 # the new file); start one with `cron trigger` when none is running.
-KC_HOME="${FC_KC_HOME:-$HOME/.kirocrew-factorio}"
-JOB="$("$ROOT/scripts/kc.sh" cron list 2>/dev/null | awk '/factorio-dispatch/ {print $2; exit}')"
+JOB="$("$K" cron list 2>/dev/null | awk '/factorio-dispatch/ {print $2; exit}')"
 fresh_wake() {
-  python3 - "$KC_HOME" <<'EOF'
+  python3 - "$FC_KC_HOME" <<'EOF'
 import glob, json, os, sys
 home = sys.argv[1]
 src = os.stat(f"{home}/crons/factorio_dispatch.py").st_mtime
@@ -37,33 +43,28 @@ EOF
 for i in $(seq 1 90); do
   rc=0; fresh_wake || rc=$?
   [ "$rc" = 0 ] && break
-  if [ "$rc" = 1 ] && [ $((i % 15)) = 1 ]; then "$ROOT/scripts/kc.sh" cron trigger "$JOB" >/dev/null; fi
+  if [ "$rc" = 1 ] && [ $((i % 15)) = 1 ]; then "$K" cron trigger "$JOB" >/dev/null 2>&1 || true; fi
   sleep 1
 done
 fresh_wake || { echo "no dispatcher wake with the installed script after 90 s" >&2; exit 1; }
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || \
   docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.23 -t "$IMAGE" "$ROOT/docker"
-docker rm -f "$NAME" >/dev/null 2>&1 || true
-# The stand's bridge takes the host bridge's port 34198 (the dispatcher and the agent's MCP
-# server both dial it). Park the host bridge for the run and bring it back afterwards.
-HOST_BRIDGE=0
-if launchctl print "gui/$(id -u)/dev.factorycrew.bridge" >/dev/null 2>&1; then
-  HOST_BRIDGE=1
-  "$ROOT/scripts/services.sh" stop bridge
-fi
+docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
 cleanup() {
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
-  [ "$HOST_BRIDGE" = 1 ] && "$ROOT/scripts/services.sh" start bridge || true
+  docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
+  [ -n "${FC_E2E_KEEP_GATEWAY:-}" ] || "$K" stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+# Inside the container the bridge and RCON keep their usual ports; the host side is the slot's.
 # Published to host loopback only: the bridge API has no auth.
-docker run -d --name "$NAME" --platform linux/amd64 \
-  -p 127.0.0.1:34198:34198 -p 127.0.0.1:27015:27015 \
+docker run -d --name "$FC_E2E_CONTAINER" --platform linux/amd64 \
+  -p "127.0.0.1:$FC_E2E_HTTP:34198" -p "127.0.0.1:$FC_E2E_RCON:27015" \
   -e FC_INT_DATA=/work/.test-data/e2e -v "$ROOT:/work" "$IMAGE" \
   python3 -u /work/tests/e2e/stand.py >/dev/null
-for _ in $(seq 1 120); do docker logs "$NAME" 2>&1 | grep -q STAND_READY && break; sleep 1; done
-docker logs "$NAME" 2>&1 | grep -q STAND_READY || { docker logs "$NAME" | tail -20; exit 1; }
+for _ in $(seq 1 120); do docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY && break; sleep 1; done
+docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY || { docker logs "$FC_E2E_CONTAINER" | tail -20; exit 1; }
 
 cd "$ROOT"
-uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/e2e "$@"
+FC_E2E_BRIDGE="$BRIDGE" KIROCREW_HOME="$FC_KC_HOME" \
+  uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/e2e "$@"

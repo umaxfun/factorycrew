@@ -4,6 +4,7 @@
 # dispatcher, all running THIS checkout's code on ports nobody else holds. See docs/worktrees.md.
 #
 #   scripts/stand.sh up [SLOT]     # claim a free slot (or the given one), start everything
+#   scripts/stand.sh claim [SLOT]  # only claim the slot and print its exports (the e2e scripts use it)
 #   scripts/stand.sh check         # verify this stand end to end, and only this stand
 #   scripts/stand.sh env           # this stand's ports and homes, as exports
 #   scripts/stand.sh status
@@ -12,12 +13,16 @@
 #   scripts/stand.sh down          # stop game, bridge and gateway; keep the slot and the data
 #   scripts/stand.sh release       # down, then give the slot back
 #
-# Slot N (1..FC_STAND_MAX, default 20): bridge HTTP B+100N, bridge UDP +1, game UDP +2
-# (B = FC_STAND_BRIDGE_BASE, default 34198); gateway G+N (G = FC_STAND_GATEWAY_BASE, 5500).
+# Slot N (1..FC_STAND_MAX, default 20), with P = B+100N (B = FC_STAND_BRIDGE_BASE, 34198) and
+# G = FC_STAND_GATEWAY_BASE (5500):
+#   stand:   bridge HTTP P, bridge UDP P+1, game UDP P+2, gateway G+N
+#   e2e:     bridge HTTP P+10, RCON P+11 (Docker stand), gateway G+100+N   (scripts/test-e2e.sh)
+#   app e2e: bridge HTTP P+20, UDP P+21, game UDP P+22, gateway G+200+N   (scripts/test-app-e2e.sh)
 # Slot 0 would be the default ports of a plain install, so it is never handed out.
 # Claims live in FC_STAND_DIR (default ~/.factorycrew-stands), one dir per slot holding the
 # owner checkout's path; a claim whose checkout no longer exists is stale and reused.
-# Homes: ~/.factorycrew-dev-<dir>, ~/.kirocrew-factorio-<dir> (<dir> = checkout dir name).
+# Homes (<dir> = checkout dir name): ~/.factorycrew-dev-<dir>, ~/.kirocrew-factorio-<dir>;
+# e2e ~/.kirocrew-factorio-<dir>-e2e; app e2e ~/.kirocrew-factorio-<dir>-app, ~/.factorycrew-dev-<dir>-app.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="$(basename "$ROOT")"
@@ -29,9 +34,11 @@ GATEWAY_BASE="${FC_STAND_GATEWAY_BASE:-5500}"
 
 kc() { "$ROOT/scripts/kc.sh" "$@"; }
 
-ports_of() { # slot -> "gateway bridge_http bridge_udp game_udp"
-  local b=$((BRIDGE_BASE + 100 * $1))
-  echo "$((GATEWAY_BASE + $1)) $b $((b + 1)) $((b + 2))"
+ports_of() { # slot -> "proto:port ..." for everything the slot owns
+  local b=$((BRIDGE_BASE + 100 * $1)) g=$((GATEWAY_BASE + $1))
+  echo "tcp:$g tcp:$b udp:$((b + 1)) udp:$((b + 2))" \
+       "tcp:$((g + 100)) tcp:$((b + 10)) tcp:$((b + 11))" \
+       "tcp:$((g + 200)) tcp:$((b + 20)) udp:$((b + 21)) udp:$((b + 22))"
 }
 
 holder() { # proto port -> pid listening/bound there, or nothing (lsof exits 1 on a free port)
@@ -44,6 +51,9 @@ ours() { # pid -> true when the process belongs to this checkout's stand
   cmd="$(ps eww -o command= -p "$1" 2>/dev/null || true)"
   case "$cmd" in
     *"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME "*|*"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME") return 0 ;;
+    *"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME-e2e "*|*"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME-e2e") return 0 ;;
+    *"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME-app "*|*"KIROCREW_HOME=$HOME/.kirocrew-factorio-$NAME-app") return 0 ;;
+    *"$HOME/.factorycrew-dev-$NAME-app/"*) return 0 ;;
     *"$ROOT/bridge/factorio_bridge.py"*) return 0 ;;
     *"$HOME/.factorycrew-dev-$NAME/"*) return 0 ;;
   esac
@@ -51,13 +61,10 @@ ours() { # pid -> true when the process belongs to this checkout's stand
 }
 
 ports_free() { # slot -> 0 when every port of the slot is free or held by this stand
-  local p proto pid i=0
-  for p in $(ports_of "$1"); do
-    proto=tcp; [ $i -ge 2 ] && proto=udp
-    [ $i -eq 1 ] && proto=tcp
-    pid="$(holder "$proto" "$p")"
+  local pp pid
+  for pp in $(ports_of "$1"); do
+    pid="$(holder "${pp%%:*}" "${pp#*:}")"
     if [ -n "$pid" ] && ! ours "$pid"; then return 1; fi
-    i=$((i + 1))
   done
   return 0
 }
@@ -85,7 +92,7 @@ allocate() { # [wanted] -> claimed slot
   if s="$(current)"; then echo "$s"; return 0; fi
   if [ -n "${1:-}" ]; then
     [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le "$MAX" ] || { echo "slot must be 1..$MAX" >&2; exit 2; }
-    ports_free "$1" || { echo "slot $1: a port ($(ports_of "$1")) is held by another process" >&2; exit 1; }
+    ports_free "$1" || { echo "slot $1: one of its ports ($(ports_of "$1")) is held by another process" >&2; exit 1; }
     claim "$1" || { echo "slot $1 is claimed by $(cat "$REG/slot-$1/owner")" >&2; exit 1; }
     echo "$1" > "$SLOT_FILE"; echo "$1"; return 0
   fi
@@ -102,9 +109,12 @@ need() { # the claimed slot, or a hint
 }
 
 setenv() {
-  local g b
-  read -r g b _ _ <<<"$(ports_of "$1")"
+  local g=$((GATEWAY_BASE + $1)) b=$((BRIDGE_BASE + 100 * $1))
   export FC_STAND_SLOT="$1"
+  export FC_E2E_HTTP=$((b + 10)) FC_E2E_RCON=$((b + 11)) FC_E2E_KC_PORT=$((g + 100))
+  export FC_E2E_KC_HOME="$HOME/.kirocrew-factorio-$NAME-e2e" FC_E2E_CONTAINER="fc-e2e-$NAME"
+  export FC_APP_HTTP=$((b + 20)) FC_APP_UDP=$((b + 21)) FC_APP_GAME=$((b + 22)) FC_APP_PORT=$((g + 200))
+  export FC_APP_HOME="$HOME/.kirocrew-factorio-$NAME-app" FC_APP_UI_HOME="$HOME/.factorycrew-dev-$NAME-app"
   export FC_UI_HOME="$HOME/.factorycrew-dev-$NAME"
   export FC_UI_HTTP_PORT="$b"
   export FC_BRIDGE_HTTP="$b"
@@ -139,6 +149,16 @@ check() {
   if grep -qF "127.0.0.1:$FC_UI_HTTP_PORT" "$agent" 2>/dev/null && grep -qF "$ROOT/mcp/factorio_mcp.py" "$agent"; then
     ok "Kira's MCP: this checkout, this bridge"
   else bad "Kira's agent ($agent) does not point at this checkout and :$FC_UI_HTTP_PORT: scripts/stand.sh kc install"; fi
+  # what the RUNNING MCP servers dial (the file can be right while a live process is not)
+  local mcp n=0 wrong=0
+  for mcp in $(pgrep -f "mcp/factorio_mcp.py" || true); do
+    ps eww -o command= -p "$mcp" | grep -qF "KIROCREW_HOME=$FC_KC_HOME " || continue
+    n=$((n + 1))
+    ps -o command= -p "$mcp" | grep -qF -- "--bridge http://127.0.0.1:$FC_UI_HTTP_PORT" || wrong=$((wrong + 1))
+  done
+  if [ "$wrong" -gt 0 ]; then bad "$wrong of $n running Kira MCP servers dial another bridge: scripts/stand.sh kc stop, then up"
+  elif [ "$n" -gt 0 ]; then ok "running Kira MCP servers ($n) dial this bridge"
+  else ok "no Kira session running yet (MCP checked on the first question)"; fi
   if cmp -s "$ROOT/dispatcher/factorio_dispatch.py" "$FC_KC_HOME/crons/factorio_dispatch.py"; then ok "dispatcher is this checkout's"
   else bad "installed dispatcher differs: scripts/stand.sh kc install"; fi
   cron="$(kc cron list 2>/dev/null | grep factorio-dispatch || true)"
@@ -152,8 +172,8 @@ case "${1:-status}" in
     setenv "$(allocate "${2:-}")"
     mkdir -p "$FC_UI_HOME"
     python3 "$ROOT/tools/ui_dev.py" start
+    kc install # before start: a gateway sees only the agents present when it starts
     kc start
-    kc install
     kc config set agent.session_control true >/dev/null
     if ! kc cron list 2>/dev/null | grep -q factorio-dispatch; then
       kc cron add factorio-dispatch "{\"bridge\": \"http://127.0.0.1:$FC_UI_HTTP_PORT\"}" --every 30 \
@@ -188,9 +208,13 @@ case "${1:-status}" in
     curl -fsS --max-time 2 "http://127.0.0.1:$FC_UI_HTTP_PORT/health" && echo || echo "bridge :$FC_UI_HTTP_PORT down"
     kc status || true
     ;;
-  env)
-    setenv "$(need)"
-    echo "export FC_STAND_SLOT=$FC_STAND_SLOT FC_UI_HOME=$FC_UI_HOME FC_UI_HTTP_PORT=$FC_UI_HTTP_PORT FC_BRIDGE_HTTP=$FC_BRIDGE_HTTP FC_KC_HOME=$FC_KC_HOME FC_KC_PORT=$FC_KC_PORT"
+  env|claim)
+    if [ "$1" = claim ]; then setenv "$(allocate "${2:-}")"; else setenv "$(need)"; fi
+    for v in FC_STAND_SLOT FC_UI_HOME FC_UI_HTTP_PORT FC_BRIDGE_HTTP FC_KC_HOME FC_KC_PORT \
+             FC_E2E_HTTP FC_E2E_RCON FC_E2E_KC_PORT FC_E2E_KC_HOME FC_E2E_CONTAINER \
+             FC_APP_HTTP FC_APP_UDP FC_APP_GAME FC_APP_PORT FC_APP_HOME FC_APP_UI_HOME; do
+      printf 'export %s=%q\n' "$v" "${!v}"
+    done
     ;;
   ui)
     setenv "$(need)"
@@ -203,6 +227,6 @@ case "${1:-status}" in
     kc "$@"
     ;;
   *)
-    sed -n '2,21p' "$0"; exit 2
+    sed -n '2,25p' "$0"; exit 2
     ;;
 esac

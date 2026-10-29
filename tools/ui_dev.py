@@ -32,6 +32,15 @@ ROOT = Path(__file__).resolve().parents[1]
 # FC_UI_HOME / FC_UI_HTTP_PORT: a second stand beside the default one (e.g. one per worktree),
 # with its own data dir and ports http, http+1 (bridge UDP), http+2 (game UDP)
 DEV = Path(os.environ.get("FC_UI_HOME") or Path.home() / ".factorycrew-dev")
+
+
+def _in_linked_worktree():
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--git-dir", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+        return len(out) == 2 and Path(ROOT, out[0]).resolve() != Path(ROOT, out[1]).resolve()
+    except (OSError, subprocess.SubprocessError):
+        return False
 DATA = DEV / "factorio"
 APP = Path(os.environ.get("FACTORIO_APP", "/Users/Shared/factorio.app"))
 BIN = APP / "Contents" / "MacOS" / "factorio"
@@ -227,6 +236,10 @@ def shot(name, steps):
 
 
 def main(argv):
+    # a linked worktree never drives the shared default client: it has its own stand
+    if (not os.environ.get("FC_UI_HOME") and not os.environ.get("FC_ALLOW_DEFAULT")
+            and argv and argv[0] != "digest" and _in_linked_worktree()):
+        raise SystemExit("ui_dev.py: this is a worktree; use its own stand: scripts/stand.sh ui " + " ".join(argv))
     if not argv:
         print(__doc__)
         return

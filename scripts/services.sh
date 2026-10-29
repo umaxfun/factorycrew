@@ -9,6 +9,13 @@
 # Logs: ~/.kirocrew-factorio/{bridge,gateway}.launchd.log
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# The player's install: never from a linked worktree (its code is not released yet).
+# FC_ALLOW_DEFAULT=1 overrides.
+if [ -z "${FC_ALLOW_DEFAULT:-}" ] && \
+   [ "$(git -C "$ROOT" rev-parse --git-dir 2>/dev/null)" != "$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" ]; then
+  echo "$(basename "$0"): this is a worktree; the player's install is done from the main checkout" >&2
+  exit 2
+fi
 HOME_DIR="${FC_KC_HOME:-$HOME/.kirocrew-factorio}"
 AGENTS="$HOME/Library/LaunchAgents"
 DOMAIN="gui/$(id -u)"
