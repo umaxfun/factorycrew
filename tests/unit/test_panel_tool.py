@@ -62,10 +62,15 @@ elif verb == "show":
         print(json.dumps({"slug": rest[0], "name": d["name"], "description": d.get("description"), "updated_at": "t"}))
     else:
         print(d["versions"][-1])
+elif verb == "delete":
+    if not os.path.exists(path(rest[0])):
+        print("Error: not found", file=sys.stderr); sys.exit(1)
+    os.remove(path(rest[0])); print("deleted")
 elif verb == "list":
     for f in sorted(os.listdir(store)):
         d = json.load(open(os.path.join(store, f)))
-        if opt("--tag") in (d["tags"] or ""): print(f"  {f[:-5]}  {d['name']}  v{len(d['versions'])}")
+        if opt("--tag") in (d["tags"] or "").split(","):
+            print(f"{f[:-5]}   v{len(d['versions'])}   {d['kind']}   [{d['tags']}]  {d['name']}")
 '''
 
 import os  # noqa: E402
@@ -89,7 +94,7 @@ def fake_crew(tmp_path, monkeypatch):
 SPEC = {"name": "Science made", "title": "Science packs made", "lua": "return {']]'}", "every": 5,
         "description": "Science packs crafted in the chosen period.",
         "inputs": [{"key": "period", "label": "Period", "options": ["1m", "1h"]}]}
-RES = {"ok": True, "every": 5, "input": {"period": "1m"}, "run_name": "Run 1", "view": [
+RES = {"ok": True, "every": 5, "input": {"period": "1m"}, "run_name": "Run 1", "run_id": "d988dac8-0", "view": [
     {"title": "Made in [color=green]1m[/color]", "columns": ["", "made"],
      "rows": [[{"item": "automation-science-pack"}, 120], [{"item": "logistic-science-pack"}, 12345]]},
     {"columns": ["item"], "rows": {}, "empty": "nothing missing"},
@@ -105,24 +110,31 @@ def test_snapshot_markdown_is_readable():
     assert 'restore the panel Science made' in md
 
 
+SLUG = "factorio-panel-d988dac8-0-science-made"
+
+
 def test_a_working_panel_is_saved_versioned_and_restored(fake_crew, monkeypatch):
-    assert m.library_save(SPEC, RES) == {"ok": True, "slug": "factorio-panel-science-made"}
+    monkeypatch.setattr(m, "current_run_id", lambda: "d988dac8-0")
+    assert m.library_save(SPEC, RES) == {"ok": True, "slug": SLUG}
     changed = {**SPEC, "every": 10}
     assert m.library_save(changed, RES)["ok"]
     import json as j
-    d = j.loads((fake_crew / "factorio-panel-science-made.json").read_text())
-    assert len(d["versions"]) == 2 and d["tags"] == "factorio-panel" and d["kind"] == "markdown"
+    d = j.loads((fake_crew / f"{SLUG}.json").read_text())
+    assert len(d["versions"]) == 2 and d["tags"] == "factorio-panel,factorio-run-d988dac8-0" and d["kind"] == "markdown"
+    # another run's panel of the same name is another artifact, outside this run's library
+    assert m.library_save(SPEC, {**RES, "run_id": "other-1"})["slug"] == "factorio-panel-other-1-science-made"
     listed = m.library_list()
-    assert listed["ok"] and [p["name"] for p in listed["panels"]] == ["science-made"]
+    assert listed["ok"] and [p["slug"] for p in listed["panels"]] == [SLUG]
+    assert len(m.library_list(all_runs=True)["panels"]) == 2
     one = listed["panels"][0]
     assert one["title"] == "Science packs made" and one["description"] == "Science packs crafted in the chosen period."
-    assert [p["name"] for p in m.library_list("CRAFTED period")["panels"]] == ["science-made"]
+    assert [p["slug"] for p in m.library_list("CRAFTED period")["panels"]] == [SLUG]
     assert m.library_list("logistics")["panels"] == []
     got = m.library_get("Science made")
     assert got["ok"] and got["spec"] == {k: changed[k] for k in ("name", "title", "description", "lua", "every", "inputs")}
-    assert m.library_get("factorio-panel-science-made")["spec"]["every"] == 10
+    assert m.library_get(SLUG)["spec"]["every"] == 10
     missing = m.library_get("nope")
-    assert missing["error"] == "not_saved" and missing["saved"] == ["science-made"]
+    assert missing["error"] == "not_saved" and missing["saved"] == [SLUG]
 
     # restore sends the saved spec to the game as a normal panel
     sent = {}
@@ -136,3 +148,37 @@ def test_outside_kiro_crew_nothing_is_saved(monkeypatch):
     monkeypatch.delenv("KIROCREW_HOME", raising=False)
     assert m.library_save(SPEC, RES)["ok"] is False
     assert m.library_list()["error"] == "no_library"
+
+
+# ── the window's library, served by the dispatcher with the same CLI ──
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dispatcher"))
+import factorio_dispatch as d  # noqa: E402
+
+
+def test_dispatcher_and_mcp_agree_on_names():
+    assert d.run_tag("d988dac8-0") == m.run_tag("d988dac8-0") == "factorio-run-d988dac8-0"
+    assert d.ARTIFACT_PREFIX == m.ARTIFACT_PREFIX and d.SPEC_FENCE == m.SPEC_FENCE
+    # the real `kirocrew artifact list` line
+    line = "factorio-panel-requester-missing          v1   markdown    [factorio-panel]  Factorio panel: Requester chests: still missing"
+    mt = d.LIST_LINE.match(line)
+    assert mt and mt.group(1) == "factorio-panel-requester-missing" and mt.group(2).endswith("still missing")
+
+
+def test_library_lists_opens_and_deletes_only_this_runs_panels(fake_crew, monkeypatch):
+    monkeypatch.setattr(m, "current_run_id", lambda: "d988dac8-0")
+    m.library_save(SPEC, RES)
+    m.library_save({**SPEC, "name": "elsewhere"}, {**RES, "run_id": "other-1"})
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {"ok": True})
+    ask = {"kind": "library", "id": "lib-1", "run_id": "d988dac8-0"}
+    r = d.library({}, {**ask, "op": "list"})
+    assert r["ok"] and r["panels"] == [{"slug": SLUG, "title": "Science packs made"}], r
+    assert posted[-1][0] == "/library_result" and posted[-1][1]["id"] == "lib-1"
+    r = d.library({}, {**ask, "op": "open", "slug": SLUG})
+    assert r["ok"] and r["spec"]["name"] == "Science made" and r["spec"]["lua"] == SPEC["lua"], r
+    r = d.library({}, {**ask, "op": "open", "slug": "factorio-panel-other-1-elsewhere"})
+    assert not r["ok"] and "no saved panel" in r["error"], "another run's panel is not in this library"
+    r = d.library({}, {**ask, "op": "delete", "slug": SLUG})
+    assert r["ok"] and r["panels"] == [] and not (fake_crew / f"{SLUG}.json").exists()
+    assert (fake_crew / "factorio-panel-other-1-elsewhere.json").exists()

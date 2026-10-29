@@ -87,7 +87,7 @@ def artifact(*argv):
 
 def saved_panel(name):
     import factorio_mcp  # noqa: E402  (same slug rule as the tool)
-    slug = factorio_mcp.artifact_slug(name)
+    slug = factorio_mcp.artifact_slug(name, http("/health")["run_id"])  # the run's own library
     shown = artifact("show", slug)
     assert shown.returncode == 0, f"panel {name} not saved as artifact {slug}: {shown.stderr or shown.stdout}"
     return slug, shown.stdout
@@ -198,3 +198,51 @@ def test_restores_a_saved_panel_from_the_artifacts(kira):
     assert back and not back[0].get("error"), f"panel {name} not restored: {[p['name'] for p in panels(kira)]}"
     assert back[0]["lua"] == lua, "restored from the artifact, not rewritten"
     assert "restore" in transcript(tab)
+
+
+def test_window_library_opens_and_deletes_without_kira(kira):
+    """The Library button's path: mod -> bridge -> dispatcher (in the gateway) -> artifacts -> mod.
+    No chat and no model turn: the transcript of the run's chats must not grow."""
+    saved = [p for p in panels(kira) if "science" in (p["name"] + p["title"]).lower()]
+    assert saved, "runs after the science panel tests"
+    name, lua = saved[0]["name"], saved[0]["lua"]
+    assert kira.lua(f'return remote.call("kc", "panel_remove", {lua_str(name)})')["ok"]
+    # the previous turn writes its closing message a few seconds after factorio_reply: let it settle
+    def sizes_now():
+        return {p: p.stat().st_size for p in (KC_HOME / "sessions").glob("dashboard_*.jsonl")}
+    sizes, quiet_since = sizes_now(), time.monotonic()
+    while time.monotonic() - quiet_since < 8:
+        time.sleep(1)
+        now = sizes_now()
+        if now != sizes:
+            sizes, quiet_since = now, time.monotonic()
+    sessions = list(sizes)
+
+    def answered(req):
+        def check():
+            lib = kira.lua('return remote.call("kc", "library")')
+            pending = lib.get("pending") or {}
+            return lib if (pending == {} or req["id"] not in pending) else None
+        return wait_until(check, timeout=30, step=0.5, what=f"the dispatcher answering library {req['op']}")
+
+    t0 = time.monotonic()
+    lib = answered(kira.lua('return remote.call("kc", "library_request", "list")'))
+    print(f"\nlibrary list in {time.monotonic() - t0:.1f}s: {lib.get('panels')} error={lib.get('error')}")
+    assert not lib.get("error"), lib
+    entries = [p for p in (lib["panels"] if lib["panels"] != {} else []) if "science" in (p["slug"] + p["title"]).lower()]
+    assert entries, f"the run's science panel is not in the library: {lib['panels']}"
+    slug = entries[0]["slug"]
+
+    t0 = time.monotonic()
+    lib = answered(kira.lua(f'return remote.call("kc", "library_request", "open", {lua_str(slug)})'))
+    back = [p for p in panels(kira) if p["name"] == name]
+    print(f"open in {time.monotonic() - t0:.1f}s")
+    assert back and back[0]["lua"] == lua and not back[0].get("error"), (lib, [p["name"] for p in panels(kira)])
+
+    lib = answered(kira.lua(f'return remote.call("kc", "library_request", "delete", {lua_str(slug)})'))
+    assert not lib.get("error") and slug not in [p["slug"] for p in (lib["panels"] if lib["panels"] != {} else [])], lib
+    assert artifact("show", slug).returncode != 0, "deleted from the library = gone from Kiro Crew"
+    assert [p for p in panels(kira) if p["name"] == name], "deleting from the library leaves the open panel alone"
+    after = sizes_now()
+    grown = [p.name for p in after if after[p] != sizes.get(p)]
+    assert not grown, f"a chat changed during library use (a model turn?): {grown}"

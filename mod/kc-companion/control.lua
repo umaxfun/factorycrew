@@ -50,17 +50,23 @@ end)
 script.on_nth_tick(60, function()
   gui.tick()
   panels.tick()
+  if panels.library_tick() then gui.refresh_all() end
 end)
 
 -- what changes the window when it arrives from the bridge
-local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true, trace = true }
+local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true, trace = true,
+                  library_result = true }
 
 script.on_event(defines.events.on_udp_packet_received, function(e)
   local msg = protocol.decode(e.payload)
   if not msg then return end
   local was_connected = protocol.connected()
-  for _, reply in ipairs(protocol.handle(msg)) do
-    send(reply)
+  if msg.type == "library_result" then
+    if not msg.run_id or msg.run_id == storage.kc.run_id then panels.on_library(msg) end
+  else
+    for _, reply in ipairs(protocol.handle(msg)) do
+      send(reply)
+    end
   end
   if REFRESH[msg.type] or (msg.type == "pong" and not was_connected) then
     gui.refresh_all()
@@ -152,6 +158,10 @@ remote.add_interface("kc", {
   panel_set = function(spec) return panels.set(spec) end,
   panel_input = function(name, key, value) return panels.set_input(name, key, value) end,
   panel_remove = function(name) return panels.remove(name) end,
+  -- the library as the window uses it: the request that would go out, and an answer arriving
+  library_request = function(op, slug) local m = protocol.library_request(op, slug) send(m) gui.refresh_all() return m end,
+  library_result = function(msg) panels.on_library(msg) gui.refresh_all() return panels.library() end,
+  library = function() return panels.library() end,
   panel_collapse = function(name, folded, index) panels.collapse(game.get_player(index or 1), name, folded) return true end,
   ui_inject = function(msg)
     for _, r in ipairs(protocol.handle(msg)) do send(r) end

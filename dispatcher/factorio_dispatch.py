@@ -21,6 +21,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -350,6 +354,92 @@ class Tracer:
                 del self.watch[slot]
 
 
+# ── the run's panel library: saved panels opened from the game without a model ──
+#
+# Kira's MCP server saves every working panel as a Kiro Crew artifact (mcp/factorio_mcp.py,
+# library_save): slug factorio-panel-<run>-<name>, tags factorio-panel and factorio-run-<run>,
+# the panel code in a fenced `json kc-panel` block. The window asks for the run's list, opens one
+# or deletes one; this wake answers through the bridge. The same names are used on both sides
+# (tests/unit/test_dispatch.py checks that they agree).
+
+ARTIFACT_PREFIX = "factorio-panel-"
+SPEC_FENCE = "```json kc-panel"
+LIST_LINE = re.compile(r"^\s*(factorio-panel-[a-z0-9-]+)\s+v\d+\s+\S+\s+\[[^\]]*\]\s+(.*)$")
+
+
+class LibraryError(RuntimeError):
+    pass
+
+
+def run_tag(run_id):
+    return "factorio-run-" + (re.sub(r"[^a-z0-9]+", "-", str(run_id).lower()).strip("-") or "unknown")
+
+
+def artifact_cli(*argv, timeout=30):
+    exe = shutil.which("kirocrew") or os.path.expanduser("~/.local/bin/kirocrew")
+    try:
+        p = subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LibraryError(f"kirocrew artifact {argv[0]}: {exc}") from exc
+    if p.returncode != 0:
+        raise LibraryError(((p.stderr or p.stdout).strip() or f"kirocrew artifact {argv[0]} failed")[-200:])
+    return p.stdout
+
+
+def library_list(run_id):
+    """[{slug, title}] of the run's saved panels, in the CLI's order."""
+    out = []
+    for line in artifact_cli("list", "--tag", run_tag(run_id)).splitlines():
+        m = LIST_LINE.match(line)
+        if m:
+            out.append({"slug": m.group(1), "title": m.group(2).strip().removeprefix("Factorio panel: ")})
+    return out
+
+
+def library_spec(slug):
+    text = artifact_cli("show", slug)
+    start = text.find(SPEC_FENCE)
+    end = text.find("\n```", start + len(SPEC_FENCE)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise LibraryError(f"{slug} holds no panel code")
+    try:
+        spec = json.loads(text[start + len(SPEC_FENCE):end])
+    except ValueError as exc:
+        raise LibraryError(f"{slug}: bad panel code ({exc})") from exc
+    if not isinstance(spec, dict) or not spec.get("name") or not spec.get("lua"):
+        raise LibraryError(f"{slug}: the panel code has no name or lua")
+    return spec
+
+
+def library(cfg, ask):
+    """Answer one library request: list, open (the saved spec) or delete (then the new list).
+
+    Only artifacts of this run's list are opened or deleted, so the window cannot reach any other
+    artifact of the gateway."""
+    op, run_id, slug = ask.get("op") or "list", ask.get("run_id"), ask.get("slug")
+    res = {"id": ask["id"], "run_id": run_id, "op": op, "ok": True}
+    try:
+        if op in ("open", "delete"):
+            listed = library_list(run_id)
+            if not isinstance(slug, str) or slug not in {p["slug"] for p in listed}:
+                raise LibraryError(f"no saved panel {slug} in this run")
+            if op == "open":
+                res["spec"] = library_spec(slug)
+            else:
+                artifact_cli("delete", slug)
+                res["panels"] = [p for p in listed if p["slug"] != slug]
+        else:
+            res["panels"] = library_list(run_id)
+    except LibraryError as exc:
+        res.update(ok=False, error=str(exc))
+    try:
+        bridge(cfg, "POST", "/library_result", res, timeout=10)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"library {op}: could not answer the game: {exc}")
+    return res
+
+
 def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
@@ -443,6 +533,11 @@ def run(ctx):
             time.sleep(5)
             continue
         for ask in asks:
+            if ask.get("kind") == "library":
+                # each CLI call takes ~2 s: answer off the loop so questions are not held up
+                bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
+                threading.Thread(target=library, args=(cfg, ask), daemon=True).start()
+                continue
             if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
             save_state(path, st)

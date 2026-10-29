@@ -203,6 +203,16 @@ class Bridge(asyncio.DatagramProtocol):
                                                     "pointers")})
             self.ask_event.set()
             log.info("ask %s [%s] %r", msg.get("id"), msg.get("chat"), msg.get("text"))
+        elif t == "library":
+            # the window's saved-panel library: the dispatcher (inside Kiro Crew) reads the
+            # artifacts and posts /library_result; it rides the ask queue but is no question
+            self.game.last_seen = time.monotonic()
+            if msg.get("id") in self.seen_asks:
+                return
+            self.seen_asks.append(msg.get("id"))
+            self.asks.append({"kind": "library", **{k: msg.get(k) for k in ("id", "op", "slug", "run_id", "run_name")}})
+            self.ask_event.set()
+            log.info("library %s %s %s", msg.get("id"), msg.get("op"), msg.get("slug") or "")
         elif t == "result":
             fut = self.pending.pop(str(msg.get("id")), None)
             if fut and not fut.done():
@@ -284,7 +294,8 @@ class Bridge(asyncio.DatagramProtocol):
             ask = self.asks.popleft()
             self.leased[ask["id"]] = (ask, exp)
             out.append(ask)
-            self.set_thinking(ask["run_id"], ask["chat"])
+            if ask.get("kind") != "library":  # a library request starts no turn
+                self.set_thinking(ask["run_id"], ask["chat"])
         return out
 
     def confirm_asks(self, ids: list[str]) -> int:
@@ -369,6 +380,13 @@ class Bridge(asyncio.DatagramProtocol):
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, self.reply(chat, text)
+        if method == "POST" and path == "/library_result":
+            # the dispatcher's answer to a library request: a list, a panel spec, a deletion
+            if not isinstance(body.get("id"), str):
+                raise BridgeError("bad_request", "id is required")
+            msg = {k: v for k, v in body.items() if k not in ("type", "v", "_agent")}
+            msg["type"] = "library_result"
+            return 200, {"ok": True, "delivered": self.deliver(msg)}
         if method == "POST" and path == "/trace":
             # a step of a running turn, from the dispatcher following the chat transcript
             chat, text, kind = body.get("chat"), body.get("text"), body.get("kind") or "text"

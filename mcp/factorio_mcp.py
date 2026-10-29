@@ -156,8 +156,8 @@ TOOLS = [
             "5 in a row pause it. Same `name` replaces the panel; `remove: true` deletes it. "
             "`kc.panels()` in factorio_query lists panels with their last error. "
             "Every panel that works is also SAVED as a Kiro Crew artifact (`saved` in the answer; the "
-            "player sees it in the dashboard, a change is a new version). `restore: '<name>'` brings a saved "
-            "panel back into this game; `factorio_saved_panels` lists them."
+            "player sees it in the dashboard and in the window's Library, a change is a new version). "
+            "`restore: '<slug>'` (from factorio_saved_panels) brings a saved panel back."
         ),
         "inputSchema": {
             "type": "object",
@@ -181,18 +181,19 @@ TOOLS = [
                 },
                 "chat": {"type": "string", "description": "the tab that asked"},
                 "remove": {"type": "boolean"},
-                "restore": {"type": "string", "description": "name of a saved panel to bring back (no lua needed)"},
+                "restore": {"type": "string", "description": "slug (or name, this run) of a saved panel to bring back; no lua needed"},
             },
         },
     },
     {
         "name": "factorio_saved_panels",
         "description": (
-            "Panels saved as Kiro Crew artifacts, from any save, newest first: [{name, title, description, updated}]. "
-            "`query`: only those whose name/title/description contain all its words. "
-            "Bring one back with factorio_panel(restore=name)."
+            "Panels saved as Kiro Crew artifacts in THIS RUN (the player's library; the window's Library "
+            "button shows the same list), newest first: [{slug, title, description, updated}]. "
+            "`query`: only those whose slug/title/description contain all its words; `all_runs`: every run's. "
+            "Bring one back with factorio_panel(restore=slug)."
         ),
-        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "all_runs": {"type": "boolean"}}},
     },
     {
         "name": "factorio_progress",
@@ -439,10 +440,33 @@ def _kc(*argv: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
         return None
 
 
-def artifact_slug(name: str) -> str:
+def _slugify(s: str) -> str:
     import re
-    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "panel"
-    return ARTIFACT_PREFIX + s[:60]
+    return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+
+
+def run_tag(run_id) -> str:
+    """The tag of one run's library (the dispatcher filters on it for the window)."""
+    return "factorio-run-" + (_slugify(run_id) or "unknown")
+
+
+def artifact_slug(name: str, run_id=None) -> str:
+    """One artifact per panel name per run: the library is the run's, not shared between runs."""
+    run = _slugify(run_id) if run_id else ""
+    return ARTIFACT_PREFIX + (run + "-" if run else "") + ((_slugify(name) or "panel")[:60])
+
+
+def current_run_id():
+    h = bridge_get_health()
+    return h.get("run_id") if isinstance(h, dict) else None
+
+
+def bridge_get_health() -> dict:
+    try:
+        with urllib.request.urlopen(BRIDGE + "/health", timeout=5) as r:
+            return json.loads(r.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
 
 
 def _plain(v) -> str:
@@ -523,7 +547,8 @@ def panel_markdown(spec: dict, res: dict) -> str:
 def library_save(spec: dict, res: dict) -> dict:
     if not _kirocrew():
         return {"ok": False, "reason": "not running under Kiro Crew"}
-    slug = artifact_slug(spec["name"])
+    run_id = res.get("run_id")
+    slug = artifact_slug(spec["name"], run_id)
     title = spec.get("title") or spec["name"]
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(panel_markdown(spec, res))
@@ -534,7 +559,8 @@ def library_save(spec: dict, res: dict) -> dict:
         p = _kc("update", slug, "--content-file", path, "--name", f"Factorio panel: {title}", "--description", desc)
         if p is None or p.returncode != 0:
             p = _kc("save", "--slug", slug, "--name", f"Factorio panel: {title}", "--kind", "markdown",
-                    "--content-file", path, "--description", desc, "--tags", ARTIFACT_TAG)
+                    "--content-file", path, "--description", desc,
+                    "--tags", ",".join([ARTIFACT_TAG] + ([run_tag(run_id)] if run_id else [])))
         if p is None or p.returncode != 0:
             return {"ok": False, "slug": slug, "reason": ((p.stderr or p.stdout).strip()[-300:] if p else "kirocrew failed")}
         return {"ok": True, "slug": slug}
@@ -542,11 +568,12 @@ def library_save(spec: dict, res: dict) -> dict:
         os.unlink(path)
 
 
-def library_list(query: str | None = None) -> dict:
+def library_list(query: str | None = None, all_runs: bool = False) -> dict:
     """Saved panels from the artifacts tagged factorio-panel: [{name, slug, title, description, updated}].
 
     `query` keeps those whose name, title or description contain every word of it (any case)."""
-    p = _kc("list", "--tag", ARTIFACT_TAG)
+    run_id = None if all_runs else current_run_id()
+    p = _kc("list", "--tag", run_tag(run_id) if run_id else ARTIFACT_TAG)
     if p is None:
         return {"ok": False, "error": "no_library", "message": "not running under Kiro Crew"}
     if p.returncode != 0:
@@ -556,7 +583,7 @@ def library_list(query: str | None = None) -> dict:
     for line in p.stdout.splitlines():
         m = re.search(r"(factorio-panel-[a-z0-9-]+)", line)
         if m and m.group(1) not in [x["slug"] for x in found]:
-            found.append({"slug": m.group(1), "name": m.group(1)[len(ARTIFACT_PREFIX):]})
+            found.append({"slug": m.group(1)})
 
     def meta(x):
         p = _kc("show", x["slug"], "--meta")
@@ -565,7 +592,7 @@ def library_list(query: str | None = None) -> dict:
         except ValueError:
             d = {}
         title = (d.get("name") or "").removeprefix("Factorio panel: ")
-        return {**x, "title": title or x["name"], "description": d.get("description") or "",
+        return {**x, "title": title or x["slug"], "description": d.get("description") or "",
                 "updated": d.get("updated_at") or ""}
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -573,20 +600,20 @@ def library_list(query: str | None = None) -> dict:
     if query:
         words = query.lower().split()
         found = [x for x in found
-                 if all(w in f"{x['name']} {x['title']} {x['description']}".lower() for w in words)]
+                 if all(w in f"{x['slug']} {x['title']} {x['description']}".lower() for w in words)]
     found.sort(key=lambda x: x["updated"], reverse=True)
     return {"ok": True, "panels": found}
 
 
 def library_get(name: str) -> dict:
-    slug = name if name.startswith(ARTIFACT_PREFIX) else artifact_slug(name)
+    slug = name if name.startswith(ARTIFACT_PREFIX) else artifact_slug(name, current_run_id())
     p = _kc("show", slug)
     if p is None:
         return {"ok": False, "error": "no_library", "message": "not running under Kiro Crew"}
     if p.returncode != 0:
         listed = library_list()
         return {"ok": False, "error": "not_saved", "message": f"no saved panel {slug}",
-                "saved": [x["name"] for x in listed.get("panels", [])]}
+                "saved": [x["slug"] for x in listed.get("panels", [])]}
     text = p.stdout
     start = text.find(SPEC_FENCE)
     end = text.find("\n```", start + len(SPEC_FENCE)) if start >= 0 else -1
@@ -605,7 +632,7 @@ def call_tool(name: str, args: dict) -> dict:
     if name == "factorio_panel":
         return panel(args or {})
     if name == "factorio_saved_panels":
-        return library_list((args or {}).get("query"))
+        return library_list((args or {}).get("query"), bool((args or {}).get("all_runs")))
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

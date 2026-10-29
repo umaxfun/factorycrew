@@ -5,6 +5,8 @@ refresh loop and the game APIs the two example panels need, on known planted num
 """
 from __future__ import annotations
 
+import time
+
 from conftest import wait_until
 from panel_scenarios import (LOGI_SETUP, REQUESTER_CONTENTS, REQUESTS, SCIENCE, SCIENCE_SETUP, STORED,
                              add_robots, rows_about)
@@ -142,3 +144,34 @@ def test_bad_body_is_reported_and_kept(stack, mcp):
     assert r["ok"] and r["view"] == ["a]]b ]==] ящик"], r
     for name in ("quote", "science", "missing"):
         panel(mcp, name=name, remove=True)
+
+
+def test_library_round_trip_through_the_bridge(stack):
+    """The window's Library: request -> bridge queue -> (the test plays the dispatcher) -> result -> panel."""
+    from conftest import http
+    req = stack.rcon.lua('return remote.call("kc", "library_request", "list")')
+    asks = wait_until(lambda: http("GET", "/asks?wait=2&lease=5")["asks"], timeout=10, what="the library request at the bridge")
+    lib = [a for a in asks if a.get("kind") == "library"]
+    assert lib and lib[0]["id"] == req["id"] and lib[0]["op"] == "list" and lib[0]["run_id"] == stack.mod_state()["run_id"], asks
+    http("POST", "/asks/done", {"ids": [a["id"] for a in asks]})
+    assert not any(t.get("state") == "thinking" for t in (stack.mod_state()["tabs"] or {}).values()), "a library request is no turn"
+    slug = "factorio-panel-l2-saved"
+    http("POST", "/library_result", {"id": req["id"], "run_id": lib[0]["run_id"], "op": "list", "ok": True,
+                                     "panels": [{"slug": slug, "title": "Сохранённая"}]})
+    got = wait_until(lambda: (lambda l: l if l.get("panels") else None)(stack.rcon.lua('return remote.call("kc", "library")')),
+                     timeout=10, what="the list in the mod")
+    assert got["panels"] == [{"slug": slug, "title": "Сохранённая"}]
+    # open: a long spec (several UDP packets) becomes a live panel
+    big = "return {" + ", ".join(f"'строка {i}'" for i in range(400)) + "}"
+    req = stack.rcon.lua(f'return remote.call("kc", "library_request", "open", "{slug}")')
+    http("GET", "/asks?wait=2&lease=5")
+    http("POST", "/library_result", {"id": req["id"], "run_id": lib[0]["run_id"], "op": "open", "ok": True,
+                                     "spec": {"name": "l2-saved", "title": "Сохранённая", "lua": big, "every": 2}})
+    p = wait_until(lambda: [x for x in stack.rcon.lua('return remote.call("kc", "panels")') if x["name"] == "l2-saved"],
+                   timeout=10, what="the opened panel")
+    assert len(p[0]["view"]) == 400 and p[0]["view"][-1] == "строка 399"
+    # an answer for another run is dropped
+    http("POST", "/library_result", {"id": "x", "run_id": "another-run", "op": "list", "ok": True, "panels": []})
+    time.sleep(1)
+    assert stack.rcon.lua('return remote.call("kc", "library")')["panels"] == [{"slug": slug, "title": "Сохранённая"}]
+    stack.rcon.lua('return remote.call("kc", "panel_remove", "l2-saved")')

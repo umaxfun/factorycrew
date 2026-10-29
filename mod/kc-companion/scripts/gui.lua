@@ -281,10 +281,9 @@ local function refresh_panels(player, frame)
   if not row then return end
   row.clear()
   local order = storage.kc.panel_order or {}
-  row.visible = #order > 0
-  if #order == 0 then return end
   row.add{ type = "label", caption = "Panels:" }
   local flow = row.add{ type = "flow", direction = "horizontal" }
+  if #order == 0 then flow.add{ type = "label", caption = "[color=gray]none open[/color]" } end
   for _, name in ipairs(order) do
     local p = storage.kc.panels[name]
     if p then
@@ -296,6 +295,68 @@ local function refresh_panels(player, frame)
       b.style.minimal_width = 0
       b.style.horizontal_align = "center"
     end
+  end
+  local filler = row.add{ type = "empty-widget" }
+  filler.style.horizontally_stretchable = true
+  row.add{ type = "button", name = "kc_library_toggle", caption = "Library", toggled = view(player).library == true,
+           tooltip = "Panels saved in this run (Kiro Crew artifacts): open one without asking Kira" }
+end
+
+-- The run's saved panels (scripts/panels.lua, library): open or delete them, no model involved.
+-- Its own frame at the top of the left column, beside the panels: Kira's window is tall and its
+-- bottom rows can sit below the screen edge.
+local function refresh_library(player)
+  local v = view(player)
+  local fr = player.gui.left.kc_library
+  if not v.library then
+    if fr then fr.destroy() end
+    return
+  end
+  if not fr then
+    fr = player.gui.left.add{ type = "frame", name = "kc_library", direction = "vertical" }
+    pcall(function() player.gui.left.swap_children(1, fr.get_index_in_parent()) end) -- first in the column
+    local bar = fr.add{ type = "flow", direction = "horizontal" }
+    bar.style.vertical_align = "center"
+    bar.add{ type = "label", caption = "Panel library", style = "frame_title", ignored_by_interaction = true }
+    local grip = bar.add{ type = "empty-widget", ignored_by_interaction = true }
+    grip.style.horizontally_stretchable, grip.style.minimal_width = true, 8
+    bar.add{ type = "sprite-button", name = "kc_library_close", sprite = "utility/close", style = "frame_action_button",
+             tooltip = "Close the library" }
+    local inner = fr.add{ type = "frame", name = "kc_library_body", direction = "vertical",
+                          style = "inside_shallow_frame_with_padding" }
+    inner.style.minimal_width = 260
+  end
+  local box = fr.kc_library_body
+  box.clear()
+  local lib = storage.kc.library or { panels = {}, pending = {} }
+  local loading = next(lib.pending or {}) ~= nil
+  local head = "Saved in this run"
+  if loading then head = head .. "  [color=gray]loading…[/color]" end
+  box.add{ type = "label", caption = head }
+  if lib.error then
+    local l = box.add{ type = "label", caption = "[color=red]" .. lib.error .. "[/color]" }
+    l.style.single_line = false
+    l.style.maximal_width = 320
+  end
+  local list = lib.panels or {}
+  if #list == 0 and not loading then
+    box.add{ type = "label", caption = "[color=gray]Nothing saved yet: ask Kira for a panel.[/color]" }
+  end
+  local pane = box.add{ type = "scroll-pane", horizontal_scroll_policy = "never", vertical_scroll_policy = "auto" }
+  pane.style.maximal_height = 6 * 32
+  for _, p in ipairs(list) do
+    local r = pane.add{ type = "flow", direction = "horizontal" }
+    r.style.vertical_align = "center"
+    local b = r.add{ type = "button", name = "kc_lib_open:" .. p.slug, caption = p.title,
+                     tooltip = "Open", tags = { kc_lib_open = p.slug } }
+    b.style.horizontally_stretchable = true
+    b.style.maximal_width = 320
+    b.style.horizontal_align = "left"
+    local confirm = v.confirm_delete == p.slug
+    r.add{ type = "sprite-button", name = "kc_lib_del:" .. p.slug, sprite = "utility/trash",
+           style = confirm and "tool_button_red" or "tool_button",
+           tooltip = confirm and "Click again to delete it from Kiro Crew" or "Delete from the library",
+           tags = { kc_lib_del = p.slug } }
   end
 end
 
@@ -318,6 +379,7 @@ local function refresh_pointers(player, frame)
 end
 
 function M.refresh(player)
+  refresh_library(player)
   local frame = root(player)
   if not frame then return end
   refresh_run(player, frame)
@@ -411,6 +473,24 @@ function M.on_click(e, send)
     go_to_mark(player, -1)
   elseif name == "kc_mark_next" then
     go_to_mark(player, 1)
+  elseif name == "kc_library_toggle" or name == "kc_library_close" then
+    if name == "kc_library_close" then v.library = true end -- the toggle below closes it
+    v.library = not v.library
+    v.confirm_delete = nil
+    if v.library then send(protocol.library_request("list")) end -- the shown list is the last one until it arrives
+    M.refresh(player)
+  elseif el.tags and el.tags.kc_lib_open then
+    v.confirm_delete = nil
+    send(protocol.library_request("open", el.tags.kc_lib_open))
+    M.refresh(player)
+  elseif el.tags and el.tags.kc_lib_del then
+    if v.confirm_delete == el.tags.kc_lib_del then
+      v.confirm_delete = nil
+      send(protocol.library_request("delete", el.tags.kc_lib_del))
+    else
+      v.confirm_delete = el.tags.kc_lib_del -- deleting is for good: the second click does it
+    end
+    M.refresh(player)
   elseif name == "kc_point" then
     pointers.give_tool(player)
   elseif name == "kc_pointer_clear" then

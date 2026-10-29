@@ -409,7 +409,7 @@ function M.set(spec)
   gui.refresh_all()
   if ok then
     return { ok = true, name = name, every = every, input = input, view = preview(p.view),
-             run_name = storage.kc.run_name }
+             run_name = storage.kc.run_name, run_id = storage.kc.run_id }
   end
   return { ok = false, name = name, error = err,
            message = "the panel is kept and shows this error; fix the body and call again with the same name" }
@@ -527,6 +527,59 @@ function M.on_selection(e)
   if not (el and el.valid and el.tags and el.tags.kc_panel and el.tags.kc_input) then return false end
   M.set_input(el.tags.kc_panel, el.tags.kc_input, el.items[el.selected_index])
   return true
+end
+
+-- ── the run's library: panels saved as Kiro Crew artifacts, opened without a model ──
+--
+-- The window asks the bridge (protocol.library_request); the dispatcher, which runs inside the
+-- gateway, reads the artifacts and answers with a library_result. storage.kc.library =
+-- {panels = {{slug, title}}, pending = {id -> op}, error, tick}; the last list is kept, so the
+-- window shows it at once and replaces it when the fresh one arrives.
+
+M.LIBRARY_TIMEOUT_TICKS = 600 -- 10 s without an answer: Kiro Crew is not there
+
+function M.library()
+  local kc = storage.kc
+  kc.library = kc.library or { panels = {}, pending = {} }
+  kc.library.pending = kc.library.pending or {}
+  return kc.library
+end
+
+--- A library_result from the bridge: a list, a panel to open, or a deletion.
+function M.on_library(msg)
+  local lib = M.library()
+  local op = (lib.pending[msg.id] and lib.pending[msg.id].op) or msg.op
+  lib.pending[msg.id] = nil
+  if not msg.ok then
+    lib.error = tostring(msg.error or "Kiro Crew refused")
+    return
+  end
+  lib.error = nil
+  if msg.panels then
+    local list = {}
+    for _, p in ipairs(msg.panels) do
+      if type(p) == "table" and p.slug then list[#list + 1] = { slug = p.slug, title = p.title or p.slug, name = p.name } end
+    end
+    lib.panels, lib.tick = list, game.tick
+  end
+  if op == "open" and type(msg.spec) == "table" then
+    local r = M.set(msg.spec)
+    if not r.ok then lib.error = "opened, but its data failed: " .. tostring(r.error) end
+    -- opened from the library: shown even if this player had hidden it
+    for _, player in pairs(game.connected_players) do M.show(player, r.name or msg.spec.name, true) end
+  end
+end
+
+--- Requests that got no answer in time turn into an error line.
+function M.library_tick()
+  local lib = M.library()
+  local late = {}
+  for id, op in pairs(lib.pending) do
+    if type(op) ~= "table" or game.tick - op.tick > M.LIBRARY_TIMEOUT_TICKS then late[#late + 1] = id end
+  end
+  for _, id in ipairs(late) do lib.pending[id] = nil end
+  if #late > 0 then lib.error = "Kiro Crew did not answer (is the dispatcher running?)" end
+  return #late > 0
 end
 
 -- in the query environment, beside the other kc helpers: kc.panel{...}, kc.panel_remove(name), kc.panels()

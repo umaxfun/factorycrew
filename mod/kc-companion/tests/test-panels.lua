@@ -1,5 +1,6 @@
 local protocol = require("scripts.protocol")
 local panels = require("scripts.panels")
+local gui = require("scripts.gui")
 
 local player
 
@@ -154,6 +155,54 @@ describe("panels", function()
     panels.collapse(player, "fold", true)
     panels.set{ name = "fold", lua = "return {'v2'}" }
     assert(not frame("fold").kc_panel_inner.visible)
+  end)
+
+  it("lists, opens and deletes the run's saved panels from Kira's window, with no model", function()
+    storage.kc.library = nil
+    local out = {}
+    local function send(m) out[#out + 1] = m end
+    if not player then return end
+    if not player.gui.screen.kc_main then gui.toggle(player) end
+    local function find(el, n)
+      if el.name == n then return el end
+      for _, c in pairs(el.children) do local f = find(c, n) if f then return f end end
+    end
+    local function click(n)
+      local el = find(player.gui.screen.kc_main, n) or (player.gui.left.kc_library and find(player.gui.left.kc_library, n))
+      assert(el, "no element " .. n)
+      gui.on_click({ element = el, player_index = player.index }, send)
+    end
+    local function text() return player.gui.left.kc_library and table.concat(texts(player.gui.left.kc_library), "\n") or "" end
+    click("kc_library_toggle")
+    assert(#out == 1 and out[1].type == "library" and out[1].op == "list" and out[1].run_id == storage.kc.run_id, serpent.line(out))
+    assert(text():find("loading", 1, true), text())
+    local SLUG = "factorio-panel-x-science"
+    panels.on_library({ id = out[1].id, ok = true, panels = {{ slug = SLUG, title = "Science packs made" }} })
+    gui.refresh(player)
+    local s = text()
+    assert(not s:find("loading", 1, true) and find(player.gui.left.kc_library, "kc_lib_open:" .. SLUG), s)
+    -- open: the saved spec arrives and becomes a live panel
+    click("kc_lib_open:" .. SLUG)
+    assert(out[2].op == "open" and out[2].slug == SLUG)
+    panels.on_library({ id = out[2].id, ok = true, spec = { name = "science", title = "Science packs made", lua = "return {'saved'}" } })
+    assert(panels.get("science") and frame("science") and shown("science"):find("saved", 1, true))
+    -- delete takes two clicks
+    click("kc_lib_del:" .. SLUG)
+    assert(#out == 2, "the first click only asks to confirm")
+    click("kc_lib_del:" .. SLUG)
+    assert(out[3].op == "delete" and out[3].slug == SLUG)
+    panels.on_library({ id = out[3].id, ok = true, panels = {} })
+    gui.refresh(player)
+    assert(text():find("Nothing saved yet", 1, true), text())
+    -- no answer in time
+    click("kc_library_toggle") click("kc_library_toggle")
+    storage.kc.library.pending[out[#out].id].tick = game.tick - panels.LIBRARY_TIMEOUT_TICKS - 1
+    assert(panels.library_tick())
+    gui.refresh(player)
+    assert(text():find("did not answer", 1, true), text())
+    click("kc_library_close")
+    assert(not player.gui.left.kc_library, "the library frame did not close")
+    gui.toggle(player)
   end)
 
   it("hides on close, shows again from the toggle, and removes the window", function()

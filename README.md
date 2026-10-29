@@ -96,3 +96,9 @@ Screenshots land in `~/.factorycrew-dev/factorio/script-output/kc/`. The full st
 ## Playing
 
 Players install the Kiro Crew app (see "Releases and updates" above): it runs the bridge, the dispatcher and Kira, and copies the mod into Factorio's mods folder. Start Factorio with the launch option `--enable-lua-udp 34200`. If something does not answer, the app's status page (sidebar → Factorio) says which piece is down and what to do; Factorio's own log is `~/Library/Application Support/factorio/factorio-current.log` (`grep -iE "kc-companion|udp"`).
+
+### Live panels
+
+Ask Kira for a panel ("show me science production with a time filter") and she writes a small window the mod keeps up to date by itself. Every working panel is saved as a Kiro Crew artifact (tag `factorio-panel`, one library per run). The **Library** button in Kira's window lists the run's saved panels and opens or deletes them directly, without a model turn; Kira can also find and restore one ("bring back my science panel").
+
+**Not safe by design.** A panel is Lua code that runs inside the game on every refresh, and a saved panel is that code stored in an artifact. Whoever can edit the artifacts of your Kiro Crew (or reach the bridge port) can run any Lua in your game: change or delete things in the save, or hang the game with an endless loop. This is fine for a single-player game on your own machine; do not open panels from artifacts you did not make, and do not use this on a multiplayer server you care about.

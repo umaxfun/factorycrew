@@ -130,6 +130,20 @@ function M.unacked(chat)
   return out
 end
 
+-- ── the run's panel library (scripts/panels.lua keeps the answers) ──────────
+
+--- A request to the run's saved-panel library: op = "list" | "open" | "delete" (with slug).
+--- The dispatcher answers with a library_result; no model is involved.
+function M.library_request(op, slug)
+  local kc = storage.kc
+  kc.library = kc.library or { panels = {}, pending = {} }
+  kc.library.pending = kc.library.pending or {}
+  local id = next_id("lib")
+  kc.library.pending[id] = { op = op, tick = game.tick }
+  kc.library.error = nil
+  return { type = "library", id = id, op = op, slug = slug, run_id = kc.run_id, run_name = kc.run_name }
+end
+
 -- ── query execution ──────────────────────────────────────────────────────
 
 local function query_env(surface_name)
@@ -379,7 +393,7 @@ function M.handle(msg)
   local t = msg.type
   local kc = storage.kc
   -- reply/status addressed to another run (a queued answer for a save that is no longer loaded)
-  if (t == "reply" or t == "status" or t == "trace") and msg.run_id and msg.run_id ~= kc.run_id then
+  if (t == "reply" or t == "status" or t == "trace" or t == "library_result") and msg.run_id and msg.run_id ~= kc.run_id then
     return {}
   end
   if t == "query" then
