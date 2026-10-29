@@ -499,7 +499,7 @@ def artifact_slug(name: str, run_id=None) -> str:
 
 
 def current_run_id():
-    h = bridge_get_health()
+    h = bridge_health()
     return h.get("run_id") if isinstance(h, dict) else None
 
 
@@ -533,9 +533,6 @@ def bridge_health() -> dict:
             return json.loads(r.read())
     except (urllib.error.URLError, OSError, ValueError):
         return {}
-
-
-bridge_get_health = bridge_health  # the panels' name for it
 
 
 def _plain(v) -> str:
