@@ -48,7 +48,8 @@ def test_timeout(bridge):
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="seatbelt sandbox is macOS only")
 def test_sandbox_blocks_network_home_and_writes(bridge, tmp_path):
-    secret = Path.home() / ".kc-compute-probe"
+    # one name per run: two worktrees running this test at once deleted each other's probe
+    secret = Path.home() / f".kc-compute-probe-{os.getpid()}"
     secret.write_text("secret")
     try:
         r = m.call_tool("factorio_compute", {"python": f'''
