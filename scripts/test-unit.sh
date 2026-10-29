@@ -9,6 +9,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-[ $# -gt 0 ] || set -- tests/unit
+# no path among the arguments (only options like -k or -x): run tests/unit, not pytest.ini's
+# testpaths, which would also collect the integration and e2e suites
+case " $* " in *" tests/"*) ;; *) set -- tests/unit "$@" ;; esac
 exec uv run --no-project --python 3.12 --with pytest==8.3.5 \
   python -m pytest -p no:cacheprovider -q "$@"
