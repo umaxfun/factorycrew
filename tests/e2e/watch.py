@@ -11,6 +11,8 @@ first one that stopped moving, with what it saw there:
   * the question sits in the bridge queue (no dispatcher is polling it);
   * the dispatcher took it but no chat appeared, or the chat's turn failed (role "error" in the
     transcript, e.g. "Crew Member ... is unavailable");
+  * Kira's `factorio` MCP server failed to start (kiro-cli's mcp.log in the gateway home), so
+    the turn runs with no game tools at all;
   * the turn runs but nothing moves: no MCP step, no trace line, no transcript growth;
   * the bridge itself gave up (90 s without a sign of life -> "did not answer here").
 """
@@ -89,6 +91,7 @@ def wait_reply(*, health, tab, chat: str, before: int, kc_home: Path, timeout: f
     health(): the bridge's /health dict. tab(chat): the mod's tab {feed, state, note, steps, trace}.
     """
     t0 = time.monotonic()
+    wall0 = time.time()
     last_move, last_sig = t0, None
     picked = chat_seen = None
     errors_seen = errors_before(kc_home, health().get("run_id"), chat)  # older failures are not this wait's
@@ -135,6 +138,10 @@ def wait_reply(*, health, tab, chat: str, before: int, kc_home: Path, timeout: f
                 new = errs[errors_seen:]
                 # an error row written during this wait is a failed turn
                 stuck("Kiro Crew turn", "the turn failed: " + "; ".join(_short(r.get("content")) for r in new), path)
+        if chat_seen is not None and (dead := mcp_failures(kc_home, wall0)):
+            stuck("Kira's MCP server", "the `factorio` MCP server did not start, so the turn has no game "
+                  "tools: " + "; ".join(dead[:2]) + ". If the checkout is under ~/.kiro/crew/scratch, the "
+                  "gateway's sandbox cannot read it (docs/worktrees.md, Requirements)", path)
         if t.get("note") == "no_reply" and state != "thinking" and picked is not None:
             stuck("agent turn", "the bridge gave up: 90 s without a reply or any sign of life", path)
 
@@ -150,6 +157,27 @@ def wait_reply(*, health, tab, chat: str, before: int, kc_home: Path, timeout: f
             stuck("agent turn", f"still working after {timeout:.0f} s (steps {t.get('steps')}, "
                   f"activity {t.get('activity')!r})", path)
         time.sleep(1)
+
+
+def mcp_failures(kc_home: Path, since: float, server: str = "factorio") -> list[str]:
+    """kiro-cli's own record that an MCP server did not connect, written after `since` (epoch s).
+
+    Every agent session of the gateway logs to <KIROCREW_HOME>/kiro/logs/<start>/mcp.log, one
+    JSON object per line. A `factorio` server that dies on start (a checkout the gateway's
+    sandbox cannot read, a syntax error) shows up there as "Failed to connect"; Kira then
+    answers without game tools and the bridge only ever sees silence.
+    """
+    out = []
+    for p in glob.glob(str(kc_home / "kiro" / "logs" / "*" / "mcp.log")):
+        try:
+            if os.path.getmtime(p) < since:
+                continue
+        except OSError:
+            continue
+        for r in _lines(Path(p)):
+            if r.get("serverName") == server and r.get("level") == "error":
+                out.append(f"{r.get('message')}: {r.get('error', '')} ({p})")
+    return out
 
 
 def errors_before(kc_home: Path, run_id: str | None, chat: str) -> int:

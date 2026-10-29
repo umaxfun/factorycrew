@@ -124,3 +124,36 @@ def test_bridge_gave_up(tmp_path):
         return {"feed": [{"from": "player", "text": "q", "acked": True}], **d}
     with pytest.raises(watch.Stuck, match=r"(?s)bridge gave up"):
         wait(health(), kc, t)
+
+
+def mcp_log(kc, rows, name="20261029T212327909"):
+    d = kc / "kiro" / "logs" / name
+    d.mkdir(parents=True)
+    (d / "mcp.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_dead_mcp_server_is_named(tmp_path):
+    kc = home(tmp_path, "factorio-1", rows=[{"role": "user", "content": "q"}])
+    calls = {"n": 0}
+
+    def later_failure(chat):
+        calls["n"] += 1
+        if calls["n"] == 3:  # kiro-cli starts the agent after the wait began
+            mcp_log(kc, [{"level": "warn", "message": "mcp.connect.error", "serverName": "factorio"},
+                         {"level": "error", "message": "Failed to connect", "serverName": "factorio",
+                          "error": "Connection closed"}])
+        return {"feed": [{"from": "player", "text": "q", "acked": True}], "state": "thinking", "steps": calls["n"]}
+    with pytest.raises(watch.Stuck, match=r"(?s)Kira's MCP server.*Failed to connect: Connection closed"):
+        wait(health(), kc, later_failure)
+
+
+def test_other_servers_and_old_logs_do_not_count(tmp_path):
+    kc = home(tmp_path, "factorio-1", rows=[{"role": "user", "content": "q"}])
+    mcp_log(kc, [{"level": "error", "message": "Failed to connect", "serverName": "factorio"}], name="old")
+    old = kc / "kiro" / "logs" / "old" / "mcp.log"
+    import os
+    os.utime(old, (time.time() - 3600, time.time() - 3600))
+    mcp_log(kc, [{"level": "error", "message": "Failed to connect", "serverName": "linear"}], name="new")
+    feed = [{"from": "player", "text": "q", "acked": True}, {"from": "kira", "text": "a"}]
+    entry, _ = wait(health(), kc, tab(feed=feed, state="idle"))
+    assert entry["text"] == "a"
