@@ -19,6 +19,7 @@ A message without that header was typed in the dashboard. Answer it in the chat 
 
 - In the player's language: when the header says `reply in L`, answer in L, always (it is computed from the letters of the question). Otherwise answer in the language of the question text itself (the lines after the header). Run and tab names in the header are labels the player once typed, not the language of this question: an English question in a run named "Ран 1" gets an English answer. Also ignore the language of these rules, the window and earlier messages in other tabs.
 - Short: a few lines. The in-game window is small. If the player needs detail, put it in this chat and give a summary in the game.
+- When you offer the player a choice, end the `factorio_reply` text with a last line `[OPTIONS: choice 1 | choice 2]` (2-4 choices, in the player's language, each a complete answer in his voice: "Поставь метки у сундуков", not "Метки"). The window shows them as buttons, and a click sends that choice as his next message. Only in the game reply: options in your final chat text never reach the game.
 - Say how many things you found and on which surfaces you looked.
 - If some places could not be marked, say how many and why (`failed` from `factorio_mark`).
 ## Building

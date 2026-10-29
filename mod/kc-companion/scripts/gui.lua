@@ -239,6 +239,19 @@ local function refresh_feed(player, frame)
     l.style.single_line = false
     l.style.maximal_width = WIDTH - 40
   end
+  -- Kira's suggested answers ([OPTIONS: ...] of her last message) as buttons; a click sends the
+  -- choice as the player's next message. Only while her message is the last one and she is idle.
+  local last = tab.feed[#tab.feed]
+  if last and last.from == "kira" and last.options and tab.state ~= "thinking" then
+    local row = pane.add{ type = "flow", name = "kc_options", direction = "vertical" }
+    row.style.vertical_spacing = 2
+    for i, o in ipairs(last.options) do
+      local b = row.add{ type = "button", name = "kc_option_" .. i, caption = o, tags = { kc_option = o } }
+      b.style.horizontally_stretchable = true
+      b.style.maximal_width = WIDTH - 40
+      b.style.horizontal_align = "left"
+    end
+  end
   -- the running turn, step by step: Kira's own words between tool calls, and the tools
   if tab.state == "thinking" and tab.trace then
     for _, s in ipairs(tab.trace) do
@@ -422,13 +435,15 @@ function M.toggle(player)
   find(root(player), "kc_input").focus()
 end
 
---- Send the input field's text as a question. `send` puts a message on the wire.
-local function submit(player, send)
+--- Send the input field's text (or `text`, a chosen option) as a question. `send` puts a message on the wire.
+local function submit(player, send, text)
   local frame = root(player)
   local field = find(frame, "kc_input")
-  local text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
-  if text == "" then return end
-  field.text = ""
+  if text == nil then
+    text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return end
+    field.text = ""
+  end
   send(protocol.ask(view(player).tab, text, player, pointers.take(player)))
   M.refresh(player)
   field.focus()
@@ -456,6 +471,8 @@ function M.on_click(e, send)
     M.toggle(player)
   elseif name == "kc_send" then
     submit(player, send)
+  elseif el.tags and el.tags.kc_option then
+    submit(player, send, el.tags.kc_option)
   elseif el.tags and el.tags.kc_tab then
     v.tab, v.mark, v.adding = el.tags.kc_tab, 0, false
     M.refresh(player)

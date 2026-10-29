@@ -191,6 +191,33 @@ describe("panels", function()
     assert(player.physical_position.x == before.x, "the character moved")
   end)
 
+  it("turns a trailing [OPTIONS: a | b] of an answer into buttons that send the choice", function()
+    local text, opts = protocol.split_options("Ставить метки?\n\n[OPTIONS: Поставь метки | Не надо |  ]")
+    assert(text == "Ставить метки?" and #opts == 2 and opts[1] == "Поставь метки" and opts[2] == "Не надо", serpent.line(opts))
+    text, opts = protocol.split_options("no options [here] in the middle")
+    assert(text == "no options [here] in the middle" and opts == nil)
+    if not player then return end
+    local sent = {}
+    local send = function(m) sent[#sent + 1] = m end
+    if not player.gui.screen.kc_main then gui.toggle(player) end
+    local tab = protocol.tab("opts-test")
+    protocol.handle({ type = "reply", chat = "opts-test", run_id = storage.kc.run_id, id = "r1",
+                      text = "Что делаем?\n[OPTIONS: Поставь метки | Оставь как есть]" })
+    assert(tab.feed[#tab.feed].text == "Что делаем?" and #tab.feed[#tab.feed].options == 2)
+    local function find(el, name)
+      if el.name == name then return el end
+      for _, c in pairs(el.children) do local r = find(c, name) if r then return r end end
+    end
+    gui.refresh(player)
+    gui.on_click({ element = find(player.gui.screen.kc_main, "kc_tab:opts-test"), player_index = player.index }, send)
+    local b = find(player.gui.screen.kc_main, "kc_option_1")
+    assert(b and b.caption == "Поставь метки", "no option button")
+    gui.on_click({ element = b, player_index = player.index }, send)
+    assert(#sent == 1 and sent[1].type == "ask" and sent[1].text == "Поставь метки" and sent[1].chat == "opts-test", serpent.line(sent))
+    assert(not find(player.gui.screen.kc_main, "kc_option_1"), "the options stay after a choice")
+    protocol.close_tab("opts-test")
+  end)
+
   it("lists, opens and deletes the run's saved panels from Kira's window, with no model", function()
     storage.kc.library = nil
     local out = {}

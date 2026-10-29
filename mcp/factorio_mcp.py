@@ -104,7 +104,8 @@ TOOLS = [
         "name": "factorio_reply",
         "description": (
             "Show the answer in the in-game tab. When the turn was started by a question from the game, "
-            "end it with this call. Keep it to a few lines; the window is small."
+            "end it with this call. Keep it to a few lines; the window is small. A last line "
+            "`[OPTIONS: a | b]` (the player's language) becomes buttons that send the choice as his next message."
         ),
         "inputSchema": {
             "type": "object",

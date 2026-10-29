@@ -306,7 +306,12 @@ class Tracer:
         if not text:
             return
         try:
-            bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text}, timeout=10)
+            # fallback: the bridge drops it if the turn did answer. The transcript may show the
+            # turn's end before its factorio_reply row, and then this copy (in the dashboard's
+            # language, with the dashboard's [OPTIONS]) came on top of the real answer.
+            r = bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text, "fallback": True}, timeout=10)
+            if r.get("skipped"):
+                return
             print(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
         except (urllib.error.URLError, OSError, ValueError) as exc:
             print(f"could not forward the answer for [{w['chat']}]: {exc}")

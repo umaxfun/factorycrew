@@ -16,6 +16,7 @@ M.MAX_ERRORS = 5     -- consecutive failed refreshes before a panel pauses
 M.MAX_ROWS = 200     -- rows drawn per table; the rest are counted in a footer line
 M.MAX_PANELS = 12
 M.PREVIEW_ROWS = 30  -- rows per table returned to Kira on create
+M.GPS_ZOOM = 0.5     -- a link cell's view: about 60 tiles across instead of a few
 local PREFIX = "kc_panel:"
 
 local compiled = {}  -- name -> {src = lua, fn = function, env = table}
@@ -183,8 +184,9 @@ local function gps_of(v)
   end
   if not (x and y) then return nil end
   s = v.surface or s
+  local zoom = tonumber(v.zoom)
   if type(s) == "table" and s.name then s = s.name end -- a LuaSurface
-  return { x = x, y = y, surface = (s and s ~= "") and tostring(s) or nil }
+  return { x = x, y = y, surface = (s and s ~= "") and tostring(s) or nil, zoom = zoom }
 end
 
 -- A link cell: a flat button; a click opens the remote view at the position (on_click).
@@ -550,6 +552,8 @@ function M.go_to(player, pos)
     return false
   end
   player.set_controller{ type = defines.controllers.remote, surface = surface, position = { pos.x, pos.y } }
+  -- the remote view opens zoomed far in; a chest with its neighbours needs a wider look
+  pcall(function() player.zoom = tonumber(pos.zoom) or M.GPS_ZOOM end)
   return true
 end
 
@@ -557,7 +561,10 @@ function M.on_click(e)
   local el = e.element
   if not (el and el.valid and el.tags) then return false end
   if el.tags.kc_gps then
-    M.go_to(game.get_player(e.player_index), el.tags.kc_gps)
+    -- an error in a click handler would stop the game: report it instead
+    local player = game.get_player(e.player_index)
+    local ok, err = pcall(M.go_to, player, el.tags.kc_gps)
+    if not ok then player.print("[KC] could not open the map there: " .. tostring(err)) end
     return true
   end
   if not el.tags.kc_panel then return false end

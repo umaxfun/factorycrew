@@ -83,6 +83,23 @@ end
 -- "unknown" until the first recv_udp, then "on" or "off" (game started without --enable-lua-udp)
 M.udp_state = "unknown"
 
+M.MAX_OPTIONS = 6
+
+--- A trailing "[OPTIONS: a | b | c]" line of an answer: the text without it and the choices
+--- (shown as buttons that send the choice as the player's next message), or the text and nil.
+function M.split_options(text)
+  if type(text) ~= "string" then return text, nil end
+  local head, body = text:match("^(.-)%s*%[OPTIONS:%s*([^%]]-)%s*%]%s*$")
+  if not head then return text, nil end
+  local options = {}
+  for o in (body .. "|"):gmatch("([^|]*)|") do
+    o = o:gsub("^%s+", ""):gsub("%s+$", "")
+    if o ~= "" and #options < M.MAX_OPTIONS then options[#options + 1] = o end
+  end
+  if #options == 0 then return head, nil end
+  return head, options
+end
+
 local function push(tab, entry)
   entry.tick = game.tick
   tab.feed[#tab.feed + 1] = entry
@@ -421,7 +438,8 @@ function M.handle(msg)
         (secs and (", " .. secs .. " s") or "") })
     end
     tab.trace = nil
-    push(tab, { from = "kira", text = msg.text, id = msg.id })
+    local text, options = M.split_options(msg.text)
+    push(tab, { from = "kira", text = text, id = msg.id, options = options })
     tab.state, tab.note = "idle", nil
     tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
   elseif t == "trace" then

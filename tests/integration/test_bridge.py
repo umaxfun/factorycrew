@@ -181,6 +181,26 @@ def test_long_turn_progress_reaches_the_tab(stack, mcp):
     assert http("POST", "/trace", {"chat": "Logo", "kind": "text", "text": "late"})["sent"] is False
 
 
+def test_dispatchers_fallback_copy_is_dropped_after_a_real_answer(stack, mcp):
+    # The dispatcher forwards the turn's last text when it sees no factorio_reply in the
+    # transcript; it once did that after a real answer and the tab got both (Russian, then the
+    # dashboard's English with [OPTIONS]). The bridge knows the turn answered and drops the copy.
+    ask_id = stack.ask("Dup", "first question")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    assert mcp.tool("factorio_reply", chat="Dup", text="Ответ")["delivered"]
+    r = http("POST", "/reply", {"chat": "Dup", "text": "Answer (dashboard copy)", "fallback": True})
+    assert r["skipped"] == "already_answered" and not r["delivered"]
+    # the next question has no answer yet: its fallback is delivered
+    ask_id = stack.ask("Dup", "second question")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    assert http("POST", "/reply", {"chat": "Dup", "text": "Всё отлично", "fallback": True})["delivered"]
+    t = wait_until(lambda: (lambda t: t if t["feed"][-1].get("text") == "Всё отлично" else None)(stack.tab("Dup")),
+                   what="fallback answer")
+    assert [e["text"] for e in t["feed"] if e["from"] == "kira"] == ["Ответ", "Всё отлично"]
+
+
 def test_asks_wait_while_dispatcher_is_away(stack):
     a = stack.ask(CHAT, "first")
     b = stack.ask("Power", "second")

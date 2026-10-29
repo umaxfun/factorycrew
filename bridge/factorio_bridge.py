@@ -158,6 +158,7 @@ class Bridge(asyncio.DatagramProtocol):
         self.outbox: deque[dict] = deque()  # reply/status for an offline game
         self.idle_timers: dict[tuple, asyncio.TimerHandle] = {}
         self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
+        self.answered: set[tuple] = set()  # (run_id, chat) whose last question got an answer
         self.ids = itertools.count(1)
         self.dispatcher_seen: float | None = None  # last GET /asks
         self.agent_seen: float | None = None  # last tool call of Kira's (via the MCP server)
@@ -304,6 +305,7 @@ class Bridge(asyncio.DatagramProtocol):
     def set_thinking(self, run_id, chat) -> None:
         key = (run_id, chat)
         self.working[key] = {"steps": 0, "activity": ""}
+        self.answered.discard(key)  # a new question: its answer is still to come
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "thinking"})
         self.arm_idle(key)
 
@@ -339,8 +341,14 @@ class Bridge(asyncio.DatagramProtocol):
         log.info("no reply in %ss for [%s], sending idle", self.s.idle_after, chat)
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": "no_reply"})
 
-    def reply(self, chat: str, text: str) -> dict:
+    def reply(self, chat: str, text: str, fallback: bool = False) -> dict:
+        """An answer for a tab. `fallback`: the dispatcher's copy of the turn's last text, sent when
+        it saw no factorio_reply in the transcript; dropped if this turn already answered (the
+        transcript's row order is not a reliable signal, the bridge's own record is)."""
         run_id = self.game.run_id
+        if fallback and (run_id, chat) in self.answered:
+            return {"ok": True, "delivered": False, "queued": False, "skipped": "already_answered"}
+        self.answered.add((run_id, chat))
         timer = self.idle_timers.pop((run_id, chat), None)
         if timer:
             timer.cancel()
@@ -379,7 +387,7 @@ class Bridge(asyncio.DatagramProtocol):
             chat, text = body.get("chat"), body.get("text")
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
-            return 200, self.reply(chat, text)
+            return 200, self.reply(chat, text, fallback=body.get("fallback") is True)
         if method == "POST" and path == "/library_result":
             # the dispatcher's answer to a library request: a list, a panel spec, a deletion
             if not isinstance(body.get("id"), str):

@@ -77,7 +77,7 @@ def test_forwards_the_last_text_when_the_turn_skipped_factorio_reply(tmp_path, m
         {"role": "user", "content": "[Factorio ...]\nкак дела?"},
         {"role": "assistant", "content": "Всё отлично! Готова помочь.", "meta": {"turn_stats": {"credits": 0.16}}},
     ])
-    assert ("/reply", {"chat": "General", "text": "Всё отлично! Готова помочь."}) in posted
+    assert ("/reply", {"chat": "General", "text": "Всё отлично! Готова помочь.", "fallback": True}) in posted
     assert t.watch == {}
 
 
@@ -95,7 +95,7 @@ def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypa
         {"role": "assistant", "content": "The furnace needs coal."},
         {"role": "assistant", "content": "", "meta": {"turn_stats": {"credits": 0.2}}},
     ])
-    assert ("/reply", {"chat": "General", "text": "The furnace needs coal."}) in posted
+    assert ("/reply", {"chat": "General", "text": "The furnace needs coal.", "fallback": True}) in posted
 
 
 def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):
