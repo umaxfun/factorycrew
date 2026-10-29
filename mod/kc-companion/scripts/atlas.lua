@@ -364,15 +364,29 @@ step = function()
       if not j.cur then -- the next chunk with entities of ours
         if j.next > #j.chunks or looked >= (j.max_chunks or M.MAX_CHUNKS) then break end
         local c = j.chunks[j.next]
-        j.next = j.next + 1
-        looked = looked + 1
         local x0, y0 = c[1] * 32, c[2] * 32
-        local area = { { x0, y0 }, { x0 + 32, y0 + 32 } }
-        if pf then pf.find.restart() end
-        local found = s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0
-          and s.find_entities_filtered{ area = area, force = "player" } or nil
-        if pf then pf.find.stop() end
-        if found then j.cur = { list = found, i = 1, x0 = x0, y0 = y0 } end
+        -- most of a map is empty: one look at a whole 4x4-chunk region skips 16 chunks at once
+        -- (a look costs about the same whatever its area)
+        local rk = math.floor(c[1] / 4) .. "," .. math.floor(c[2] / 4)
+        j.regions = j.regions or {}
+        local empty = j.regions[rk]
+        if empty == nil and not j.partial then
+          local rx, ry = math.floor(c[1] / 4) * 128, math.floor(c[2] / 4) * 128
+          looked = looked + 1
+          empty = s.count_entities_filtered{ area = { { rx, ry }, { rx + 128, ry + 128 } }, force = "player", limit = 1 } == 0
+          j.regions[rk] = empty
+          if looked >= (j.max_chunks or M.MAX_CHUNKS) and not empty then break end
+        end
+        j.next = j.next + 1
+        if not empty then
+          looked = looked + 1
+          local area = { { x0, y0 }, { x0 + 32, y0 + 32 } }
+          if pf then pf.find.restart() end
+          local found = s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0
+            and s.find_entities_filtered{ area = area, force = "player" } or nil
+          if pf then pf.find.stop() end
+          if found then j.cur = { list = found, i = 1, x0 = x0, y0 = y0 } end
+        end
       else
         -- a busy chunk (up to ~900 entities on a real base) is spread over ticks as well:
         -- one whole chunk in a tick made 42-47 UPS dips where the base is dense

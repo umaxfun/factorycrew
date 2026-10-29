@@ -194,3 +194,11 @@ Done when:
 - The dirty set survives save and load; mod changes trigger a full rebuild.
 
 Depends on: 1.
+
+Status: mostly done; two items are short of the target and one is untested.
+- How it works now: the mod keeps dirty chunks per surface in `storage` and dumps only those on request (`chunks = "dirty"`); the bridge keeps the merged structure per surface, reads the player's surface in the background as soon as a game connects, re-reads only dirty chunks, and answers "unchanged" to an MCP server that already holds the current version. A 4x4-chunk region with nothing of ours is skipped with one look, which halved a full dump of the fixture (3356 -> 1611 ticks, 57 -> 29 s; UPS 58 before, min 53.6 during).
+- Second call with nothing changed: 42 ms on the level-2 map (live statuses included). Done.
+- Build (`script_raised_built`) and removal (`script_raised_destroy`) mark exactly their chunks; one build -> one chunk read (level 2). Rotation, settings paste and a recipe changed in the machine GUI need a player and are not tested; `refresh=true` re-reads everything, and every answer carries `structure_age_s`.
+- Python rebuild after a partial update: a full rebuild, 0.8 s on the fixture (was 2.4 s; Nullius' 32x29 wind-collision helpers took most of it). **Target 0.5 s not met**: getting there means updating blocks/zones/edges locally instead of rebuilding.
+- Dirty chunks live in `storage`, so a save keeps them (level 1 checks the storage side); an actual save-and-load round trip is not tested. Mod changes mark everything and force a full dump (level 1).
+- e2e on the fixture: right after the client loads, the first box question was answered in 38 s (84 s before the prefetch, when the first atlas call waited for the whole dump); `/atlas` after the prefetch answers from the store in 0 ms.

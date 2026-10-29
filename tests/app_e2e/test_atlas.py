@@ -148,3 +148,18 @@ def test_what_the_robot_mall_lacks(kira):
     assert "factorio_atlas" in log
     assert re.search(r"hard[- ]glass", text, re.I), "the item nothing puts into the network is missing"
     assert re.search(r"\b\d+\b", text) and re.search(r"wait|ingredient|short|lack", text, re.I)
+
+
+def test_first_question_after_load_does_not_wait_for_the_dump(kira):
+    """docs/atlas.md task 6: the bridge reads the base in the background once the game is online, so
+    Kira's first factorio_atlas call answers from the cached structure."""
+    import json as _json
+    deadline = time.time() + 180
+    while time.time() < deadline and not http("GET", "/health").get("atlas_cached"):
+        time.sleep(3)
+    assert http("GET", "/health").get("atlas_cached"), "the bridge did not prefetch the base"
+    t = time.monotonic()
+    r = http("POST", "/atlas", {}, timeout=60)
+    took = time.monotonic() - t
+    print(f"\n/atlas after prefetch: {took:.1f} s, how={r.get('how')}, chunks_read={r.get('chunks_read')}")
+    assert r.get("ok") and r.get("how") in ("cached", "partial") and took < 10, {k: v for k, v in r.items() if k != "text"}

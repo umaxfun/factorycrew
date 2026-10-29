@@ -499,6 +499,7 @@ class Bridge(asyncio.DatagramProtocol):
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
             "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
+            "atlas_cached": {k or "player": v.version for k, v in self.atlas_store.items() if v.run_id == g.run_id},
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),
             "dispatcher_seen_s": ago(self.dispatcher_seen), "agent_seen_s": ago(self.agent_seen),
@@ -555,7 +556,8 @@ class Bridge(asyncio.DatagramProtocol):
             if body.get("raw"):
                 msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget"),
                        "send_bytes": body.get("send_bytes"), "max_chunks": body.get("max_chunks")}
-                return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
+                async with self.atlas_lock:  # the mod runs one dump at a time (a prefetch may be running)
+                    return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
             return 200, await self.atlas(body.get("surface") or "", bool(body.get("refresh")),
                                          body.get("have_version"), float(body.get("timeout") or ATLAS_TIMEOUT))
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
