@@ -1,6 +1,7 @@
 local protocol = require("scripts.protocol")
 local gui = require("scripts.gui")
 local pointers = require("scripts.pointers")
+local panels = require("scripts.panels")
 
 -- recv_udp/send_udp raise when the game was not started with --enable-lua-udp
 -- (e.g. under FactorioTest). Probe once per load and stay quiet afterwards.
@@ -48,6 +49,7 @@ end)
 
 script.on_nth_tick(60, function()
   gui.tick()
+  panels.tick()
 end)
 
 -- what changes the window when it arrives from the bridge
@@ -100,7 +102,15 @@ script.on_event("kc-clear-cursor", function(e)
 end)
 
 script.on_event(defines.events.on_gui_click, function(e)
+  if panels.on_click(e) then
+    gui.refresh(game.get_player(e.player_index)) -- the Panels row shows which are open
+    return
+  end
   gui.on_click(e, send)
+end)
+
+script.on_event(defines.events.on_gui_selection_state_changed, function(e)
+  panels.on_selection(e)
 end)
 
 script.on_event(defines.events.on_gui_confirmed, function(e)
@@ -137,6 +147,11 @@ remote.add_interface("kc", {
   end,
   pointers = function(index) return pointers.list(game.get_player(index or 1)) end,
   -- a bridge message delivered locally (status, reply, ...), for UI work without a bridge
+  -- live panels: the same calls Kira makes through kc.panel, plus the drop-down
+  panels = function(with_view) return panels.list(with_view ~= false) end,
+  panel_set = function(spec) return panels.set(spec) end,
+  panel_input = function(name, key, value) return panels.set_input(name, key, value) end,
+  panel_remove = function(name) return panels.remove(name) end,
   ui_inject = function(msg)
     for _, r in ipairs(protocol.handle(msg)) do send(r) end
     gui.refresh_all()
@@ -145,5 +160,5 @@ remote.add_interface("kc", {
 })
 
 if script.active_mods["factorio-test"] then
-  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks", "tests/test-gui", "tests/test-helpers", "tests/test-circuits", "tests/test-trial", "tests/test-pointers" })
+  require("__factorio-test__/init")({ "tests/test-protocol", "tests/test-marks", "tests/test-gui", "tests/test-helpers", "tests/test-circuits", "tests/test-trial", "tests/test-pointers", "tests/test-panels" })
 end

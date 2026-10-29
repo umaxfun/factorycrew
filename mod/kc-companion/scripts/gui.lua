@@ -95,6 +95,9 @@ local function build(player)
   local kc_marks_row = inner.add{ type = "flow", name = "kc_marks_row", direction = "horizontal" }
   kc_marks_row.style.vertical_align = "center"
 
+  local kc_panels_row = inner.add{ type = "flow", name = "kc_panels_row", direction = "horizontal" }
+  kc_panels_row.style.vertical_align = "center"
+
   local kc_pointers_row = inner.add{ type = "flow", name = "kc_pointers_row", direction = "vertical" }
   kc_pointers_row.style.vertical_spacing = 0
 
@@ -272,6 +275,30 @@ local function refresh_marks(player, frame)
   tool(row, "kc_mark_clear", "utility/trash", "Remove all marks of this tab", enabled, "tool_button_red")
 end
 
+-- Live panels Kira made (scripts/panels.lua): one toggle per panel, pressed while it is shown.
+local function refresh_panels(player, frame)
+  local row = find(frame, "kc_panels_row")
+  if not row then return end
+  row.clear()
+  local order = storage.kc.panel_order or {}
+  row.visible = #order > 0
+  if #order == 0 then return end
+  row.add{ type = "label", caption = "Panels:" }
+  local flow = row.add{ type = "flow", direction = "horizontal" }
+  for _, name in ipairs(order) do
+    local p = storage.kc.panels[name]
+    if p then
+      local shown = not (p.hidden and p.hidden[player.index])
+      local head, cut = utf8_head(p.title, TAB_CHARS + 4)
+      local b = flow.add{ type = "button", caption = cut and (head .. "…") or p.title, toggled = shown,
+                          tooltip = (shown and "Hide " or "Show ") .. p.title .. (p.error and ("\n[color=red]" .. p.error .. "[/color]") or ""),
+                          tags = { kc_panel = name, kc_panel_toggle = true } }
+      b.style.minimal_width = 0
+      b.style.horizontal_align = "center"
+    end
+  end
+end
+
 local function refresh_pointers(player, frame)
   local row = find(frame, "kc_pointers_row")
   row.clear()
@@ -298,6 +325,7 @@ function M.refresh(player)
   refresh_status(player, frame)
   refresh_feed(player, frame)
   refresh_marks(player, frame)
+  refresh_panels(player, frame)
   refresh_pointers(player, frame)
 end
 

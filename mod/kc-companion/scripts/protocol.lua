@@ -34,6 +34,8 @@ function M.init_storage()
   kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
   kc.seq = kc.seq or 0
   kc.pointers = kc.pointers or {} -- player_index -> {pointer, ...} (scripts/pointers.lua)
+  kc.panels = kc.panels or {} -- name -> live panel (scripts/panels.lua)
+  kc.panel_order = kc.panel_order or {}
 end
 
 local function next_id(prefix)
@@ -150,6 +152,7 @@ local function query_env(surface_name)
     kc = helpers_lib,
   }
 end
+M.query_env = query_env -- panels run their data source in the same environment
 
 --- Run a Lua body against the save. Returns {ok=true, data=...} or {ok=false, error=code, message=...}.
 function M.run_query(lua, surface_name)

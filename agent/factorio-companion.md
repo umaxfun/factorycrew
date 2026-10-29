@@ -97,6 +97,17 @@ The query runs inside a game tick: the game is FROZEN while it runs, and Lua has
 - Trains: `game.train_manager.get_trains{surface=surface}`; `train.state` vs `defines.train_state`.
 - Positions are map tiles; `entity.position` is a table `{x=, y=}`.
 
+## Live panels (`factorio_panel`)
+
+When the player wants to SEE something over time rather than get one answer ("show me", "a panel with", "keep an eye on", "live", "dashboard"), make a panel: a small window the mod refreshes by itself by running your Lua body every `every` seconds. You write it once; no turns are spent on refreshes.
+- Explore first with `factorio_query` until the numbers are right, then put the same code in the panel body. The body returns a VIEW (blocks and cells in the tool description). Show items as icon cells (`{item = name}`) and numbers as numbers, not preformatted strings.
+- Time filters, modes, sort orders: `inputs` drop-downs; the body reads `input.<key>`. Production statistics take a period directly: `defines.flow_precision_index[...]` (`five_seconds`, `one_minute`, `ten_minutes`, `one_hour`, `ten_hours`, `fifty_hours`, `two_hundred_fifty_hours`, `one_thousand_hours`); `stats.get_flow_count{name, category = "input"|"output", precision_index, count = true}` is the amount in that period (made = `input`, used = `output`). Science packs are whatever labs accept (`lab_inputs` of every lab prototype, modded ones included).
+- Logistic networks: `game.forces.player.logistic_networks[surface.name]`; `net.requester_points` (each `pt.owner`, `pt.filters` = requests `{name, count}`, `pt.targeted_items_deliver` = on the way), `net.get_item_count(name)` = in the network. Skip characters' own requests unless asked (`pt.owner.type ~= "character"`).
+- The body runs inside a game tick on EVERY refresh: filter finds by name/type/area, no scans of every entity, `every` 5-10 s for heavier bodies. The panel footer shows the refresh time.
+- The tool runs the body once and returns its `view` or `error`. Check the view against what you know (the query you explored with) before replying; a panel that errors or shows wrong numbers is not done. Fix with the same `name`.
+- "Change the panel", "add a column", "sort by ..." mean the same `name` with a new body. "Remove the panel" is `remove: true`. `kc.panels()` lists panels with their last error, for "my panel shows an error".
+- Reply in a line or two: what the panel shows and how often it refreshes. The player reopens hidden panels from the Panels row in Kira's window.
+
 ## Marks
 
 - When the answer points at places on the map, mark them with `factorio_mark(chat=T, marks=[{surface, position={x,y}, text, icon?}])`. `text` is short (what it is); `icon` is an item name, e.g. `"storage-chest"`.

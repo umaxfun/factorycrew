@@ -138,6 +138,50 @@ TOOLS = [
         },
     },
     {
+        "name": "factorio_panel",
+        "description": (
+            "Create or replace a LIVE PANEL in the game: a small window the mod refreshes by itself every "
+            "`every` seconds (default 2) by running your Lua body, with no further turns from you. Use it when "
+            "the player asks to SHOW/WATCH/KEEP an eye on something over time (a dashboard, 'show me live', "
+            "'a panel with...'). `lua` has the factorio_query environment plus `input` (current values of "
+            "`inputs`, strings) and `state` (a table kept between refreshes, e.g. for deltas). It must "
+            "RETURN A VIEW: a list of blocks: a string (rich text ok, [item=iron-plate], [color=red]..[/color]); "
+            "{title?, columns={...}, rows={{cell,...},...}, empty?}; {bar=v, max=m, caption?, color?}. "
+            "Cells: string, number (formatted 1.2k), {item=name, text?} / {fluid=} / {signal=} (icon), "
+            "{bar=v, max=m, caption?, color?}, {text=, color=red|green|yellow|orange|gray|blue}. "
+            "`inputs`: drop-downs for the player, e.g. [{key:'period', label:'Period', options:['1m','10m','1h'], default:'10m'}]. "
+            "The body runs once now and you get its `view` (or `error`) back: CHECK the numbers against a "
+            "query before replying. It runs inside a game tick on every refresh: keep it cheap (filtered "
+            "finds, no full-map scans; larger `every` for heavier bodies); errors show on the panel and "
+            "5 in a row pause it. Same `name` replaces the panel; `remove: true` deletes it. "
+            "`kc.panels()` in factorio_query lists panels with their last error."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "id, short; the same name replaces"},
+                "title": {"type": "string"},
+                "lua": {"type": "string"},
+                "every": {"type": "integer", "description": "seconds between refreshes, 1-600"},
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"}, "label": {"type": "string"},
+                            "options": {"type": "array", "items": {"type": "string"}},
+                            "default": {"type": "string"},
+                        },
+                        "required": ["key", "options"],
+                    },
+                },
+                "chat": {"type": "string", "description": "the tab that asked"},
+                "remove": {"type": "boolean"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
         "name": "factorio_progress",
         "description": (
             "Show the player what you are doing during a long turn, e.g. 'planning the layout', "
@@ -313,9 +357,44 @@ def compute(args: dict) -> dict:
     return res
 
 
+def lua_long_string(s: str) -> str:
+    """s as a Lua long string literal whose closing bracket does not occur inside it."""
+    level = 0
+    while f"]{'=' * level}]" in s:
+        level += 1
+    eq = "=" * level
+    # a newline right after the opening bracket would be dropped by Lua; JSON never starts with one
+    return f"[{eq}[{s}]{eq}]"
+
+
+def panel_lua(args: dict) -> str:
+    """The query that creates, replaces or removes a live panel (scripts/panels.lua via kc.panel)."""
+    if args.get("remove"):
+        body = json.dumps({"name": str(args.get("name", ""))}, ensure_ascii=False)
+        return f"return kc.panel_remove(helpers.json_to_table({lua_long_string(body)}).name)"
+    spec = {k: args[k] for k in ("name", "title", "lua", "every", "inputs", "chat") if args.get(k) is not None}
+    return f"return kc.panel(helpers.json_to_table({lua_long_string(json.dumps(spec, ensure_ascii=False))}))"
+
+
+def panel(args: dict) -> dict:
+    if not isinstance(args.get("name"), str) or not args["name"].strip():
+        return {"ok": False, "error": "bad_request", "message": "name is required"}
+    if not args.get("remove") and not (isinstance(args.get("lua"), str) and args["lua"].strip()):
+        return {"ok": False, "error": "bad_request", "message": "lua is required (or remove: true)"}
+    q = bridge_post("/query", {"lua": panel_lua(args), "_agent": True})
+    if not q.get("ok"):
+        return q  # the game or bridge refused the query itself
+    res = q.get("data") if isinstance(q.get("data"), dict) else {"ok": False, "error": "unexpected", "data": q.get("data")}
+    res.setdefault("ok", False)
+    res["ms"] = q.get("ms")
+    return res
+
+
 def call_tool(name: str, args: dict) -> dict:
     if name == "factorio_compute":
         return compute(args or {})
+    if name == "factorio_panel":
+        return panel(args or {})
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}
