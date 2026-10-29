@@ -156,3 +156,13 @@ result = {"ok": r["ok"], "n": len(r["entities"]), "check": belts.check(r["entiti
 '''})
     assert r["ok"], r
     assert r["result"] == {"ok": True, "n": 6, "check": []}, r["result"]
+
+
+def test_every_kc_module_is_reachable_as_kc_attribute(bridge):
+    """Regression: kc.circuits existed as a file but was not in kc.__init__'s list, so Kira's
+    `kc.circuits.load(data)` failed in the sandbox while unit tests (importing kc.circuits) passed."""
+    import os
+    mods = sorted(f[:-3] for f in os.listdir(ROOT / "mcp" / "kc") if f.endswith(".py") and not f.startswith("_"))
+    r = m.call_tool("factorio_compute", {"python": "import kc\nresult = sorted(n for n in %r if not hasattr(kc, n))" % mods})
+    assert r["ok"], r
+    assert r["result"] == [], f"modules missing from `import kc`: {r['result']}"
