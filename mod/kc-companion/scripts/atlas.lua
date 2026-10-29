@@ -20,6 +20,7 @@
 --        io=input|output                                            undergrounds, loaders
 --        s=<stop name> lim=<trains limit>                            train stops
 --        L=<logistic network id>                                    logistic containers
+--        inf=<item>;...                                             infinity chest filters
 --        f=<seg>+<seg>:<production type>:<fluid>;...                fluidboxes, by pipe connections
 --        pi=<seg>+... po=<seg>+... fl=<fluid>                       pumps (input / output side)
 --   R|<recipe>|<energy>|<ingredients>|<products>    name:amount:type;...   recipes in use
@@ -182,6 +183,10 @@ local function entity_line(j, e)
   elseif t == "train-stop" then
     parts[#parts + 1] = e.trains_limit and fmt("lim=%d", e.trains_limit) or "lim="
     parts[#parts + 1] = "s=" .. clean(e.backer_name)
+  elseif t == "infinity-container" then
+    local inf = {}
+    for _, f in pairs(e.infinity_container_filters or {}) do inf[#inf + 1] = clean(f.name) end
+    if #inf > 0 then parts[#parts + 1] = "inf=" .. concat(inf, ";") end
   elseif t == "logistic-container" then
     local n = e.logistic_network
     parts[#parts + 1] = fmt("L=%d", n and n.network_id or -1)

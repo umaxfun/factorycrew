@@ -28,7 +28,7 @@ STOP_RADIUS = 18
 DIRV = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
 BELT = {"transport-belt", "underground-belt", "splitter", "loader", "loader-1x1", "linked-belt"}
 MACHINE = {"assembling-machine", "furnace", "rocket-silo", "mining-drill"}
-CHEST = {"container", "logistic-container"}
+CHEST = {"container", "logistic-container", "infinity-container"}
 OK_STATUS = {"working", "full_output"}
 
 
@@ -301,6 +301,15 @@ class Atlas:
         dr = [self.ents[i] for i in self.at.get(_tile(*ins["drop"]), ())]
         return pk, dr
 
+    def loader_side(self, e):
+        """the container a loader serves: behind it when it loads a belt (output), ahead when it
+        empties one (input)"""
+        dx, dy = DIRV.get(e["dir"], (0, 0))
+        half = (e["h"] if dy else e["w"]) / 2 + 0.5
+        sign = 1 if e.get("io") == "input" else -1
+        return [self.ents[i] for i in self.at.get(_tile(e["x"] + sign * dx * half, e["y"] + sign * dy * half), ())
+                if self.ents[i]["id"] != e["id"]]
+
     def _links(self):
         """raw physical links (node -> node: set of kinds), before any item check"""
         raw = collections.defaultdict(set)
@@ -323,6 +332,17 @@ class Atlas:
                 for p in pk:
                     if p["type"] in BELT:
                         belt_sinks[p["id"]].add(b)
+        for e in self.ents:  # loaders: a container (or machine) straight onto a belt, or off one
+            if e["type"] not in ("loader", "loader-1x1"):
+                continue
+            for c in self.loader_side(e):
+                n = self.node_of(c)
+                if n is None:
+                    continue
+                if e.get("io") == "input":
+                    belt_sinks[e["id"]].add(n)
+                else:
+                    belt_sources[n].add(e["id"])
         for a, starts in belt_sources.items():
             seen, st = set(), list(starts)
             while st:
@@ -535,6 +555,8 @@ class Atlas:
 
     def _source_items(self, n, seen=None):
         """items a node can put on a belt; a plain chest passes on what fills it"""
+        if n[0] == "C" and self.ents[n[1]].get("inf"):
+            return set(self.ents[n[1]]["inf"].split(";"))
         if n[0] == "C":
             seen = seen or set()
             if n in seen:
@@ -611,6 +633,16 @@ class Atlas:
                 lane = {"L": "R", "R": "L"}.get(sd, "R")  # the far lane
                 for it in items:
                     add(b["id"], it, {lane}, self.belt_speed.get(b["name"], 0), None)
+        for e in self.ents:
+            if e["type"] in ("loader", "loader-1x1") and e.get("io") != "input":
+                items = set()
+                for c in self.loader_side(e):
+                    n = self.node_of(c)
+                    m = self._source_items(n) if n else None
+                    if m:
+                        items |= {i for i in m if item_kind.get(i, "item") == "item"}
+                for it in items:
+                    add(e["id"], it, {"L", "R"}, self.belt_speed.get(e["name"], 0), None)
         while work:
             u = work.pop()
             ue = self.ents[u]
