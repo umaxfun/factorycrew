@@ -31,6 +31,8 @@ local M = {}
 
 M.BUDGET = 300      -- entities per tick; measured ~10 ms per 1000 under x86 emulation, less natively
 M.MAX_CHUNKS = 200  -- chunks looked at per tick, so empty map costs little per tick too
+M.SEND_BYTES = 4000  -- text sent per tick (~240 KB/s at 60 UPS); entities wait while more is queued.
+                    -- 2.2 MB in 269 ticks (~500 KB/s) once left the real client answering nothing
 
 local SKIP = { character = true, ["entity-ghost"] = true, ["tile-ghost"] = true, ["cargo-wagon"] = true,
                ["fluid-wagon"] = true, locomotive = true, ["artillery-wagon"] = true, car = true,
@@ -227,7 +229,8 @@ function M.start(msg)
     or game.surfaces[1]
   if not surface then return "no surface" end
   job = { id = msg.id, surface = surface, budget = tonumber(msg.budget) or M.BUDGET, chunks = nil, next = 1,
-          names = {}, nid = 0, recipes = {}, out = {}, seq = 0, count = 0, ticks = 0 }
+          names = {}, nid = 0, recipes = {}, out = {}, seq = 0, count = 0, ticks = 0,
+          queue = {}, qhead = 1, qtail = 0, queued = 0, send_bytes = msg.send_bytes }
   job.out[1] = concat({ "H", 1, clean(surface.name), game.tick, job.budget }, "|")
   return nil
 end
@@ -263,7 +266,8 @@ step = function()
   else
     local done, looked = 0, 0
     local s = j.surface
-    while j.next <= #j.chunks and done < j.budget and looked < M.MAX_CHUNKS do
+    local backlog = j.queued > 4 * (j.send_bytes or M.SEND_BYTES)  -- sending is behind: let it catch up
+    while not backlog and j.next <= #j.chunks and done < j.budget and looked < M.MAX_CHUNKS do
       local c = j.chunks[j.next]
       j.next = j.next + 1
       looked = looked + 1
@@ -288,14 +292,40 @@ step = function()
       end
     end
   end
-  local finished = j.chunks and j.next > #j.chunks
-  if finished then tail_lines(j) end
-  local msgs = {}
-  if #j.out > 0 then
-    j.seq = j.seq + 1
-    msgs[#msgs + 1] = { type = "atlas_part", id = j.id, seq = j.seq, text = concat(j.out, "\n") }
-    j.out = {}
+  local scanned = j.chunks and j.next > #j.chunks
+  if scanned and not j.tail then
+    tail_lines(j)
+    j.tail = true
   end
+  -- queue this tick's lines in pieces of at most SEND_BYTES, then send at most that much
+  local limit = j.send_bytes or M.SEND_BYTES
+  local piece, size = {}, 0
+  local function flush()
+    if #piece > 0 then
+      j.qtail = j.qtail + 1  -- an explicit tail: # on a table with nils in front is undefined
+      j.queue[j.qtail] = concat(piece, "\n")
+      j.queued = j.queued + size
+      piece, size = {}, 0
+    end
+  end
+  for _, line in ipairs(j.out) do
+    if size > 0 and size + #line + 1 > limit then flush() end
+    piece[#piece + 1] = line
+    size = size + #line + 1
+  end
+  flush()
+  j.out = {}
+  local msgs, sent = {}, 0
+  while j.qhead <= j.qtail and (sent == 0 or sent + #j.queue[j.qhead] <= limit) do
+    local text = j.queue[j.qhead]
+    j.queue[j.qhead] = nil
+    j.qhead = j.qhead + 1
+    j.queued = j.queued - #text
+    sent = sent + #text
+    j.seq = j.seq + 1
+    msgs[#msgs + 1] = { type = "atlas_part", id = j.id, seq = j.seq, text = text }
+  end
+  local finished = scanned and j.qhead > j.qtail
   if finished then
     msgs[#msgs + 1] = { type = "result", id = j.id, ok = true,
                         data = { parts = j.seq, entities = j.count, chunks = #j.chunks, ticks = j.ticks,
@@ -314,7 +344,7 @@ function M.dump_now(surface_name, budget, profile_file)
     return p
   end
   if profile_file then M.prof = { find = prof(), line = prof(), fluid = prof(), total = game.create_profiler() } end
-  M.start({ id = "now", surface = surface_name, budget = budget })
+  M.start({ id = "now", surface = surface_name, budget = budget, send_bytes = math.huge })
   local texts, data = {}, nil
   while job do
     for _, m in ipairs(M.step()) do
