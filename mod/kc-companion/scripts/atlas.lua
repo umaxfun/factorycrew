@@ -83,8 +83,8 @@ local function ptype_of(fb, i)
 end
 
 local function fluid_fields(e, parts)
-  local fb = e.fluidbox
-  if not fb or #fb == 0 then return end
+  local okf, fb = pcall(function() return e.fluidbox end) -- 2.1 raises on entities without one
+  if not okf or not fb or #fb == 0 then return end
   local boxes = {}
   for i = 1, #fb do
     local segs = segs_of(fb, i)
@@ -96,8 +96,8 @@ local function fluid_fields(e, parts)
 end
 
 local function pump_fields(e, parts)
-  local fb = e.fluidbox
-  if not fb then return end
+  local okf, fb = pcall(function() return e.fluidbox end)
+  if not okf or not fb then return end
   local pin, pout = {}, {}
   for i = 1, #fb do
     local okc, cons = pcall(fb.get_pipe_connections, i)
@@ -228,8 +228,20 @@ function M.running()
   return job ~= nil
 end
 
+local step
+
 --- One tick's share of the work. Returns the messages to send (parts, and the final result).
+--- Never raises: an error in on_tick would end the player's game, so a failing dump is dropped and
+--- reported to the bridge instead.
 function M.step()
+  local j = job
+  local ok, res = pcall(step)
+  if ok then return res end
+  job = nil
+  return { { type = "result", id = j and j.id, ok = false, error = "atlas_failed", message = tostring(res) } }
+end
+
+step = function()
   local j = job
   if not j then return {} end
   if not j.surface.valid then
