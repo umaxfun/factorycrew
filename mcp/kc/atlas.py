@@ -407,6 +407,8 @@ class Atlas:
             return self.stop_items(i) or None
         if k == "W":
             return {i}
+        if k == "I":
+            return set(self.ents[i]["inf"].split(";"))
         return None
 
     def needs(self, n):
@@ -438,6 +440,11 @@ class Atlas:
         edges = collections.defaultdict(lambda: collections.defaultdict(set))
         none = ("?", 0)
         for (a, b), kinds in raw.items():
+            if a[0] == "C" and b[0] != "C" and self.ents[a[1]].get("inf"):
+                # an infinity chest (editor, test maps) is a source of what its filters hold
+                for it in self.label(("I", a[1]), b, kinds):
+                    edges[(a, b)][it] |= kinds
+                continue
             if a[0] == "C" or b[0] == "C" or (a[0] == "N" and b[0] == "N"):
                 continue
             if b[0] == "N":
@@ -764,6 +771,9 @@ class Atlas:
         elif a[0] == "S":
             s = self.stops[a[1]]
             out.update(stop=s.get("s", ""), at=[s["x"], s["y"]])
+        elif a[0] == "C":
+            e = self.ents[a[1]]
+            out.update(chest=e["name"], at=[e["x"], e["y"]])
         return out
 
     def machines_of(self, blocks):
