@@ -96,7 +96,8 @@ def test_only_the_changed_chunks_are_read_again(stack, mcp):
     # one machine in one chunk; a second one far away in another chunk
     assert mcp.tool("factorio_query", lua=f"""
 local s = game.surfaces[1]
-s.create_entity{{name = "assembling-machine-1", position = {{{X0} + 20.5, {Y0} + 1.5}}, force = "player", raise_built = true}}
+local e = s.create_entity{{name = "assembling-machine-1", position = {{{X0} + 20.5, {Y0} + 1.5}}, force = "player", raise_built = true}}
+e.set_recipe("iron-gear-wheel")  -- a machine without a recipe is no block
 return true""")["ok"]
     wait_until(lambda: health()["atlas_version"] != v and health()["atlas_dirty"], timeout=20, step=0.5,
                what="the build reaching the heartbeat")
