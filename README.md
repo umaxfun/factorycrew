@@ -47,15 +47,19 @@ The HTTP API has no authentication: whoever reaches the port can run Lua in the 
 
 ## Tests
 
-Three levels (SPEC.md, "Tests"). Only level 3 is end to end.
+**The fast check, before every commit: `./scripts/check.sh`** (~2 min). It runs the Python unit tests, level 1 on 2.0.77 and 2.1.23, and level 2, every step even when one fails, and prints one line per step; logs in `.test-data/check/`. CI runs the same steps.
+
+Python unit tests (`tests/unit`: the kc library, atlas on the committed fixture dump, circuits, the MCP tools against a fake bridge, the dispatcher, the app status page, the e2e watchdog): `./scripts/test-unit.sh`, ~20 s, no game and no Docker. Any pytest arguments go through, e.g. `./scripts/test-unit.sh tests/unit/test_kc_atlas.py -k trace`.
+
+Then three game levels (SPEC.md, "Tests"). Only level 3 and the app e2e are end to end.
 
 | Level | What | Command | Factorio |
 |---|---|---|---|
-| 1 | mod logic under FactorioTest | `./scripts/test-mod.sh` | headless 2.0.77 |
+| 1 | mod logic under FactorioTest | `./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh` | headless 2.0.77, 2.1.23 |
 | 2 | integration: mod + bridge + MCP, test plays dispatcher and agent | `./scripts/test-integration.sh` | headless 2.1.23 |
 | 3 | e2e: game → bridge → dispatcher → Kiro Crew chat → agent → game | `./scripts/test-e2e.sh` | headless 2.1.23 + factorycrew gateway; live game 2.0.77 by hand |
 
-Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet the mod receives ([forum report](https://forums.factorio.com/viewtopic.php?t=134790), fixed in 2.1). Each image is built on first use (~1 min); runs take ~10 s and ~20 s. Logs of the last level 2 run: `.test-data/integration/`.
+Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet the mod receives ([forum report](https://forums.factorio.com/viewtopic.php?t=134790), fixed in 2.1). Each image is built on first use (~1 min); level 1 takes ~12 s, level 2 ~65 s. Logs of the last level 2 run: `.test-data/integration/`.
 
 Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model, 5 agent turns per run, and checks that Kira answers in the player's language (one question in Russian).
 

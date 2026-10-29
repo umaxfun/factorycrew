@@ -70,7 +70,7 @@ Kira's chats from your stand live in your gateway, under `Factorio/<run>/<tab>`.
 
 Every test script stays inside the worktree's slot, so any number of worktrees can test at once:
 
-- Unit, level 1 (`./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh`) and integration (`./scripts/test-integration.sh`) start their own containers with no host ports and write to this worktree's `.test-data`.
+- Python unit tests (`./scripts/test-unit.sh`) need no game and no Docker. Level 1 (`./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh`) and integration (`./scripts/test-integration.sh`) start their own containers with no host ports and write to this worktree's `.test-data`.
 - `./scripts/test-e2e.sh` claims the slot (`stand.sh claim`) and starts its own gateway on `FC_E2E_KC_PORT` (home `FC_E2E_KC_HOME`). It runs a Docker stand named `FC_E2E_CONTAINER`, published on `FC_E2E_HTTP` / `FC_E2E_RCON`, and stops the gateway afterwards (`FC_E2E_KEEP_GATEWAY=1` keeps it). The headless game is in the container, so no window opens.
 - `./scripts/test-app-e2e.sh` builds the app and installs it into its own gateway on `FC_APP_PORT` (home `FC_APP_HOME`), with the app's bridge on `FC_APP_HTTP`. It starts a second real client with data dir `FC_APP_UI_HOME`, which is a window of its own beside the stand's. It stops both afterwards (`FC_APP_KEEP_GATEWAY=1` keeps the gateway).
 
@@ -98,4 +98,7 @@ On failure, `test-e2e.sh` also prints the bridge health, the gateway status, the
 
 - A Factorio client the stand can start: `FACTORIO_APP` (default `/Users/Shared/factorio.app`, the macOS Steam build). The UI loop needs a real client with a window. A headless Linux server has none. There the stand's game would have to be the headless server from `docker/`, and `tools/ui_dev.py` does not do that yet.
 - `kirocrew` on `PATH`, logged in once for the user the agents run as. Each stand's gateway gets its own home, but they share that login.
-- `python3`, `lsof`, `curl`, `rsync`.
+- `python3`, `lsof`, `curl`, `rsync`, and GNU `timeout` (Homebrew coreutils on macOS).
+- `uv`: the test scripts run pytest through `uv run --no-project --python 3.12 --with pytest==8.3.5`, so the Python unit tests and both e2e runs use Python 3.12 whatever `python3` is. The bridge, MCP server and dispatcher themselves are stdlib only and also run on the system `python3` (3.9 on macOS).
+- Docker (Docker Desktop on macOS) for levels 1 and 2 and the e2e stand; the images are `linux/amd64` and build on first use from `docker/Dockerfile`.
+- The checkout must not live under `~/.kiro/crew` or `~/.kirocrew` (for example an agent's Kiro Crew scratch dir): the gateways run Kira's MCP server from the checkout inside Kiro Crew's sandbox, which denies those paths. `stand.sh up`, `test-e2e.sh` and `test-app-e2e.sh` refuse to start there. A sibling of the main clone, `<main clone>.worktrees/<name>`, works.
