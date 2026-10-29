@@ -163,6 +163,8 @@ Done when:
 
 Depends on: 1.
 
+Status: done. On the fixture the robot mall is zone Z29 (50 blocks, 58 machines, all robot-fed; the prototype's 41 grew because blocks are now joined by gap across 32-tile cells); blocks: belts 737, robots 123, topped 45. e2e (real client, 90 s), a click in the robot mall: "Robot mall Z29 on nauvis: 58 machines at (175,-36)-(247,-17), all fed by robots from network N8 ... It lacks: Compressed argon: nothing in the base makes it. The lamp-2 machine stands. 8 items robots take but nothing puts into N8 (living on stock): eutectic salt box, hard glass, heat pipe 2, optical cable, processor 1, sensor 2, steel beam, thermal tank 1. Power: 5 machines are on low power. Status: 34 full output, 18 short on items, 5 low power, 1 short on fluid."
+
 ### 5. Selection versus block, on synthetic saves
 
 Scope: when a box covers part of a block, Kira compares the selected machines with the rest: their own cause, or the whole block's. Three small committed saves with one planted fault each, so these run on the Docker e2e without mods.
