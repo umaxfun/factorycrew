@@ -129,3 +129,31 @@ def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
     assert calls.count("/atlas") == 1  # cached between calls
     v3 = m.call_tool("factorio_atlas", {"at": {"x": 0.5, "y": 0.5}})
     assert not v3["ok"] and v3["error"] == "not_found"
+
+
+def test_the_dump_never_builds_json():
+    """helpers.table_to_json of a whole base costs seconds in the game (docs/atlas.md, Reading the base)."""
+    src = (ROOT / "mod" / "kc-companion" / "scripts" / "atlas.lua").read_text()
+    code = "\n".join(line.split("--")[0] for line in src.splitlines())
+    assert "table_to_json" not in code
+
+
+def test_dump_matches_a_reference_read_of_the_same_save(at):
+    """FC_ATLAS_REFERENCE: a JSON read of the same save made without the mod (tools/atlas_proto/dump.lua).
+    Same names, positions and directions; positions are rounded to half tiles, so the few script
+    entities mods place off the grid (474 turbine connectors on the fixture) only match after rounding."""
+    import collections
+    import json
+    ref_path = os.environ.get("FC_ATLAS_REFERENCE")
+    if not ref_path or not Path(ref_path).exists():
+        pytest.skip("FC_ATLAS_REFERENCE not set")
+    ref = json.loads(Path(ref_path).read_text())
+    protos = ref["protos"]
+    skip = {"character", "entity-ghost", "tile-ghost", "cargo-wagon", "fluid-wagon", "locomotive",
+            "artillery-wagon", "car", "spider-vehicle", "construction-robot", "logistic-robot",
+            "combat-robot", "item-entity", "item-request-proxy", "deconstructible-tile-proxy", "projectile"}
+    half = lambda v: round(v * 2) / 2  # noqa: E731
+    want = collections.Counter((e[0], half(e[1]), half(e[2]), e[3]) for e in ref["entities"]
+                               if protos[e[0]]["type"] not in skip)
+    got = collections.Counter((e["name"], e["x"], e["y"], e["dir"]) for e in at.ents)
+    assert want == got
