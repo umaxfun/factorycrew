@@ -101,7 +101,7 @@ Pitfalls the prototype hit, so the real code avoids them:
 
 ## Fixture
 
-The reported save with its mods is the main fixture. It is the player's own save, not committed (save 17 MB, mods 608 MB). Tests read it from `FC_ATLAS_SAVE` (the save zip) and `FC_ATLAS_MODS` (a mods dir with `mod-list.json`); this checkout's `kc-companion` replaces the copy in that dir. Tests that need it skip with a clear message when the variables are unset. Small synthetic saves with planted faults (task 5) are committed and need no mods.
+The reported save with its mods is the main fixture. It is the player's own save, not committed (save 17 MB, mods 608 MB). Tests read it from `FC_ATLAS_SAVE` (the save zip) and `FC_ATLAS_MODS` (a mods dir with `mod-list.json`); this checkout's `kc-companion` replaces the copy in that dir. Tests that need it skip with a clear message when the variables are unset. Its structure dump is committed, gzipped (`tests/data/atlas/dump.txt.gz`, 0.4 MB, from `scripts/atlas-fixture.sh dump`), so the unit tests in `tests/unit/test_kc_atlas.py` run in any checkout; `FC_ATLAS_OUT` points them at a fresh dump instead. Small synthetic saves with planted faults (task 5) are committed and need no mods.
 
 ## Tasks
 

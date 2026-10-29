@@ -1,8 +1,10 @@
 """kc.atlas on the fixture dump (a player's save, docs/atlas.md "Fixture").
 
-The dump comes from `scripts/atlas-fixture.sh dump`; without it these tests skip.
+The dump is committed as tests/data/atlas/dump.txt.gz (made by `scripts/atlas-fixture.sh dump`).
 Coordinates below are places on that save.
 """
+import functools
+import gzip
 import os
 import sys
 import time
@@ -14,7 +16,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "mcp"))
 from kc import atlas as A  # noqa: E402
 
-DUMP = Path(os.environ.get("FC_ATLAS_OUT", ROOT / ".test-data" / "atlas" / "dump.txt"))
+# The committed fixture: the structure dump of a player's Nullius save (2.0.77, ~90k entities),
+# gzipped. FC_ATLAS_OUT points the tests at another dump, e.g. a fresh scripts/atlas-fixture.sh one.
+DUMP = Path(os.environ.get("FC_ATLAS_OUT", ROOT / "tests" / "data" / "atlas" / "dump.txt.gz"))
+
+
+@functools.lru_cache(maxsize=1)
+def dump_text():
+    if DUMP.suffix == ".gz":
+        return gzip.decompress(DUMP.read_bytes()).decode("utf-8")
+    return DUMP.read_text()
 TETRA = "nullius-titanium-tetrachloride"
 
 
@@ -32,13 +43,13 @@ def at():
     if not DUMP.exists():
         pytest.skip(f"no fixture dump at {DUMP}: run scripts/atlas-fixture.sh dump (docs/atlas.md, Fixture)")
     t = time.monotonic()
-    a = A.Atlas(DUMP.read_text())
+    a = A.Atlas(dump_text())
     a.build_seconds = time.monotonic() - t
     return a
 
 
 def test_parse_counts_match_the_footer(at):
-    d = A.parse(DUMP.read_text())
+    d = A.parse(dump_text())
     assert d["footer"]["entities"] == len(d["entities"]) > 90000
     assert TETRA in d["recipes"]
 
@@ -117,7 +128,7 @@ def test_block_view_rates_at_full_speed(at):
 def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
     sys.path.insert(0, str(ROOT / "mcp"))
     import factorio_mcp as m
-    text = DUMP.read_text()
+    text = dump_text()
     calls = []
 
     def post(path, body, timeout=30.0):
@@ -222,7 +233,7 @@ def test_mcp_trace_with_live_trains(at, monkeypatch):
 
     def post(path, body, timeout=30.0):
         if path == "/atlas":
-            return {"ok": True, "text": DUMP.read_text(), "version": 1, "how": "full"}
+            return {"ok": True, "text": dump_text(), "version": 1, "how": "full"}
         if path == "/query" and "train_state" in body["lua"]:
             return {"ok": True, "data": {"371": {"state": "wait_station", "cargo": {"nullius-rutile": 1861},
                                                   "at_stop": "x", "capacity": 2500}}}
@@ -281,7 +292,7 @@ def test_mcp_map_reads_live_status_in_batches(at, monkeypatch):
 
     def post(path, body, timeout=30.0):
         if path == "/atlas":
-            return {"ok": True, "text": DUMP.read_text(), "version": 1, "how": "full"}
+            return {"ok": True, "text": dump_text(), "version": 1, "how": "full"}
         if path == "/query":
             queries.append(body["lua"])
             return fake_status(body["lua"], "low_power")
