@@ -202,3 +202,19 @@ Status: mostly done; one item is short of the target and one is untested.
 - Python rebuild after a partial update: a full rebuild, 0.8 s on the fixture (was 2.4 s; Nullius' 32x29 wind-collision helpers took most of it). **Target 0.5 s not met**: getting there means updating blocks/zones/edges locally instead of rebuilding.
 - Dirty chunks live in `storage`, so a save keeps them (level 1 checks the storage side); an actual save-and-load round trip is not tested. Mod changes mark everything and force a full dump (level 1).
 - e2e on the fixture: right after the client loads, the first box question was answered in 38 s (84 s before the prefetch, when the first atlas call waited for the whole dump); `/atlas` after the prefetch answers from the store in 0 ms.
+
+### 7. Research: only the technologies this game really has
+
+Why: asked "what do I lack to build a tank", Kira read `force.technologies["tank"]` and walked its prerequisites: 26 technologies "none researched, not even steam power", a path through red science and steel. In Nullius those technologies exist as prototypes but are switched off: on the fixture `tank` and `steam-power` are `enabled = false`, `hidden = true`. Of 816 technologies 550 are enabled, 259 hidden, 294 researched, 7 can be researched now; the current research is `nullius-distribution-3` (29%), two in the queue. Only after the player said so did she find Nullius' truck.
+
+Scope: `factorio_atlas(level="map", kind="research")` and the same with `item`. Read live (research changes every minute, it is not structure): the force's technologies with `enabled`, `prototype.hidden`, `researched`, prerequisites, unit count and science packs, the recipes each unlocks; the current research, its progress and the queue. Hidden or disabled technologies never appear anywhere in the answer.
+- without `item`: researched count, the current research with progress, the queue, and the technologies available now (enabled, not hidden, not researched, every prerequisite researched) with their science packs and unit count.
+- with `item`: the item's own name resolved as in `item` elsewhere; the enabled recipes that make it; for each, whether it is unlocked, and if not, which enabled technology unlocks it and the shortest chain of not-yet-researched enabled prerequisites with the packs each needs. An item no enabled technology can unlock (the vanilla tank in Nullius) is said to be unavailable in this game, with the items that do the same job when the base has them (other entities of the same type, e.g. Nullius' cars and trucks for `car`).
+- a line in Kira's rules: questions about research, unlocking, "can I build X" go through this view, never through `force.technologies` directly.
+
+Done when:
+- Unit tests on a recorded research read of the fixture: no hidden or disabled technology in any answer; "available now" is exactly the 7 the game counts; `item=tank` says unavailable and lists `nullius-truck-1`/`nullius-car-*` as the same type; `item=nullius-car-3` returns the locked recipe, the technology that unlocks it and its missing prerequisites with packs.
+- e2e on the real client with the fixture: "what do I lack to build a tank?" -> the reply names Nullius' truck (or car) and none of the vanilla technologies (`steam-power`, `military-3`, `tank`), and the transcript shows `kind=research`.
+- e2e: "what am I researching and what can I research next?" -> the current research with its progress and the available technologies, matching a live read.
+
+Depends on: 3 (the map level and item names).
