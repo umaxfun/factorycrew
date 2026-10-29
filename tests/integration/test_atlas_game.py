@@ -106,3 +106,32 @@ return true""")["ok"]
     assert "assembling-machine-1" in r["text"]
     z = mcp.tool("factorio_atlas", at={"x": X0 + 20.5, "y": Y0 + 1.5})
     assert z["ok"] and z["machines"] == 1, z
+
+
+def test_second_call_is_fast_and_a_removal_is_seen(stack, mcp):
+    """docs/atlas.md task 6: nothing changed -> the answer comes from the cached structure (<200 ms with
+    the live statuses); a removal (script_raised_destroy) marks its chunk and the block disappears."""
+    import json
+    import time
+    import urllib.request
+    from conftest import HTTP, wait_until
+
+    def health():
+        with urllib.request.urlopen(HTTP + "/health", timeout=5) as r:
+            return json.loads(r.read())
+    at = {"x": X0 + 50.5, "y": Y0 + 1.5}
+    first = mcp.tool("factorio_atlas", at=at)
+    assert first["ok"], first
+    t = time.monotonic()
+    again = mcp.tool("factorio_atlas", at=at)
+    ms = (time.monotonic() - t) * 1000
+    print(f"\nsecond call {ms:.0f} ms")
+    assert again["ok"] and ms < 200, (ms, again)
+    v = health()["atlas_version"]
+    assert mcp.tool("factorio_query", lua=f"""
+local e = game.surfaces[1].find_entity("assembling-machine-1", {{{X0} + 50.5, {Y0} + 1.5}})
+e.destroy{{raise_destroy = true}}
+return true""")["ok"]
+    wait_until(lambda: health()["atlas_version"] != v, timeout=20, step=0.5, what="the removal reaching the heartbeat")
+    gone = mcp.tool("factorio_atlas", at=at)
+    assert not gone["ok"] and gone["error"] == "not_found", gone
