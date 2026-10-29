@@ -39,6 +39,9 @@ local function mk(name, x, y, dir)
 end
 local a = mk("assembling-machine-2", {X} - 10.5, {Y} + 0.5); a.set_recipe("iron-gear-wheel")
 local b = mk("assembling-machine-2", {X} - 4.5, {Y} + 0.5); b.set_recipe("copper-cable")
+-- iron from an infinite chest above, through the inserter, into the gear machine
+local c = mk("infinity-chest", {X} - 10.5, {Y} - 2.5)
+c.set_infinity_container_filter(1, {{name = "iron-plate", count = 100, mode = "at-least", index = 1}})
 mk("inserter", {X} - 10.5, {Y} - 1.5, defines.direction.north)
 return p ~= nil
 """
@@ -78,7 +81,7 @@ def base():
     assert lua(SETUP) is True, "no player in the game"
     time.sleep(6)  # the build reaches the heartbeat
     first = atlas()
-    return {"version": first["version"]}
+    return {"version": first["version"], "text": first["text"]}
 
 
 def check(base, action, expect, label):
@@ -89,20 +92,33 @@ def check(base, action, expect, label):
     print(f"\n{label}: version {v0} -> {h['atlas_version']}, dirty {h['atlas_dirty']}, "
           f"read {r['how']} {r['chunks_read']} chunk(s) in {r['ms']} ms")
     assert r["how"] == "partial" and r["chunks_read"] == 1, {k: v for k, v in r.items() if k != "text"}
-    expect(r["text"])
-    base["version"] = r["version"]
+    expect(r["text"], base["text"])
+    base["version"], base["text"] = r["version"], r["text"]
+
+
+def iron_sources(text):
+    """where the gear machine's iron comes from, by the atlas built from that structure"""
+    a = A.Atlas(text)
+    v = a.block_view(a.block_at(X - 10.5, Y + 0.5))
+    return [s["from"] for s in v["inputs"].get("iron-plate", [])], v["no_source"]
 
 
 def test_rotating_an_inserter_is_seen(base):
+    def expect(after, before):
+        assert entity_at(after, "inserter", X - 10.5, Y - 1.5)["dir"] != 0, "still facing north"
+        src0, missing0 = iron_sources(before)
+        src1, missing1 = iron_sources(after)
+        print(f"  iron before: from {src0}, no source {missing0}; after: from {src1}, no source {missing1}")
+        assert src0 and "iron-plate" not in missing0, "setup: the chest did not feed the machine"
+        assert not src1 and "iron-plate" in missing1, "the graph still has the iron edge"
+    # a quarter turn: the inserter now picks from the side and drops beside the machine
     check(base, f"""
 local i = game.surfaces[1].find_entity("inserter", {{{X} - 10.5, {Y} - 1.5}})
-i.rotate{{by_player = game.get_player(1)}}""",
-          lambda t: entity_at(t, "inserter", X - 10.5, Y - 1.5)["dir"] != 0 or pytest.fail("still facing north"),
-          "rotate")
+i.rotate{{by_player = game.get_player(1)}}""", expect, "rotate")
 
 
 def test_pasting_settings_is_seen(base):
-    def expect(t):
+    def expect(t, _before):
         assert entity_at(t, "assembling-machine-2", X - 10.5, Y + 0.5)["r"] == "copper-cable"
     check(base, f"""
 local s = game.surfaces[1]
@@ -112,7 +128,7 @@ a.copy_settings(b, game.get_player(1))""", expect, "paste")
 
 
 def test_changing_the_recipe_in_the_machine_window_is_seen(base):
-    def expect(t):
+    def expect(t, _before):
         assert entity_at(t, "assembling-machine-2", X - 10.5, Y + 0.5)["r"] == "iron-gear-wheel"
     # the way a player does it, one step per tick: walk up, open the machine, pick the recipe, close the
     # window (a machine out of reach does not open, and then closing raises nothing)
