@@ -1,6 +1,6 @@
 {
   "name": "factorycrew",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "displayName": "Factorio Companion",
   "description": "Kira, a Factorio companion: ask about your live run from an in-game window; she reads the save, answers in the tab and marks places on the map.",
   "author": "umaxfun",
@@ -37,9 +37,23 @@
       "silent": true
     }
   ],
+  "ui": {
+    "entry": "index.mjs",
+    "pages": [
+      {
+        "route": "/apps/factorycrew",
+        "label": "Factorio",
+        "icon": "Activity"
+      }
+    ]
+  },
   "permissions": {
     "cron": true,
-    "storage": true
+    "storage": true,
+    "api": [
+      "/apps/factorycrew/api",
+      "/apps/factorycrew/api/*"
+    ]
   },
   "dependencies": {
     "commands": [

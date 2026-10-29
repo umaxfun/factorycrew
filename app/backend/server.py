@@ -25,6 +25,9 @@ sys.path.insert(0, str(ROOT / "bridge"))
 
 import factorio_bridge as fb  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import status  # noqa: E402  (status page checks)
+
 log = logging.getLogger("factorycrew")
 MOD = "kc-companion"
 MANAGED_MARK = ".factorycrew-managed"  # a mod folder we installed and may replace
@@ -70,15 +73,34 @@ def install_mod(mods: Path | None) -> str:
     return f"mod {version} installed into {dst} (restart Factorio to load it)"
 
 
-async def health(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+STATE = {"config": {}, "mods": None, "mod_note": ""}
+
+
+async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """/health for the gateway; /api/status (the dashboard page, through the gateway's proxy
+    /apps/factorycrew/api/status) for the liveness of every piece."""
     try:
-        await asyncio.wait_for(reader.readline(), 5)
-        body = json.dumps({"status": "ok", "app": "factorycrew"}).encode()
-        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-                     b"Content-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
+        line = await asyncio.wait_for(reader.readline(), 5)
+        while (await asyncio.wait_for(reader.readline(), 5)) not in (b"\r\n", b"\n", b""):
+            pass  # headers: nothing here needs them
+        parts = line.decode("latin-1").split(" ")
+        path = parts[1].split("?", 1)[0] if len(parts) > 1 else "/"
+        status_code = "200 OK"
+        if path == "/api/status":
+            obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"])
+        elif path in ("/health", "/api/health"):
+            obj = {"status": "ok", "app": "factorycrew"}
+        else:
+            status_code, obj = "404 Not Found", {"ok": False, "error": "not_found", "path": path}
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        writer.write(f"HTTP/1.1 {status_code}\r\nContent-Type: application/json; charset=utf-8\r\n"
+                     f"Cache-Control: no-store\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+                     + body)
         await writer.drain()
     except (asyncio.TimeoutError, ConnectionError):
         pass
+    except Exception:  # a broken check must not take the backend down
+        log.exception("request failed")
     finally:
         writer.close()
 
@@ -86,15 +108,19 @@ async def health(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     cfg = load_config()
+    mods = factorio_mods_dir()
+    STATE.update(config=cfg, mods=mods)
     try:
-        log.info(install_mod(factorio_mods_dir()))
-    except Exception:  # a failed mod copy must not keep the bridge down
+        STATE["mod_note"] = install_mod(mods)
+        log.info(STATE["mod_note"])
+    except Exception as e:  # a failed mod copy must not keep the bridge down
+        STATE["mod_note"] = f"mod install failed: {e}"
         log.exception("mod install failed")
     s = fb.Settings(udp_port=int(cfg.get("udp_port", 34199)), game_port=int(cfg.get("game_port", 34200)),
                     http_port=int(cfg.get("http_port", 34198)))
     port = int(os.environ.get("PORT", "0"))
     # Health first: the gateway treats a child that dies on its first bind as a port collision.
-    hs = await asyncio.start_server(health, "127.0.0.1", port)
+    hs = await asyncio.start_server(handle, "127.0.0.1", port)
     log.info("health on 127.0.0.1:%d", port)
     async with hs:
         await asyncio.gather(hs.serve_forever(), fb.serve(s))

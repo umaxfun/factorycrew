@@ -61,6 +61,11 @@ class GameState:
 # ── framing ──────────────────────────────────────────────────────────────
 
 
+def ago(t: float | None) -> float | None:
+    """Seconds since a time.monotonic() stamp, or None if it never happened."""
+    return None if t is None else round(time.monotonic() - t, 1)
+
+
 def _dump(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
@@ -154,6 +159,8 @@ class Bridge(asyncio.DatagramProtocol):
         self.idle_timers: dict[tuple, asyncio.TimerHandle] = {}
         self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
         self.ids = itertools.count(1)
+        self.dispatcher_seen: float | None = None  # last GET /asks
+        self.agent_seen: float | None = None  # last tool call of Kira's (via the MCP server)
 
     # ── UDP side ──
 
@@ -338,14 +345,20 @@ class Bridge(asyncio.DatagramProtocol):
             "tick": g.tick, "tabs": g.tabs,
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),
+            "dispatcher_seen_s": ago(self.dispatcher_seen), "agent_seen_s": ago(self.agent_seen),
         }
 
     # ── HTTP side ──
 
     async def route(self, method: str, path: str, q: dict, body: dict) -> tuple[int, dict]:
+        # liveness of the two clients, for the app's status page: the dispatcher polls /asks,
+        # the MCP server flags every tool call of Kira's with _agent
+        if body.get("_agent"):
+            self.agent_seen = time.monotonic()
         if method == "GET" and path == "/health":
             return 200, self.health()
         if method == "GET" and path == "/asks":
+            self.dispatcher_seen = time.monotonic()
             wait = min(float(q.get("wait", 0)), 60.0)
             lease = float(q["lease"]) if "lease" in q else None
             return 200, {"ok": True, "asks": await self.take_asks(wait, lease)}

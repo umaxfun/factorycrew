@@ -10,9 +10,10 @@ OUT="$ROOT/dist/factorycrew"
 VERSION="$(python3 -c "import json;print(json.load(open('$ROOT/app/app.json'))['version'])")"
 
 rm -rf "$OUT"
-mkdir -p "$OUT"/{agents,assets,backend,bridge,mcp,dispatcher,mod}
+mkdir -p "$OUT"/{agents,assets,backend,bridge,mcp,dispatcher,mod,ui}
 cp "$ROOT/app/app.json" "$OUT/"
-cp "$ROOT/app/backend/server.py" "$OUT/backend/"
+cp "$ROOT/app/backend/server.py" "$ROOT/app/backend/status.py" "$OUT/backend/"
+cp "$ROOT/app/ui/index.mjs" "$OUT/ui/"  # the status page in the dashboard sidebar
 cp "$ROOT/bridge/factorio_bridge.py" "$OUT/bridge/"
 cp "$ROOT/mcp/factorio_mcp.py" "$ROOT/mcp/kc_compute.py" "$OUT/mcp/"
 rsync -a --exclude __pycache__ "$ROOT/mcp/kc/" "$OUT/mcp/kc/"  # primitive library, package `kc`
