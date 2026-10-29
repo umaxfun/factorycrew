@@ -136,6 +136,26 @@ describe("panels", function()
     assert(body.children[1].caption == "refresh 2" and t2.children[4].caption == "2" and t2.children[6].caption == "4", t2.children[4].caption)
   end)
 
+  it("collapses to the title bar and expands again with the data up to date", function()
+    panels.set{ name = "fold", every = 1, lua = "state.n = (state.n or 0) + 1 return {'n=' .. state.n}" }
+    if not player then return end
+    assert(helpers.is_valid_sprite_path("utility/collapse") and helpers.is_valid_sprite_path("utility/expand"))
+    local f = frame("fold")
+    local btn = f.children[1].kc_panel_collapse
+    assert(btn and btn.sprite == "utility/collapse")
+    panels.on_click({ element = btn, player_index = player.index })
+    assert(not f.kc_panel_inner.visible and btn.sprite == "utility/expand", "collapse did not fold the panel")
+    due("fold")
+    panels.tick() -- data keeps refreshing while folded
+    assert(panels.get("fold").view[1] == "n=2")
+    panels.on_click({ element = btn, player_index = player.index })
+    assert(f.kc_panel_inner.visible and shown("fold"):find("n=2", 1, true), shown("fold"))
+    -- replacing the panel keeps it folded
+    panels.collapse(player, "fold", true)
+    panels.set{ name = "fold", lua = "return {'v2'}" }
+    assert(not frame("fold").kc_panel_inner.visible)
+  end)
+
   it("hides on close, shows again from the toggle, and removes the window", function()
     panels.set{ name = "h", lua = "return {'x'}" }
     if player then

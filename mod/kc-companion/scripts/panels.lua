@@ -275,6 +275,9 @@ local function build(player, p, index)
   bar_.add{ type = "label", caption = p.title, style = "frame_title", ignored_by_interaction = true }
   local grip = bar_.add{ type = "empty-widget", ignored_by_interaction = true }
   grip.style.horizontally_stretchable, grip.style.minimal_width = true, 8
+  -- collapse to the title bar: the panel stays in place and keeps its data, the view is out of the way
+  bar_.add{ type = "sprite-button", name = "kc_panel_collapse", sprite = "utility/collapse", style = "frame_action_button",
+            tooltip = "Collapse", tags = { kc_panel = p.name, kc_panel_collapse = true } }
   bar_.add{ type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
             tooltip = "Hide (reopen from Kira's window)", tags = { kc_panel = p.name, kc_panel_close = true } }
   local inner = frame.add{ type = "frame", name = "kc_panel_inner", direction = "vertical",
@@ -320,6 +323,11 @@ local function draw(player, p, index)
     frame.tags = tags
   end
   local inner = frame.kc_panel_inner
+  local folded = p.collapsed and p.collapsed[player.index] or false
+  inner.visible = not folded
+  local fold = frame.children[1].kc_panel_collapse
+  fold.sprite, fold.tooltip = folded and "utility/expand" or "utility/collapse", folded and "Expand" or "Collapse"
+  if folded then return end -- nothing to draw; it is redrawn on expand
   local body = inner.kc_panel_body
   local i = 1
   if p.error then
@@ -389,7 +397,7 @@ function M.set(spec)
     name = name, title = trim(spec.title) ~= "" and trim(spec.title) or name, lua = spec.lua,
     description = trim(spec.description) ~= "" and trim(spec.description) or nil,
     every = every, inputs = inputs, input = input, state = (old and old.state) or {},
-    chat = spec.chat, hidden = {}, created_tick = game.tick, errors = 0, refreshes = 0,
+    chat = spec.chat, hidden = {}, collapsed = (old and old.collapsed) or {}, created_tick = game.tick, errors = 0, refreshes = 0,
   }
   storage.kc.seq = (storage.kc.seq or 0) + 1
   p.version = game.tick .. ":" .. storage.kc.seq -- a replaced panel's window is rebuilt
@@ -453,6 +461,16 @@ function M.set_input(name, key, value)
   return true
 end
 
+--- Fold a panel to its title bar or unfold it (per player). `folded` nil toggles.
+function M.collapse(player, name, folded)
+  local p = store()[name]
+  if not p then return end
+  p.collapsed = p.collapsed or {}
+  if folded == nil then folded = not p.collapsed[player.index] end
+  p.collapsed[player.index] = folded or nil
+  M.draw_all(name)
+end
+
 function M.show(player, name, visible)
   local p = store()[name]
   if not p then return end
@@ -488,6 +506,10 @@ function M.on_click(e)
   local el = e.element
   if not (el and el.valid and el.tags and el.tags.kc_panel) then return false end
   local player = game.get_player(e.player_index)
+  if el.tags.kc_panel_collapse then
+    M.collapse(player, el.tags.kc_panel)
+    return true
+  end
   if el.tags.kc_panel_close then
     M.show(player, el.tags.kc_panel, false)
     return true

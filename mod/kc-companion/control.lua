@@ -152,6 +152,7 @@ remote.add_interface("kc", {
   panel_set = function(spec) return panels.set(spec) end,
   panel_input = function(name, key, value) return panels.set_input(name, key, value) end,
   panel_remove = function(name) return panels.remove(name) end,
+  panel_collapse = function(name, folded, index) panels.collapse(game.get_player(index or 1), name, folded) return true end,
   ui_inject = function(msg)
     for _, r in ipairs(protocol.handle(msg)) do send(r) end
     gui.refresh_all()
