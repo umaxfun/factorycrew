@@ -145,7 +145,11 @@ TOOLS = [
             "inserter/chest/pipe, a train stop, or a logistic network by robots). "
             "level=zone: a zone's blocks with live statuses, its inputs with their sources, what has no "
             "source; level=block: one block with rates per second at full speed (need/make), every input's "
-            "source and every output's consumer. Target: `id` (Z12, B480), `at` {x, y} (a click, a pointer), "
+            "source and every output's consumer, plus `belt_supply` (lanes an input has on its belts, what they "
+            "carry per second, where it was squeezed onto one lane, need vs enough); level=trace with `item` and "
+            "`dir` (up: to where it is made, down: to where it is used): the item's way through blocks, train "
+            "stops and the trains between them (live state, cargo, capacity), with rates at full speed and live "
+            "statuses at the end, `made_per_s_at_sources` vs `needed_per_s`. Target: `id` (Z12, B480), `at` {x, y} (a click, a pointer), "
             "or `box` {x0, y0, x1, y1} (a drag pointer: the zone around it, the covered blocks marked "
             "selected). `item` keeps only what makes or uses that item. The structure is read from the game "
             "once and cached (a big base takes seconds, the game never freezes); `refresh` re-reads it after "
@@ -154,7 +158,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "level": {"type": "string", "enum": ["zone", "block"]},
+                "level": {"type": "string", "enum": ["zone", "block", "trace"]}, "dir": {"type": "string", "enum": ["up", "down"]},
                 "id": {"type": "string"}, "at": POS,
                 "box": {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}},
                 "item": {"type": "string"}, "limit": {"type": "integer"},
@@ -425,7 +429,12 @@ def atlas_tool(args: dict) -> dict:
     if bi is None and zi is None:
         return {"ok": False, "error": "not_found",
                 "message": "no machine block at that id/place (a click must be on or next to a machine)"}
-    if level == "block":
+    if level == "trace":
+        if bi is None or not args.get("item"):
+            return {"ok": False, "error": "bad_request",
+                    "message": "level=trace needs a block (id B<n>, at or box) and an item"}
+        view = trace_view(a, bi, args["item"], args.get("dir") or "up")
+    elif level == "block":
         if bi is None:
             return {"ok": False, "error": "bad_request", "message": "level=block needs a block: id B<n>, at or box"}
         view = a.block_view(bi, _live_status(a, a.blocks[bi]["machines"]))
@@ -446,6 +455,90 @@ def atlas_tool(args: dict) -> dict:
     view["surface"] = a.surface
     if c.get("tick_now") is not None and a.tick is not None:
         view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
+    return view
+
+
+TRAINS_LUA = '''
+local want, item = %s, %s
+local names = {}
+for k, v in pairs(defines.train_state) do names[v] = k end
+local stack = item and prototypes.item[item] and prototypes.item[item].stack_size
+local out = {}
+for _, tr in pairs(game.train_manager.get_trains{surface = surface}) do
+  if want[tr.id] then
+    local items = {}
+    for _, x in pairs(tr.get_contents()) do items[x.name] = (items[x.name] or 0) + x.count end
+    local slots = 0
+    for _, w in pairs(tr.cargo_wagons) do slots = slots + #w.get_inventory(defines.inventory.cargo_wagon) end
+    local st = tr.station
+    local fs = tr.front_stock
+    out[tostring(tr.id)] = {state = names[tr.state], cargo = items, at_stop = st and st.backer_name or nil,
+      at = fs and {fs.position.x, fs.position.y} or nil, capacity = stack and slots * stack or nil}
+  end
+end
+return out
+'''
+
+
+def _walk_trace(hop, blocks: set, trains: set):
+    if hop.get("node", "").startswith("B"):
+        blocks.add(int(hop["node"][1:]))
+    for t in hop.get("trains", []):
+        trains.add(t["train"])
+        for h in t.get("next", []):
+            _walk_trace(h, blocks, trains)
+    for h in hop.get("next", []):
+        _walk_trace(h, blocks, trains)
+
+
+def _fill_trace(hop, a, status, live_trains):
+    if hop.get("node", "").startswith("B") and not hop.get("seen"):
+        b = a.blocks[int(hop["node"][1:])]
+        st = {}
+        for m in b["machines"]:
+            s = status.get(m["id"], "?")
+            st[s] = st.get(s, 0) + 1
+        hop["status"] = dict(sorted(st.items(), key=lambda kv: -kv[1]))
+    for t in hop.get("trains", []):
+        t["live"] = live_trains.get(str(t["train"]))
+        for h in t.get("next", []):
+            _fill_trace(h, a, status, live_trains)
+    for h in hop.get("next", []):
+        _fill_trace(h, a, status, live_trains)
+
+
+def _leaf_rate(hop, key, seen):
+    """sum of make/need per second over the hops that end the way (the producers or consumers)"""
+    total = 0.0
+    kids = list(hop.get("next", [])) + [h for t in hop.get("trains", []) for h in t.get("next", [])]
+    if not kids and key in hop and hop["node"] not in seen:
+        seen.add(hop["node"])
+        return hop[key]
+    for h in kids:
+        total += _leaf_rate(h, key, seen)
+    return total
+
+
+def trace_view(a, bi, item, direction):
+    tree = a.trace(("B", bi), item, "down" if direction == "down" else "up")
+    blocks, trains = set(), set()
+    _walk_trace(tree, blocks, trains)
+    status = _live_status(a, a.machines_of(sorted(blocks)))
+    live = {}
+    if trains:
+        want = "{" + ",".join(f"[{t}]=true" for t in sorted(trains)) + "}"
+        q = bridge_post("/query", {"lua": TRAINS_LUA % (want, json.dumps(item)), "surface": a.surface, "_agent": True})
+        if q.get("ok") and isinstance(q.get("data"), dict):
+            live = q["data"]
+    _fill_trace(tree, a, status, live)
+    key = "make_per_s" if direction != "down" else "need_per_s"
+    view = {"trace": item, "dir": "down" if direction == "down" else "up", "from": f"B{bi}", "way": tree}
+    if direction != "down":
+        view["needed_per_s"] = tree.get("need_per_s")
+        view["made_per_s_at_sources"] = round(_leaf_rate(tree, key, set()), 3)
+    else:
+        view["made_per_s"] = tree.get("make_per_s")
+        view["needed_per_s_at_consumers"] = round(_leaf_rate(tree, key, set()), 3)
     return view
 
 

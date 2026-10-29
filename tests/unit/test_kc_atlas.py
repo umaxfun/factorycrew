@@ -187,3 +187,45 @@ def test_lanes_on_a_synthetic_belt():
     end = [e for e in a.ents if e["type"] == "transport-belt" and e["x"] == 6.5][0]
     assert st[end["id"]]["x"][0] == {"R"}
     assert st[end["id"]]["y"][0] == {"L"} and st[end["id"]]["y"][2] == [3.5, 0.5]
+
+
+def test_trace_rutile_up_through_the_train_to_the_flotation_cells(at):
+    t = at.trace(("B", at.block_at(-357.5, -122.5)), "nullius-rutile", "up")
+    assert t["need_per_s"] == 25.6
+    (stop,) = t["next"]
+    assert "rutile" in stop["stop"] and stop["at"] == [-355.0, -101.0]
+    (train,) = stop["trains"]
+    assert train["train"] == 371 and train["wagons"] == 1
+    (load,) = train["next"]
+    assert "signal-red" in load["stop"] and load["at"] == [243.0, 313.0]
+    (src,) = load["next"]
+    assert src["recipe"] == "nullius-rutile" and src["machines"] == 10 and src["make_per_s"] == 8.467
+
+
+def test_trace_down_follows_the_pipe(at):
+    t = at.trace(("B", at.block_at(-357.5, -122.5)), "nullius-titanium-tetrachloride", "down")
+    users = [h for h in t["next"] if h["node"].startswith("B")]
+    assert [u["recipe"] for u in users] == ["nullius-titanium-ingot"] and users[0]["by"] == ["pipe"]
+
+
+def test_mcp_trace_with_live_trains(at, monkeypatch):
+    import factorio_mcp as m
+
+    def post(path, body, timeout=30.0):
+        if path == "/atlas":
+            return {"ok": True, "text": DUMP.read_text(), "data": {"parts": 1}}
+        if path == "/query" and "train_state" in body["lua"]:
+            return {"ok": True, "data": {"371": {"state": "wait_station", "cargo": {"nullius-rutile": 1861},
+                                                  "at_stop": "x", "capacity": 2500}}}
+        if path == "/query":
+            return {"ok": True, "data": ["low_power"] * 2000}
+        return {"ok": True}
+    monkeypatch.setattr(m, "bridge_post", post)
+    monkeypatch.setattr(m, "bridge_health", lambda: {"run_id": "r2", "tick": at.tick})
+    m.ATLAS_CACHE.clear()
+    v = m.call_tool("factorio_atlas", {"level": "trace", "item": "nullius-rutile", "at": {"x": -357.5, "y": -122.5}})
+    assert v["ok"], v
+    assert v["needed_per_s"] == 25.6 and v["made_per_s_at_sources"] == 8.467
+    train = v["way"]["next"][0]["trains"][0]
+    assert train["live"]["cargo"]["nullius-rutile"] == 1861
+    assert train["next"][0]["next"][0]["status"] == {"low_power": 10}

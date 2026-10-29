@@ -708,6 +708,80 @@ class Atlas:
     def machines_of(self, blocks):
         return [m for bi in blocks for m in self.blocks[bi]["machines"]]
 
+    # ── trace: one item up to where it is made, or down to where it is used ──
+
+    def _hop(self, n, item, dir):
+        k, i = n
+        if k == "B":
+            b = self.blocks[i]
+            r = self.recipes.get(b["recipe"])
+            hop = {"node": f"B{i}", "zone": f"Z{self.zone_of[i]}", "recipe": b["recipe"],
+                   "machines": len(b["machines"]), "at": _center(b["bbox"])}
+            if r:
+                for nm, amt, _ in r["pro"]:
+                    if nm == item:
+                        hop["make_per_s"] = round(amt * b["crafts"], 3)
+                for nm, amt, _ in r["ing"]:
+                    if nm == item:
+                        hop["need_per_s"] = round(amt * b["crafts"], 3)
+            return hop
+        if k == "S":
+            s = self.stops[i]
+            return {"node": f"S{i}", "stop": s.get("s", ""), "at": [s["x"], s["y"]], "limit": s.get("lim", "")}
+        return {"node": self.name(n)}
+
+    def trains_at(self, si):
+        name = self.stops[si].get("s", "")
+        return [t for t in self.trains if name in t["stations"]]
+
+    def stops_named(self, name):
+        return [si for si, s in enumerate(self.stops) if s.get("s", "") == name]
+
+    def trace(self, start, item, dir="up", depth=6, width=5):
+        """the item's way from `start` (a node) up to where it is made or down to where it is used,
+        through blocks, train stops (and the trains whose schedules join them) and logistic networks.
+        Returns a tree: each hop has "next" hops; a stop's hops go through "trains"."""
+        seen = set()
+        flows = self.inbound if dir == "up" else self.outbound
+
+        def walk(n, d):
+            hop = self._hop(n, item, dir)
+            if d >= depth or n in seen:
+                if n in seen:
+                    hop["seen"] = True
+                return hop
+            seen.add(n)
+            # a producer (up) or consumer (down) of the item other than the start ends the way here
+            if n != start and n[0] == "B":
+                b = self.blocks[n[1]]
+                if (dir == "up" and item in b["pro"]) or (dir == "down" and item in b["ing"]):
+                    return hop
+            nxt = []
+            if n[0] == "S" and not flows[n].get(item):
+                # nothing physical: the item rides trains to/from the other stops in their schedules
+                trains = []
+                for t in self.trains_at(n[1])[:width]:
+                    th = {"train": t["id"], "wagons": t["wagons"], "fluid_wagons": t["fluid_wagons"],
+                          "schedule": t["stations"], "next": []}
+                    for st_name in t["stations"]:
+                        if st_name == self.stops[n[1]].get("s"):
+                            continue
+                        for sj in self.stops_named(st_name):
+                            if item in self.stop_items(sj) or not self.stop_items(sj):
+                                th["next"].append(walk(("S", sj), d + 1))
+                    trains.append(th)
+                hop["trains"] = trains
+                return hop
+            for a in list(flows[n].get(item, {}))[:width]:
+                h = walk(a, d + 1)
+                h["by"] = sorted(flows[n][item][a])
+                nxt.append(h)
+            if nxt:
+                hop["next"] = nxt
+            return hop
+
+        return walk(start, 0)
+
     def block_view(self, bi, status=None):
         """one block: machines, rates at full speed, where every ingredient comes from and where
         every product goes. `status` maps machine entity id -> live status name."""
