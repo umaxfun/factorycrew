@@ -454,7 +454,7 @@ def atlas_tool(args: dict) -> dict:
         if resolved:
             view["resolved_item"] = resolved["item"]
         if c.get("tick_now") is not None and a.tick is not None:
-            view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
+            view["structure_age_s"] = max(0, round((c["tick_now"] - a.tick) / 60))
         return view
     selected = None
     bi = zi = None
@@ -502,7 +502,7 @@ def atlas_tool(args: dict) -> dict:
     if resolved:
         view["resolved_item"] = resolved["item"]
     if c.get("tick_now") is not None and a.tick is not None:
-        view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
+        view["structure_age_s"] = max(0, round((c["tick_now"] - a.tick) / 60))
     return view
 
 

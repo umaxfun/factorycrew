@@ -904,7 +904,9 @@ class Atlas:
             return hop
         if k == "S":
             s = self.stops[i]
-            return {"node": f"S{i}", "stop": s.get("s", ""), "at": [s["x"], s["y"]], "limit": s.get("lim", "")}
+            lim = s.get("lim", "")
+            return {"node": f"S{i}", "stop": s.get("s", ""), "at": [s["x"], s["y"]],
+                    "limit": "none" if lim in ("", "4294967295") else lim}
         return {"node": self.name(n)}
 
     def trains_at(self, si):

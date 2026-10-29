@@ -177,6 +177,11 @@ Done when:
 
 Depends on: 2.
 
+Status: done, with one change of plan: the cases are not committed save files but builds the test makes on the plain dev map (`tests/app_e2e/test_atlas_planted.py`, `scripts/test-app-e2e.sh -k planted`), on the real client rather than the Docker e2e. A build in Lua is reviewable in the diff, needs no binary in the repo and no mods, and every setup is first checked against the game (statuses, output rate, the train's position) before Kira is asked. Results:
+- A, 3 boxed machines with turned inserters: "their top bulk inserters face the wrong way ... The 3 working ones next to them have their inserters turned the other way." Control: "They do work."
+- B, two inputs side-loaded onto one yellow belt (also task 2's planted lane case): "They need 13.5/s. It arrives on one lane of a yellow belt: 7.5/s max. It gets squeezed onto one lane at (1296.5, 476.5). Iron is fine." Control (one machine): "No, it is not slow ... both are enough."
+- C, block fed by a train whose loading stop is empty: "the plates come by train from Load ... Train 6 is waiting there empty. It leaves only with 200+ plates. The 3 load chests are empty, and nothing fills them." Control (chests full): no empty-stop claim; it named the real limits instead (2 plain unload inserters ~1.7 plates/s vs 6/s needed; the load stop has stock but no supply). One detail in C's answer looks wrong ("the left assembler has no inserter feeding it"; the build has one) and is not checked by the test.
+
 ### 6. Freshness
 
 Scope: the structure stays cached between calls and is updated by chunk. The mod marks chunks dirty on the events listed in "Reading the base" and keeps the set in `storage`; an atlas call first re-reads the dirty chunks (spread over ticks like the full dump) and the MCP rebuilds only the zones that touch them. A full rebuild runs on save load, on `on_configuration_changed`, on `refresh=true`, and as a rare background safety net. State is still read live on every call.

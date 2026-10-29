@@ -186,3 +186,121 @@ def test_planted_a_control_no_false_cause(kira):
                         "why don't these 3 machines @1 work?")
     assert not re.search(r"inserter[^.]*(" + TURNED + ")", text, re.I), "a cause that is not there"
     assert re.search(r"work|running|fine|no problem|nothing wrong", text, re.I)
+
+
+# Case C: two gear assemblers fed from a train stop. A double-headed train runs between a loading stop
+# at the west end and the unloading stop; FAULT: the loading stop's chests are empty, so the train
+# waits there forever. The control fills those chests.
+TRAIN = MK + """
+local X, Y, TAG = XX, YY, "TT"
+clear(X - 10, Y - 14, X + 80, Y + 16)
+for x = X, X + 70, 2 do mk("straight-rail", x, Y, defines.direction.east) end
+local load = mk("train-stop", X + 6, Y - 2, defines.direction.west)
+load.backer_name = "Load " .. TAG
+local unload = mk("train-stop", X + 60, Y + 2, defines.direction.east)
+unload.backer_name = "Unload " .. TAG
+local pole = grid(X + 28, Y + 10)
+local b1, b2 = mk("big-electric-pole", X + 12, Y - 6), mk("big-electric-pole", X + 48, Y + 12)
+wire_poles(pole, b1); wire_poles(pole, b2)
+local s1, s2 = mk("substation", X + 10, Y - 8), mk("substation", X + 52, Y + 9)
+wire_poles(b1, s1); wire_poles(b2, s2)
+-- the train starts at Unload, running east: [west-facing loco, wagon, east-facing loco]
+local le = mk("locomotive", X + 56, Y, defines.direction.east)
+-- rolling stock snaps along the rail: place each car 7 tiles behind where the previous one landed
+local wg = mk("cargo-wagon", le.position.x - 7, Y, defines.direction.east)
+local lw = mk("locomotive", wg.position.x - 7, Y, defines.direction.west)
+if #le.train.carriages < 3 then
+  lw.connect_rolling_stock(defines.rail_direction.front)
+  lw.connect_rolling_stock(defines.rail_direction.back)
+end
+le.insert{name = "coal", count = 50}; lw.insert{name = "coal", count = 50}
+local c = wg.position
+local ids = {}
+for i, x in ipairs({math.floor(c.x) - 1.5, math.floor(c.x) + 1.5}) do
+  mk("inserter", x, c.y + 1.5, defines.direction.north)      -- from the wagon into a chest
+  mk("wooden-chest", x, c.y + 2.5)
+  mk("bulk-inserter", x, c.y + 3.5, defines.direction.north) -- chest into the machine
+  local m = mk("assembling-machine-2", x, c.y + 5.5)
+  m.set_recipe("iron-gear-wheel")
+  mk("bulk-inserter", x, c.y + 7.5, defines.direction.north)
+  mk("wooden-chest", x, c.y + 8.5)
+  ids[#ids + 1] = {x, c.y + 5.5}
+end
+local t = le.train
+local sch = t.get_schedule()
+sch.add_record{station = "Load " .. TAG, wait_conditions = {{type = "item_count", compare_type = "or",
+  condition = {first_signal = {type = "item", name = "iron-plate"}, comparator = ">=", constant = 200}}}}
+sch.add_record{station = "Unload " .. TAG, wait_conditions = {{type = "empty", compare_type = "or"}}}
+sch.go_to_station(1)
+t.manual_mode = false
+return {machines = ids, train = t.id}
+"""
+
+AT_LOAD = """
+local t = game.train_manager.get_train_by_id(TID)
+local st = t.station
+return st and st.backer_name or false
+"""
+
+# once the train stands at Load: chests and inserters beside its wagon (full in the control)
+LOAD_SIDE = MK + """
+local t = game.train_manager.get_train_by_id(TID)
+local wg = t.cargo_wagons[1]
+local c = wg.position
+for _, x in ipairs({math.floor(c.x) - 1.5, math.floor(c.x) + 0.5, math.floor(c.x) + 2.5}) do
+  local chest = mk("wooden-chest", x, c.y - 2.5)
+  if FULL then chest.insert{name = "iron-plate", count = 800} end
+  mk("bulk-inserter", x, c.y - 1.5, defines.direction.north)  -- from the chest onto the wagon
+end
+return true
+"""
+
+GEARS = """
+local n = 0
+for _, p in ipairs(PTS) do
+  local c = game.surfaces[1].find_entity("wooden-chest", {p[1], p[2] + 3})
+  n = n + c.get_item_count("iron-gear-wheel")
+end
+return n
+"""
+
+
+def build_train(x, y, tag, full):
+    made = lua(TRAIN.replace("XX", str(x)).replace("YY", str(y)).replace("TT", tag))
+    tid = made["train"]
+    deadline = time.time() + 90
+    while time.time() < deadline and lua(AT_LOAD.replace("TID", str(tid))) != f"Load {tag}":
+        time.sleep(2)
+    assert lua(AT_LOAD.replace("TID", str(tid))) == f"Load {tag}", "setup: the train never reached Load"
+    lua(LOAD_SIDE.replace("TID", str(tid)).replace("FULL", "true" if full else "false"))
+    pts = "{" + ",".join("{%s,%s}" % tuple(p) for p in made["machines"]) + "}"
+    return made, pts
+
+
+def test_planted_c_empty_loading_station(kira):
+    X, Y = 1300, 600
+    made, pts = build_train(X, Y, f"C{STAMP}", full=False)
+    time.sleep(20)
+    assert lua(AT_LOAD.replace("TID", str(made["train"]))) == f"Load C{STAMP}", "setup: the train left Load"
+    assert lua(GEARS.replace("PTS", pts)) == 0, "setup: gears were made"
+    (mx, my) = made["machines"][0]
+    text = ask_with_box(kira, f"Planted C {STAMP}", [[mx - 1.5, my - 1.5], [mx + 1.5, my + 1.5]],
+                        "why don't these machines @1 work?")
+    assert "factorio_atlas" in transcript(f"Planted C {STAMP}")
+    assert re.search(r"train", text, re.I), "the train is not mentioned"
+    assert re.search(r"load", text, re.I) and re.search(r"empty|no iron|nothing", text, re.I), \
+        "it does not follow the train to the empty loading stop"
+
+
+def test_planted_c_control_full_loading_station(kira):
+    X, Y = 1300, 650
+    made, pts = build_train(X, Y, f"D{STAMP}", full=True)
+    deadline = time.time() + 150
+    while time.time() < deadline and lua(GEARS.replace("PTS", pts)) == 0:
+        time.sleep(3)
+    assert lua(GEARS.replace("PTS", pts)) > 0, "setup: the control never made gears"
+    (mx, my) = made["machines"][0]
+    text = ask_with_box(kira, f"Planted C0 {STAMP}", [[mx - 1.5, my - 1.5], [mx + 1.5, my + 1.5]],
+                        "why don't these machines @1 work?")
+    assert not re.search(r"load\\w*[^.]*(empty|no iron)|(empty|no iron)[^.]*load", text, re.I), \
+        "an empty loading stop that is not there"
