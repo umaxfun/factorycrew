@@ -13,10 +13,15 @@ Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SP
 | `dispatcher/factorio_dispatch.py` | Script-cron: asks from the bridge -> chats `Factorio/<run>/<tab>` |
 | `agent/` | Agent template `factorio-companion` and its rules |
 | `scripts/kc.sh` | The separate Kiro Crew gateway for this project (port 5477, `~/.kirocrew-factorio`) |
+| `scripts/stand.sh` | A whole stack per worktree (game, bridge, gateway, Kira) on its own ports: [docs/worktrees.md](docs/worktrees.md) |
 | `tests/integration/` | Level 2: mod + bridge + MCP |
 | `tests/e2e/` | Level 3: the full cycle through the factorycrew gateway |
 
 All Python is stdlib only (tests use pytest).
+
+## Several worktrees at once
+
+Each worktree runs its own copy of everything: `./scripts/stand.sh up <slot>`. Ports, homes and what not to touch: [docs/worktrees.md](docs/worktrees.md).
 
 ## The factorycrew gateway
 

@@ -8,6 +8,7 @@
 #   scripts/stand.sh down         # stop game, bridge and gateway of this stand
 #   scripts/stand.sh status | env
 #   scripts/stand.sh ui <ui_dev.py args...>   # e.g. shot NAME open, lua 'return 1'
+#   scripts/stand.sh kc <kc.sh args...>       # e.g. token, install, cron list, logs
 #
 # Slot N: bridge HTTP 34198+100N (UDP +1 bridge, +2 game), gateway 5500+N (5477-5479 are
 # taken by the default and app gateways),
@@ -86,7 +87,12 @@ case "${1:-status}" in
     shift
     python3 "$ROOT/tools/ui_dev.py" "$@"
     ;;
+  kc)
+    setenv "$(slot)"
+    shift
+    kc "$@"
+    ;;
   *)
-    sed -n '2,13p' "$0"; exit 2
+    sed -n '2,15p' "$0"; exit 2
     ;;
 esac
