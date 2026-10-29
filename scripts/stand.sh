@@ -183,6 +183,8 @@ check() {
 
 case "${1:-status}" in
   up)
+    . "$ROOT/scripts/lib/checkout.sh"
+    checkout_readable_by_gateway "$ROOT" # Kira's MCP runs from here inside the gateway's sandbox
     setenv "$(allocate "${2:-}")"
     mkdir -p "$FC_UI_HOME"
     python3 "$ROOT/tools/ui_dev.py" start

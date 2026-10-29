@@ -10,6 +10,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="factorycrew-test:2.1.23"
+. "$ROOT/scripts/lib/checkout.sh"
+checkout_readable_by_gateway "$ROOT"
 . "$ROOT/scripts/lib/docker.sh"
 docker_alive
 

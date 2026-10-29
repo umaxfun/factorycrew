@@ -8,6 +8,8 @@
 # (FC_APP_HTTP/UDP/GAME) and client data dir (FC_APP_UI_HOME). Nothing outside the slot is touched.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/lib/checkout.sh"
+checkout_readable_by_gateway "$ROOT"
 eval "$("$ROOT/scripts/stand.sh" claim)"
 export FC_KC_HOME="$FC_APP_HOME" FC_KC_PORT="$FC_APP_PORT"
 BRIDGE="http://127.0.0.1:$FC_APP_HTTP"
