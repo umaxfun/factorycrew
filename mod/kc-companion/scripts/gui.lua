@@ -83,7 +83,7 @@ local function build(player)
   local kc_run_row = inner.add{ type = "flow", name = "kc_run_row", direction = "horizontal" }
   kc_run_row.style.vertical_align = "center"
   local kc_tabs_row = inner.add{ type = "flow", name = "kc_tabs_row", direction = "horizontal" }
-  kc_tabs_row.style.vertical_align = "center"
+  kc_tabs_row.style.vertical_align = "top"
   local kc_status_row = inner.add{ type = "flow", name = "kc_status_row", direction = "horizontal" }
   kc_status_row.style.vertical_align = "center"
 
@@ -133,25 +133,53 @@ local function refresh_run(player, frame)
   end
 end
 
+-- Tabs wrap into a grid of fixed-width buttons, so any number of tabs stays inside the window:
+-- a flow of buttons sized to their captions pushed the whole window off the screen.
+local TAB_COLUMNS = 4
+local TAB_WIDTH = 90
+local TAB_CHARS = 9 -- longer names are cut to this many characters + "…"; the tooltip has the full name
+local TAB_ROWS_SHOWN = 3 -- more rows scroll
+
+--- First `n` characters of a UTF-8 string (Factorio's Lua has no utf8 library).
+local function utf8_head(s, n)
+  local out, count = {}, 0
+  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    count = count + 1
+    if count > n then return table.concat(out), true end
+    out[count] = ch
+  end
+  return s, false
+end
+
 local function refresh_tabs(player, frame)
   local row = find(frame, "kc_tabs_row")
   row.clear()
   local v = view(player)
+  local pane = row.add{ type = "scroll-pane", name = "kc_tabs_pane", horizontal_scroll_policy = "never",
+                        vertical_scroll_policy = "auto" }
+  pane.style.horizontally_stretchable = true
+  -- rows of 28 px buttons with 4 px gaps, plus the pane's own border and padding
+  pane.style.maximal_height = TAB_ROWS_SHOWN * 28 + (TAB_ROWS_SHOWN - 1) * 4 + 12
+  local grid = pane.add{ type = "table", name = "kc_tabs", column_count = TAB_COLUMNS }
+  grid.style.horizontal_spacing = 4
+  grid.style.vertical_spacing = 4
+  local selected
   for _, chat in ipairs(storage.kc.tab_order) do
-    local b = row.add{ type = "button", name = "kc_tab:" .. chat, caption = chat, tags = { kc_tab = chat },
-                       toggled = chat == v.tab }
-    b.style.minimal_width = 0
+    local head, cut = utf8_head(chat, TAB_CHARS)
+    local b = grid.add{ type = "button", name = "kc_tab:" .. chat, caption = cut and (head .. "…") or chat,
+                        tooltip = cut and chat or nil, tags = { kc_tab = chat }, toggled = chat == v.tab }
+    b.style.width = TAB_WIDTH
     b.style.horizontal_align = "center"
+    if chat == v.tab then selected = b end
   end
   if v.adding then
-    local f = row.add{ type = "textfield", name = "kc_new_tab_input", tooltip = "Tab name, Enter to create" }
-    f.style.width = 120
+    local f = grid.add{ type = "textfield", name = "kc_new_tab_input", tooltip = "Tab name, Enter to create" }
+    f.style.width = TAB_WIDTH
     f.focus()
   else
-    tool(row, "kc_tab_add", "utility/add", "New tab")
+    tool(grid, "kc_tab_add", "utility/add", "New tab")
   end
-  local filler = row.add{ type = "empty-widget" }
-  filler.style.horizontally_stretchable = true
+  if selected then pane.scroll_to_element(selected) end
   tool(row, "kc_tab_close", "utility/close_black", "Close the tab (its Kiro Crew chat stays)")
 end
 

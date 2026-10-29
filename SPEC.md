@@ -161,7 +161,7 @@ Hotkey `Ctrl+Shift+K`; a button with Kira's face on the top bar does the same.
 
 Above the tabs: the run name, renamed with the pencil button.
 
-Tabs on top. "+" creates a new tab and asks for its name, the close button closes the tab. Closing a tab does not delete its Kiro Crew chat; a tab with the same name can be opened again.
+Tabs on top, four per row in fixed-width buttons, so any number of tabs stays inside the window. A name longer than 9 characters is cut with "…", and the full name is in the tooltip. Up to three rows are shown; more scroll, with the selected tab kept in view. "+" creates a new tab and asks for its name, the close button closes the tab. Closing a tab does not delete its Kiro Crew chat; a tab with the same name can be opened again.
 
 In a tab:
 - a feed of the last 30 messages, Kira's lines with her icon;

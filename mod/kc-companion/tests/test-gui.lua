@@ -176,6 +176,29 @@ describe("gui", function()
     assert(joined(player.gui.screen.kc_main):find("You:", 1, true))
   end)
 
+  it("wraps many tabs into a grid of fixed-width buttons and cuts long names", function()
+    if not player then return end
+    gui.toggle(player)
+    local names = { "Trains", "Power", "Oil processing", "Логистика нефти", "Main bus", "Defense", "Science",
+                    "Rails", "Nauvis", "Vulcanus" }
+    for _, n in ipairs(names) do
+      click("kc_tab_add")
+      confirm("kc_new_tab_input", n)
+    end
+    local root = player.gui.screen.kc_main
+    local grid = find(root, "kc_tabs")
+    assert(grid and grid.type == "table" and grid.column_count == 4, "tabs are not in a 4-column grid")
+    assert(find(root, "kc_tabs_pane").type == "scroll-pane")
+    local long = find(root, "kc_tab:Oil processing")
+    assert(long.caption == "Oil proce…" and long.tooltip == "Oil processing", serpent.line(long.caption))
+    local cyr = find(root, "kc_tab:Логистика нефти")
+    assert(cyr.caption == "Логистика…", serpent.line(cyr.caption))
+    assert(find(root, "kc_tab:Trains").caption == "Trains" and long.style.maximal_width == long.style.minimal_width)
+    click(nil, "Oil processing")
+    assert(storage.kc.ui[player.index].tab == "Oil processing")
+    assert(find(root, "kc_tab_add") and find(root, "kc_tab_close"))
+  end)
+
   it("renames the run", function()
     if not player then return end
     gui.toggle(player)
