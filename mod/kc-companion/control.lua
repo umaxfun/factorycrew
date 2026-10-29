@@ -144,8 +144,8 @@ remote.add_interface("kc", {
   end,
   pointers = function(index) return pointers.list(game.get_player(index or 1)) end,
   -- the atlas structure dump in one call, into script-output/<file> (scripts/atlas-fixture.sh)
-  atlas_dump = function(surface, budget, file)
-    local text, data = atlas.dump_now(surface, budget)
+  atlas_dump = function(surface, budget, file, profile_file)
+    local text, data = atlas.dump_now(surface, budget, profile_file)
     if not text then return { ok = false, error = data } end
     helpers.write_file(file or "atlas/dump.txt", text)
     data.ok, data.bytes = true, #text

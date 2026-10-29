@@ -89,7 +89,7 @@ local function fluid_fields(e, parts)
   for i = 1, #fb do
     local segs = segs_of(fb, i)
     local s = {}
-    for k, v in ipairs(segs) do s[k] = tostring(v) end
+    for k, v in ipairs(segs) do s[k] = fmt("%d", v) end
     boxes[#boxes + 1] = concat(s, "+") .. ":" .. ptype_of(fb, i) .. ":" .. fluid_name(fb, i)
   end
   parts[#parts + 1] = "f=" .. concat(boxes, ";")
@@ -108,9 +108,10 @@ local function pump_fields(e, parts)
           local okt, ts = pcall(c.target.get_fluid_segment_id, c.target_fluidbox_index)
           if okt and ts then seg = ts end
         end
-        if c.flow_direction == "input" then pin[#pin + 1] = tostring(seg)
-        elseif c.flow_direction == "output" then pout[#pout + 1] = tostring(seg)
-        else pin[#pin + 1] = tostring(seg); pout[#pout + 1] = tostring(seg) end
+        local ss = fmt("%d", seg)
+        if c.flow_direction == "input" then pin[#pin + 1] = ss
+        elseif c.flow_direction == "output" then pout[#pout + 1] = ss
+        else pin[#pin + 1] = ss; pout[#pout + 1] = ss end
       end
     end
   end
@@ -144,7 +145,9 @@ local function entity_line(j, e)
   if SKIP[t] then return false end
   local id = j.names[e.name] or name_line(j, e, t)
   local pos = e.position
-  local parts = { "E", id, floor(pos.x * 2 + 0.5), floor(pos.y * 2 + 0.5), e.direction or 0 }
+  -- numbers through string.format only: Factorio's Lua turns a number into a string ~6 us slower
+  -- with .. or table.concat, which made the first dump 13 times slower than this
+  local parts = { fmt("E|%d|%d|%d|%d", id, floor(pos.x * 2 + 0.5), floor(pos.y * 2 + 0.5), e.direction or 0) }
   if CRAFTER[t] then
     local r = e.get_recipe()
     local rn = r and r.name
@@ -168,15 +171,20 @@ local function entity_line(j, e)
   elseif t == "loader" or t == "loader-1x1" then
     parts[#parts + 1] = "io=" .. e.loader_type
   elseif t == "train-stop" then
-    parts[#parts + 1] = "lim=" .. (e.trains_limit or "")
+    parts[#parts + 1] = e.trains_limit and fmt("lim=%d", e.trains_limit) or "lim="
     parts[#parts + 1] = "s=" .. clean(e.backer_name)
   elseif t == "logistic-container" then
     local n = e.logistic_network
-    parts[#parts + 1] = "L=" .. (n and n.network_id or -1)
+    parts[#parts + 1] = fmt("L=%d", n and n.network_id or -1)
   elseif t == "pump" or t == "offshore-pump" then
     pump_fields(e, parts)
   end
-  if FLUID_MACHINE[t] then fluid_fields(e, parts) end
+  if FLUID_MACHINE[t] then
+    local pf = M.prof
+    if pf then pf.fluid.restart() end
+    fluid_fields(e, parts)
+    if pf then pf.fluid.stop() end
+  end
   j.out[#j.out + 1] = concat(parts, "|")
   return true
 end
@@ -261,8 +269,14 @@ step = function()
       looked = looked + 1
       local x0, y0 = c[1] * 32, c[2] * 32
       local area = { { x0, y0 }, { x0 + 32, y0 + 32 } }
-      if s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0 then
-        for _, e in pairs(s.find_entities_filtered{ area = area, force = "player" }) do
+      local pf = M.prof
+      if pf then pf.find.restart() end
+      local found = s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0
+        and s.find_entities_filtered{ area = area, force = "player" } or nil
+      if pf then pf.find.stop() end
+      if found then
+        if pf then pf.line.restart() end
+        for _, e in pairs(found) do
           local p = e.position
           -- an entity crossing a chunk border is found from both chunks: keep it in its own
           if p.x >= x0 and p.x < x0 + 32 and p.y >= y0 and p.y < y0 + 32 and entity_line(j, e) then
@@ -270,6 +284,7 @@ step = function()
             done = done + 1
           end
         end
+        if pf then pf.line.stop() end
       end
     end
   end
@@ -291,14 +306,27 @@ step = function()
 end
 
 --- Whole dump in one call, for tests and the fixture script: returns the text and the counts.
-function M.dump_now(surface_name, budget)
+--- `profile_file`: also write where the time went (find / entity lines / fluid part / total) there.
+function M.dump_now(surface_name, budget, profile_file)
   if job then return nil, "busy" end
+  local function prof()
+    local p = game.create_profiler(true)
+    return p
+  end
+  if profile_file then M.prof = { find = prof(), line = prof(), fluid = prof(), total = game.create_profiler() } end
   M.start({ id = "now", surface = surface_name, budget = budget })
   local texts, data = {}, nil
   while job do
     for _, m in ipairs(M.step()) do
       if m.type == "atlas_part" then texts[#texts + 1] = m.text else data = m.data end
     end
+  end
+  local pf = M.prof
+  if pf then
+    pf.total.stop()
+    M.prof = nil
+    helpers.write_file(profile_file, { "", "total ", pf.total, "\nfind ", pf.find, "\nentity lines (incl. fluid) ",
+                                       pf.line, "\nfluid part ", pf.fluid, "\n" })
   end
   return concat(texts, "\n"), data
 end

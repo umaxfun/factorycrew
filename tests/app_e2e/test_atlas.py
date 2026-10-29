@@ -66,7 +66,8 @@ def test_ups_during_a_full_dump(kira):
 def test_a_box_on_one_furnace_is_about_the_whole_block(kira):
     tab = f"Atlas {STAMP}"
     kira.open_tab(tab)
-    p = kira.ui("point", BOX)
+    (x0, y0), (x1, y1) = BOX
+    p = lua(f'return remote.call("kc", "point", {{{{{x0}, {y0}}}, {{{x1}, {y1}}}}})')
     assert p, "pointer not made"
     text, _, t_all = kira.ask_and_wait(tab, "why doesn't @1 work? where is all the rutile?", timeout=LONG)
     print(f"\nreply ({t_all:.0f}s): {text}")
