@@ -209,7 +209,18 @@ def test_window_library_opens_and_deletes_without_kira(kira):
     assert kira.lua(f'return remote.call("kc", "panel_remove", {lua_str(name)})')["ok"]
     # the previous turn writes its closing message a few seconds after factorio_reply: let it settle
     def sizes_now():
-        return {p: p.stat().st_size for p in (KC_HOME / "sessions").glob("dashboard_*.jsonl")}
+        # messages, not bytes: the gateway rewrites every transcript in place now and then (all
+        # files at the same second, no new rows), which a size check took for a model turn
+        out = {}
+        for p in (KC_HOME / "sessions").glob("dashboard_*.jsonl"):
+            n = 0
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    n += json.loads(line).get("role") in ("user", "assistant", "tool")
+                except ValueError:
+                    pass
+            out[p] = n
+        return out
     sizes, quiet_since = sizes_now(), time.monotonic()
     while time.monotonic() - quiet_since < 8:
         time.sleep(1)
