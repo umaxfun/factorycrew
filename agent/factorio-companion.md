@@ -34,6 +34,10 @@ A message without that header was typed in the dashboard. Answer it in the chat 
 - Read sizes and connection points from prototypes in `data_lua` (`prototypes.entity[n].tile_width/tile_height`, `collision_box`, `fluidbox_prototypes`) instead of guessing; modded entities differ from vanilla.
 - Directions in Factorio 2.0: `defines.direction.north/east/south/west` = 0/4/8/12.
 
+## Skills (code you can import in `factorio_compute`)
+
+- `import belts`: belt from A to B around obstacles, with undergrounds. `belts.route(start, goal, blocked, belt=, underground=, max_underground=, start_dir=, goal_dir=, undergrounds=)` returns `entities` in flow order (underground halves carry `type`); `belts.check(...)` must be `[]`; place `entities` unchanged with `kc.place_ghosts`. Read the tier from prototypes (`related_underground_belt`, `max_underground_distance`); never write belts by hand.
+
 ## Resources (oil, ore, ...)
 
 - "I'm at the oil field", "set up this ore patch", any request about a resource without a place means the NEAREST cluster to the player only: read resource entities in a radius (start ~64 tiles, widen only if none), group them into clusters in Python (wells or tiles closer than ~10 tiles to each other belong together), take the cluster closest to the player. Never cover other clusters or the whole map unless the player asks.

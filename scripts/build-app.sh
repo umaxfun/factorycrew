@@ -18,7 +18,7 @@ cp "$ROOT/mcp/factorio_mcp.py" "$ROOT/mcp/kc_compute.py" "$OUT/mcp/"
 cp "$ROOT/dispatcher/factorio_dispatch.py" "$OUT/dispatcher/"
 cp "$ROOT/tools/kira-256.png" "$OUT/assets/icon.png"
 rsync -a --exclude tests --exclude '.*' "$ROOT/mod/kc-companion/" "$OUT/mod/kc-companion/"
-[ -d "$ROOT/app/skills" ] && cp -R "$ROOT/app/skills" "$OUT/skills"
+rsync -a --exclude __pycache__ "$ROOT/skills/" "$OUT/skills/"  # SKILL.md + lib/*.py, imported by factorio_compute
 
 # The agent: an app agent cannot point a file:// resource into its own install dir, so the
 # rules are folded into the prompt. Its MCP server is the app's own, `@<app>:<server>`.

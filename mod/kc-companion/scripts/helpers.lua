@@ -76,8 +76,9 @@ function M.place_ghosts(surface, items, force)
       if not surface.can_place_entity(args) then
         reason = "blocked (overlaps an entity or ghost, or bad ground)"
       else
+        -- `type` = "input"/"output" for underground belts (one half of a pair), as in blueprints
         local g = surface.create_entity{ name = "entity-ghost", inner_name = it.name, position = pos,
-                                         direction = args.direction, force = force }
+                                         direction = args.direction, force = force, type = it.type }
         if g then placed = placed + 1 else reason = "create_entity refused" end
       end
     end

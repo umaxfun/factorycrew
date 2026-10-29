@@ -146,3 +146,13 @@ result = {"failed": net["failed"], "unreached": kc.unreached(net["tiles"], sink,
     assert r["ok"], r
     res = r["result"]
     assert res["failed"] == [] and res["unreached"] == [] and res["overlap"] == 0 and res["n"] < 80, res
+
+
+def test_skill_code_is_importable_in_compute(bridge):
+    r = m.call_tool("factorio_compute", {"python": '''
+import belts
+r = belts.route((0.5, 0.5), (5.5, 0.5))
+result = {"ok": r["ok"], "n": len(r["entities"]), "check": belts.check(r["entities"])}
+'''})
+    assert r["ok"], r
+    assert r["result"] == {"ok": True, "n": 6, "check": []}, r["result"]
