@@ -18,6 +18,15 @@ DUMP = Path(os.environ.get("FC_ATLAS_OUT", ROOT / ".test-data" / "atlas" / "dump
 TETRA = "nullius-titanium-tetrachloride"
 
 
+def fake_status(lua, status):
+    """what STATUS_LUA returns for every position in the query, all with one status"""
+    import re as _re
+    out = {}
+    for name, xy in _re.findall(r'\["([^"]+)"\]=\{([^}]*)\}', lua):
+        out[name] = [7] * (len(xy.split(",")) // 2)
+    return {"ok": True, "data": {"s": out, "names": {"7": status}}}
+
+
 @pytest.fixture(scope="module")
 def at():
     if not DUMP.exists():
@@ -116,7 +125,7 @@ def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
         if path == "/atlas":
             return {"ok": True, "text": text, "data": {"parts": 1}}
         if path == "/query":
-            return {"ok": True, "data": ["item_ingredient_shortage"] * text.count("\n")}
+            return fake_status(body["lua"], "item_ingredient_shortage")
         return {"ok": True}
     monkeypatch.setattr(m, "bridge_post", post)
     monkeypatch.setattr(m, "bridge_health", lambda: {"run_id": "r1", "tick": at.tick + 600})
@@ -218,7 +227,7 @@ def test_mcp_trace_with_live_trains(at, monkeypatch):
             return {"ok": True, "data": {"371": {"state": "wait_station", "cargo": {"nullius-rutile": 1861},
                                                   "at_stop": "x", "capacity": 2500}}}
         if path == "/query":
-            return {"ok": True, "data": ["low_power"] * 2000}
+            return fake_status(body["lua"], "low_power")
         return {"ok": True}
     monkeypatch.setattr(m, "bridge_post", post)
     monkeypatch.setattr(m, "bridge_health", lambda: {"run_id": "r2", "tick": at.tick})
@@ -229,3 +238,58 @@ def test_mcp_trace_with_live_trains(at, monkeypatch):
     train = v["way"]["next"][0]["trains"][0]
     assert train["live"]["cargo"]["nullius-rutile"] == 1861
     assert train["next"][0]["next"][0]["status"] == {"low_power": 10}
+
+
+def test_map_unfiltered_fits_in_a_turn(at):
+    v = at.map_view(min_machines=3, limit=1000, live={})
+    import json
+    assert v["total"] > 100
+    assert len(json.dumps(v)) / 4 < 3500, len(json.dumps(v))
+
+
+def test_map_item_glass_returns_every_zone_with_a_glass_block(at):
+    want = {f"Z{at.zone_of[b['id']]}" for b in at.blocks if "nullius-glass" in b["pro"] | b["ing"]}
+    v = at.map_view(item="nullius-glass", limit=1000)
+    got = {r.split()[0] for r in v["rows"]}
+    assert got == want and all("glass" in r for r in v["rows"])
+
+
+def test_map_status_sorted_and_stuck_reason_is_never_ok(at):
+    live = {}
+    for b in at.blocks:
+        for i, m in enumerate(b["machines"]):
+            live[m["id"]] = "low_power" if i % 3 == 0 else "working" if i % 3 == 1 else "full_output"
+    v = at.map_view(status="low_power", limit=1000, live=live)
+    counts = [sum(1 for m in at.blocks[0]["machines"])]  # noqa: F841
+    assert v["rows"] and all("stuck" in r and "working" not in r.split("stuck")[1] for r in v["rows"])
+    nums = [int(r.split("stuck ")[1].split(":")[0]) for r in v["rows"]]
+    assert nums == sorted(nums, reverse=True)
+
+
+def test_map_stations_by_item(at):
+    v = at.map_view(kind="station", item="nullius-rutile")
+    assert v["total"] == 2 and all("rutile" in r for r in v["rows"])
+    t = at.map_view(kind="train", item="nullius-rutile")
+    assert any(r.startswith("T371 ") for r in t["rows"])
+    n = at.map_view(kind="network")
+    assert n["rows"] and "hard-glass" in " ".join(n["rows"])
+
+
+def test_mcp_map_reads_live_status_in_batches(at, monkeypatch):
+    import factorio_mcp as m
+    queries = []
+
+    def post(path, body, timeout=30.0):
+        if path == "/atlas":
+            return {"ok": True, "text": DUMP.read_text(), "data": {"parts": 1}}
+        if path == "/query":
+            queries.append(body["lua"])
+            return fake_status(body["lua"], "low_power")
+        return {"ok": True}
+    monkeypatch.setattr(m, "bridge_post", post)
+    monkeypatch.setattr(m, "bridge_health", lambda: {"run_id": "r3", "tick": at.tick})
+    m.ATLAS_CACHE.clear()
+    v = m.call_tool("factorio_atlas", {"level": "map", "status": "stuck", "limit": 5})
+    assert v["ok"] and len(v["rows"]) == 5 and "stuck" in v["rows"][0], v
+    assert len(queries) == -(-sum(len(b["machines"]) for b in at.blocks) // m.STATUS_BATCH)
+    assert max(len(q) for q in queries) < 60000

@@ -708,6 +708,102 @@ class Atlas:
     def machines_of(self, blocks):
         return [m for bi in blocks for m in self.blocks[bi]["machines"]]
 
+    # ── map: the whole base, one line per zone (or stop / train / network) ──
+
+    def _near(self, box, near):
+        if not near:
+            return True
+        x, y, r = near["x"], near["y"], near.get("r", 100)
+        dx = max(box[0] - x, 0, x - box[2])
+        dy = max(box[1] - y, 0, y - box[3])
+        return math.hypot(dx, dy) <= r
+
+    def map_view(self, kind="zone", item=None, status=None, feed=None, near=None, min_machines=1, limit=60,
+                 live=None):
+        """`live`: machine entity id -> live status. `status`: "stuck" (anything but working/full
+        output) or a status name; rows then sort by how many machines have it."""
+        rows = []
+        if kind == "station":
+            for si, s in enumerate(self.stops):
+                items = sorted(self.stop_items(si))
+                if item and item not in items:
+                    continue
+                if not self._near((s["x"], s["y"], s["x"], s["y"]), near):
+                    continue
+                trains = [t["id"] for t in self.trains_at(si)]
+                rows.append(f"S{si} [{_stop_label(s.get('s', ''))}] at ({_n(s['x'])},{_n(s['y'])}) limit "
+                            f"{s.get('lim', '')} trains {trains or 'none'}")
+        elif kind == "train":
+            for t in self.trains:
+                if item and not any(item in st for st in t["stations"]):
+                    continue
+                rows.append(f"T{t['id']} {t['wagons']}+{t['fluid_wagons']}f wagons: "
+                            + " -> ".join(_stop_label(st) for st in t["stations"]))
+        elif kind == "network":
+            gi = collections.defaultdict(set)
+            go = collections.defaultdict(set)
+            for (a, b), items in self.edges.items():
+                if b[0] == "N":
+                    gi[b].update(items)
+                if a[0] == "N":
+                    go[a].update(items)
+            for n in sorted(set(gi) | set(go)):
+                if item and item not in gi[n] | go[n]:
+                    continue
+                orphans = sorted(short(i) for i in go[n] - gi[n])
+                rows.append(f"N{n[1]}: {len(gi[n])} items put in by machines, {len(go[n])} handed out"
+                            + (f"; handed out but nothing puts them in: {', '.join(orphans)}" if orphans else ""))
+        else:
+            scored = []
+            for z in self.zones:
+                bl = [self.blocks[b] for b in z["blocks"]]
+                ms = [m for b in bl for m in b["machines"]]
+                if len(ms) < min_machines or not self._near(z["bbox"], near):
+                    continue
+                if item and not any(item in b["pro"] or item in b["ing"] for b in bl):
+                    continue
+                fm = collections.Counter(b["feed"] for b in bl)
+                if feed and not fm.get(feed):
+                    continue
+                st = collections.Counter(live.get(m["id"], "?") for m in ms) if live is not None else None
+                stuck = None
+                if st is not None:
+                    bad = {k: v for k, v in st.items() if k not in OK_STATUS and k not in ("?", "gone")}
+                    if bad:
+                        reason, _ = max(bad.items(), key=lambda kv: kv[1])
+                        stuck = (sum(bad.values()), reason)
+                score = 0
+                if status:
+                    if st is None:
+                        continue
+                    score = stuck[0] if status == "stuck" and stuck else st.get(status, 0)
+                    if not score:
+                        continue
+                per = collections.Counter()
+                for b in bl:
+                    per[b["recipe"]] += len(b["machines"])
+                tops = [r for r, _ in per.most_common()]
+                if item:  # the recipes touching the item first
+                    touch = {b["recipe"] for b in bl if item in b["pro"] or item in b["ing"]}
+                    tops = [r for r in tops if r in touch] + [r for r in tops if r not in touch]
+                recipes = ", ".join(f"{short(r)} {per[r]}" for r in tops[:3])
+                box = z["bbox"]
+                line = (f"Z{z['id']} ({_n(box[0])},{_n(box[1])})-({_n(box[2])},{_n(box[3])}) {len(ms)}m "
+                        f"{fm.most_common(1)[0][0]}: {recipes}{' …' if len(tops) > 3 else ''}")
+                if item:
+                    roles = ["makes" if any(item in b["pro"] for b in bl) else "",
+                             "uses" if any(item in b["ing"] for b in bl) else ""]
+                    line += f" | {' & '.join(r for r in roles if r)} {short(item)}"
+                if stuck:
+                    line += f" | stuck {stuck[0]}: {stuck[1]}"
+                scored.append((-score, z["id"], line))
+            scored.sort()
+            rows = [s[2] for s in scored]
+        out = {"kind": kind, "rows": rows[:limit], "total": len(rows)}
+        if len(rows) > limit:
+            out["more"] = len(rows) - limit
+        return out
+
     # ── trace: one item up to where it is made, or down to where it is used ──
 
     def _hop(self, n, item, dir):
@@ -852,6 +948,17 @@ class Atlas:
             st = collections.Counter(status.get(m["id"], "?") for b in blocks for m in self.blocks[b]["machines"])
             view["status"] = dict(st.most_common())
         return view
+
+
+def _n(v):
+    return f"{v:.0f}"
+
+
+def _stop_label(name):
+    """[virtual-signal=signal-red][item=nullius-rutile] -> red rutile"""
+    sig = re.findall(r"\[(?:virtual-signal|item|fluid)=([^\]]+)\]", name)
+    rest = re.sub(r"\[[^\]]*\]", "", name).strip()
+    return " ".join([short(x).replace("signal-", "") for x in sig] + ([rest] if rest else [])) or name
 
 
 def _center(b):

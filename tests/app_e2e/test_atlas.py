@@ -119,3 +119,18 @@ def test_why_the_block_is_slow_names_both_limits(kira):
     assert re.search(r"8[.,]4|8[.,]5", text) and re.search(r"25[.,]6|26", text), "no rutile supply vs need"
     assert "lane" in low or "полос" in low, "the graphite lane limit is missing"
     assert re.search(r"22[.,]5", text), "no lane capacity number"
+
+
+def test_where_is_glass_made(kira):
+    """docs/atlas.md task 3: Kira finds glass through the map level, answers with zones and coordinates
+    and marks them."""
+    tab = f"Atlas glass {STAMP}"
+    kira.open_tab(tab)
+    before = len(kira.kc_tags()[0])
+    text, _, t_all = kira.ask_and_wait(tab, "where is glass made on my base? mark the places", timeout=LONG)
+    print(f"\nreply ({t_all:.0f}s): {text}")
+    log = transcript(tab)
+    assert re.search(r'level\W+map', log), "Kira did not use the map level"
+    # the zones that make glass on the fixture: around (103..185, 38..140), (-51..-6, 78..105), (103..113, 37..61)
+    assert re.search(r"\(?-?\d+,\s*-?\d+\)?", text), "no coordinates in the reply"
+    assert len(kira.kc_tags()[0]) > before, "nothing marked"

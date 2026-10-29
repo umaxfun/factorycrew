@@ -140,7 +140,7 @@ TOOLS = [
     {
         "name": "factorio_atlas",
         "description": (
-            "Atlas of the player's base: which machines form a block (one recipe standing together), "
+            "Atlas of the player's base. level=map: the whole base, one line per zone (where, machines, how fed, main recipes, how many stand and why), filtered by `item` (makes or uses), `status` (stuck = anything but working/full output, or a status name like low_power; sorted by count), `feed`, `near` {x, y, r}, `min_machines` (default 3); `kind=station|train|network` lists stops, trains (schedules) or logistic networks instead. Other levels: which machines form a block (one recipe standing together), "
             "which blocks form a zone, and where every ingredient comes from (another zone by belt/"
             "inserter/chest/pipe, a train stop, or a logistic network by robots). "
             "level=zone: a zone's blocks with live statuses, its inputs with their sources, what has no "
@@ -158,7 +158,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "level": {"type": "string", "enum": ["zone", "block", "trace"]}, "dir": {"type": "string", "enum": ["up", "down"]},
+                "level": {"type": "string", "enum": ["map", "zone", "block", "trace"]}, "kind": {"type": "string", "enum": ["zone", "station", "train", "network"]}, "status": {"type": "string"}, "feed": {"type": "string", "enum": ["belts", "robots", "topped"]}, "near": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "r": {"type": "number"}}}, "min_machines": {"type": "integer"}, "dir": {"type": "string", "enum": ["up", "down"]},
                 "id": {"type": "string"}, "at": POS,
                 "box": {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}},
                 "item": {"type": "string"}, "limit": {"type": "integer"},
@@ -345,17 +345,24 @@ def compute(args: dict) -> dict:
 # ── factorio_atlas: the base as blocks and zones, structure cached here, state read live ──
 
 ATLAS_CACHE: dict[str, dict] = {}  # requested surface ("" = the player's) -> {"atlas", "run_id"}
-STATUS_LIMIT = 1500  # machines whose live status one call reads
+STATUS_BATCH = 2000  # machines per status query: positions grouped by name, statuses back as numbers
+STATUS_LIMIT = 20000
 STATUS_LUA = '''
 local P = %s
 local names = {}
 for k, v in pairs(defines.entity_status) do names[v] = k end
-local out = {}
-for i, p in ipairs(P) do
-  local e = surface.find_entity(p[1], {p[2], p[3]})
-  out[i] = e and (names[e.status] or "?") or "gone"
+local out, codes = {}, {}
+for name, xy in pairs(P) do
+  local list = {}
+  for i = 1, #xy, 2 do
+    local e = surface.find_entity(name, {xy[i], xy[i + 1]})
+    local s = e and e.status
+    list[#list + 1] = s or -1
+    if s then codes[tostring(s)] = names[s] end
+  end
+  out[name] = list
 end
-return out
+return {s = out, names = codes}
 '''
 
 
@@ -391,15 +398,28 @@ def _atlas(args: dict) -> tuple[object, dict | None]:
 
 
 def _live_status(atlas, machines: list) -> dict:
+    """machine entity id -> live status name, read in batches (a whole base is a few queries)"""
+    out = {}
     machines = machines[:STATUS_LIMIT]
-    pts = ",".join("{%s,%s,%s}" % (json.dumps(m["name"]), m["x"], m["y"]) for m in machines)
-    q = bridge_post("/query", {"lua": STATUS_LUA % ("{" + pts + "}"), "surface": atlas.surface, "_agent": True})
-    if not q.get("ok"):
-        return {}
-    data = q.get("data") or []
-    if isinstance(data, dict):  # empty table
-        data = []
-    return {m["id"]: s for m, s in zip(machines, data)}
+    for k in range(0, len(machines), STATUS_BATCH):
+        batch = machines[k:k + STATUS_BATCH]
+        by_name: dict[str, list] = {}
+        for m in batch:
+            by_name.setdefault(m["name"], []).append(m)
+        lua_tab = "{" + ",".join("[%s]={%s}" % (json.dumps(n), ",".join(f"{m['x']},{m['y']}" for m in ms))
+                                 for n, ms in by_name.items()) + "}"
+        q = bridge_post("/query", {"lua": STATUS_LUA % lua_tab, "surface": atlas.surface, "_agent": True})
+        if not q.get("ok") or not isinstance(q.get("data"), dict):
+            continue
+        codes = q["data"].get("names") or {}
+        got = q["data"].get("s") or {}
+        for n, ms in by_name.items():
+            vals = got.get(n) or []
+            if isinstance(vals, dict):
+                vals = []
+            for m, v in zip(ms, vals):
+                out[m["id"]] = "gone" if v == -1 else codes.get(str(v), "?")
+    return out
 
 
 def atlas_tool(args: dict) -> dict:
@@ -410,6 +430,20 @@ def atlas_tool(args: dict) -> dict:
     level = args.get("level") or "zone"
     limit = max(1, min(int(args.get("limit") or 40), 200))
     tid, at, box = args.get("id"), args.get("at"), args.get("box")
+    if level == "map":
+        kind = args.get("kind") or "zone"
+        status = args.get("status")
+        live = None
+        if kind == "zone" and (status or args.get("live", True)):
+            live = _live_status(a, [m for b in a.blocks for m in b["machines"]])
+        near = args.get("near") if isinstance(args.get("near"), dict) else None
+        view = a.map_view(kind=kind, item=args.get("item"), status=status, feed=args.get("feed"), near=near,
+                          min_machines=int(args.get("min_machines") or (3 if kind == "zone" else 1)),
+                          limit=limit if args.get("limit") else 60, live=live)
+        view.update(ok=True, surface=a.surface)
+        if c.get("tick_now") is not None and a.tick is not None:
+            view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
+        return view
     selected = None
     bi = zi = None
     if isinstance(tid, str) and tid[:1] in "ZB" and tid[1:].isdigit():
