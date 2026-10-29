@@ -86,3 +86,46 @@ def test_underground_reach_comes_from_the_prototype(at):
 
 def test_build_time(at):
     assert at.build_seconds < 20
+
+
+def test_zone_view_names_the_block_and_its_sources(at):
+    bi = at.block_at(-357.5, -122.5)
+    v = at.zone_view(at.zone_of[bi], status={m["id"]: "item_ingredient_shortage" for m in at.blocks[bi]["machines"]})
+    assert v["machines"] == 32 and v["blocks"] == 1
+    assert v["status"] == {"item_ingredient_shortage": 32}
+    srcs = {it: [s["from"] for s in v["inputs"][it]] for it in v["inputs"]}
+    assert set(srcs) == {"nullius-graphite", "nullius-rutile", "nullius-chlorine"}
+    assert srcs["nullius-rutile"][0].startswith("S") and "rutile" in v["inputs"]["nullius-rutile"][0]["stop"]
+    assert v["no_source"] == []
+
+
+def test_block_view_rates_at_full_speed(at):
+    v = at.block_view(at.block_at(-357.5, -122.5))
+    assert v["need_per_s"] == {"nullius-graphite": 44.8, "nullius-rutile": 25.6, "nullius-chlorine": 512.0}
+    assert v["machines"] == 32 and v["machine"] == ["nullius-medium-furnace-2"]
+
+
+def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
+    sys.path.insert(0, str(ROOT / "mcp"))
+    import factorio_mcp as m
+    text = DUMP.read_text()
+    calls = []
+
+    def post(path, body, timeout=30.0):
+        calls.append(path)
+        if path == "/atlas":
+            return {"ok": True, "text": text, "data": {"parts": 1}}
+        if path == "/query":
+            return {"ok": True, "data": ["item_ingredient_shortage"] * text.count("\n")}
+        return {"ok": True}
+    monkeypatch.setattr(m, "bridge_post", post)
+    monkeypatch.setattr(m, "bridge_health", lambda: {"run_id": "r1", "tick": at.tick + 600})
+    m.ATLAS_CACHE.clear()
+    v = m.call_tool("factorio_atlas", {"box": {"x0": -358.5, "y0": -124, "x1": -356, "y1": -121}})
+    assert v["ok"] and v["machines"] == 32, v
+    assert v["block_list"][0]["selected"] is True and v["structure_age_s"] == 10
+    v2 = m.call_tool("factorio_atlas", {"level": "block", "at": {"x": -357.5, "y": -122.5}})
+    assert v2["ok"] and v2["need_per_s"]["nullius-rutile"] == 25.6
+    assert calls.count("/atlas") == 1  # cached between calls
+    v3 = m.call_tool("factorio_atlas", {"at": {"x": 0.5, "y": 0.5}})
+    assert not v3["ok"] and v3["error"] == "not_found"

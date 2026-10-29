@@ -530,3 +530,90 @@ class Atlas:
 
     def sources(self, node, item):
         return {self.name(a): sorted(ks) for a, ks in self.inbound[node].get(item, {}).items()}
+
+    # ── views: what factorio_atlas returns ──
+
+    def _src(self, a, kinds):
+        """one source/sink of an item, in the words the answer needs"""
+        out = {"from": self.zname(a), "by": sorted(kinds)}
+        if a[0] == "B":
+            b = self.blocks[a[1]]
+            out.update(block=f"B{a[1]}", recipe=short(b["recipe"]), at=_center(b["bbox"]))
+        elif a[0] == "S":
+            s = self.stops[a[1]]
+            out.update(stop=s.get("s", ""), at=[s["x"], s["y"]])
+        return out
+
+    def machines_of(self, blocks):
+        return [m for bi in blocks for m in self.blocks[bi]["machines"]]
+
+    def block_view(self, bi, status=None):
+        """one block: machines, rates at full speed, where every ingredient comes from and where
+        every product goes. `status` maps machine entity id -> live status name."""
+        b = self.blocks[bi]
+        node = ("B", bi)
+        r = self.recipes.get(b["recipe"])
+        crafts = b["crafts"]
+        view = {"block": f"B{bi}", "zone": f"Z{self.zone_of[bi]}", "recipe": b["recipe"],
+                "machines": len(b["machines"]), "machine": sorted({m["name"] for m in b["machines"]}),
+                "bbox": _box(b["bbox"]), "feed": b["feed"]}
+        if status is not None:
+            view["status"] = dict(collections.Counter(status.get(m["id"], "?") for m in b["machines"]).most_common())
+        if r:
+            view["crafts_per_s"] = round(crafts, 3)
+            view["need_per_s"] = {n: round(a * crafts, 3) for n, a, _ in r["ing"]}
+            view["make_per_s"] = {n: round(a * crafts, 3) for n, a, _ in r["pro"]}
+        view["inputs"] = {it: [self._src(a, ks) for a, ks in self.inbound[node].get(it, {}).items()]
+                          for it in sorted(b["ing"])}
+        view["no_source"] = sorted(it for it in b["ing"] if not self.inbound[node].get(it))
+        view["outputs"] = {it: [self._src(c, ks) for c, ks in self.outbound[node].get(it, {}).items()]
+                           for it in sorted(b["pro"]) if self.outbound[node].get(it)}
+        return view
+
+    def zone_view(self, zi, status=None, item=None, selected=None):
+        """a zone: its blocks, and for every ingredient it does not make itself, where it comes from.
+        `item` keeps only blocks making or using it; `selected` (block ids) marks what a box covered."""
+        z = self.zones[zi]
+        blocks = z["blocks"]
+        made = set().union(*(self.blocks[b]["pro"] for b in blocks))
+        used = set().union(*(self.blocks[b]["ing"] for b in blocks))
+        zn = f"Z{zi}"
+        inputs = collections.defaultdict(dict)
+        for b in blocks:
+            for it, srcs in self.inbound[("B", b)].items():
+                for a, ks in srcs.items():
+                    if self.zname(a) != zn:
+                        cur = inputs[it].setdefault(self.zname(a), self._src(a, ks))
+                        cur["by"] = sorted(set(cur["by"]) | ks)
+        rows = []
+        for b in sorted(blocks, key=lambda b: -len(self.blocks[b]["machines"])):
+            bl = self.blocks[b]
+            if item and item not in bl["pro"] and item not in bl["ing"]:
+                continue
+            row = {"block": f"B{b}", "recipe": short(bl["recipe"]), "machines": len(bl["machines"]),
+                   "at": _center(bl["bbox"]), "feed": bl["feed"]}
+            if status is not None:
+                st = collections.Counter(status.get(m["id"], "?") for m in bl["machines"])
+                row["status"] = dict(st.most_common())
+            if selected is not None and b in selected:
+                row["selected"] = True
+            rows.append(row)
+        view = {"zone": zn, "bbox": _box(z["bbox"]), "blocks": len(blocks),
+                "machines": sum(len(self.blocks[b]["machines"]) for b in blocks),
+                "feed": dict(collections.Counter(self.blocks[b]["feed"] for b in blocks)),
+                "makes": sorted(made - used), "block_list": rows,
+                "inputs": {it: list(v.values()) for it, v in sorted(inputs.items())
+                           if it in used and (item is None or it == item)},
+                "no_source": sorted(it for it in used - made if it not in inputs)}
+        if status is not None:
+            st = collections.Counter(status.get(m["id"], "?") for b in blocks for m in self.blocks[b]["machines"])
+            view["status"] = dict(st.most_common())
+        return view
+
+
+def _center(b):
+    return [round((b[0] + b[2]) / 2, 1), round((b[1] + b[3]) / 2, 1)]
+
+
+def _box(b):
+    return [round(v, 1) for v in b]

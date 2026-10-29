@@ -138,6 +138,31 @@ TOOLS = [
         },
     },
     {
+        "name": "factorio_atlas",
+        "description": (
+            "Atlas of the player's base: which machines form a block (one recipe standing together), "
+            "which blocks form a zone, and where every ingredient comes from (another zone by belt/"
+            "inserter/chest/pipe, a train stop, or a logistic network by robots). "
+            "level=zone: a zone's blocks with live statuses, its inputs with their sources, what has no "
+            "source; level=block: one block with rates per second at full speed (need/make), every input's "
+            "source and every output's consumer. Target: `id` (Z12, B480), `at` {x, y} (a click, a pointer), "
+            "or `box` {x0, y0, x1, y1} (a drag pointer: the zone around it, the covered blocks marked "
+            "selected). `item` keeps only what makes or uses that item. The structure is read from the game "
+            "once and cached (a big base takes seconds, the game never freezes); `refresh` re-reads it after "
+            "building. Statuses are always live."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "level": {"type": "string", "enum": ["zone", "block"]},
+                "id": {"type": "string"}, "at": POS,
+                "box": {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}},
+                "item": {"type": "string"}, "limit": {"type": "integer"},
+                "refresh": {"type": "boolean"}, "surface": {"type": "string"},
+            },
+        },
+    },
+    {
         "name": "factorio_progress",
         "description": (
             "Show the player what you are doing during a long turn, e.g. 'planning the layout', "
@@ -313,9 +338,122 @@ def compute(args: dict) -> dict:
     return res
 
 
+# ── factorio_atlas: the base as blocks and zones, structure cached here, state read live ──
+
+ATLAS_CACHE: dict[str, dict] = {}  # requested surface ("" = the player's) -> {"atlas", "run_id"}
+STATUS_LIMIT = 1500  # machines whose live status one call reads
+STATUS_LUA = '''
+local P = %s
+local names = {}
+for k, v in pairs(defines.entity_status) do names[v] = k end
+local out = {}
+for i, p in ipairs(P) do
+  local e = surface.find_entity(p[1], {p[2], p[3]})
+  out[i] = e and (names[e.status] or "?") or "gone"
+end
+return out
+'''
+
+
+def bridge_health() -> dict:
+    try:
+        with urllib.request.urlopen(BRIDGE + "/health", timeout=5) as r:
+            return json.loads(r.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
+
+
+def _atlas(args: dict) -> tuple[object, dict | None]:
+    """The cached atlas for the requested surface, re-read on refresh or when another save runs."""
+    from kc import atlas as kc_atlas
+    key = args.get("surface") or ""
+    health = bridge_health()
+    run_id = health.get("run_id")
+    c = ATLAS_CACHE.get(key)
+    if args.get("refresh") or c is None or c["run_id"] != run_id:
+        t0 = time.monotonic()
+        r = bridge_post("/atlas", {"surface": args.get("surface"), "_agent": True}, timeout=330)
+        if not r.get("ok"):
+            return None, {"ok": False, "error": r.get("error") or "atlas_failed", "message": r.get("message"),
+                          "detail": {k: v for k, v in r.items() if k != "text"}}
+        try:
+            a = kc_atlas.Atlas(r["text"])
+        except ValueError as e:
+            return None, {"ok": False, "error": "atlas_bad_dump", "message": str(e)}
+        c = {"atlas": a, "run_id": run_id, "read_s": round(time.monotonic() - t0, 2), "dump": r.get("data")}
+        ATLAS_CACHE[key] = c
+    c["tick_now"] = health.get("tick")
+    return c, None
+
+
+def _live_status(atlas, machines: list) -> dict:
+    machines = machines[:STATUS_LIMIT]
+    pts = ",".join("{%s,%s,%s}" % (json.dumps(m["name"]), m["x"], m["y"]) for m in machines)
+    q = bridge_post("/query", {"lua": STATUS_LUA % ("{" + pts + "}"), "surface": atlas.surface, "_agent": True})
+    if not q.get("ok"):
+        return {}
+    data = q.get("data") or []
+    if isinstance(data, dict):  # empty table
+        data = []
+    return {m["id"]: s for m, s in zip(machines, data)}
+
+
+def atlas_tool(args: dict) -> dict:
+    c, err = _atlas(args)
+    if err:
+        return err
+    a = c["atlas"]
+    level = args.get("level") or "zone"
+    limit = max(1, min(int(args.get("limit") or 40), 200))
+    tid, at, box = args.get("id"), args.get("at"), args.get("box")
+    selected = None
+    bi = zi = None
+    if isinstance(tid, str) and tid[:1] in "ZB" and tid[1:].isdigit():
+        n = int(tid[1:])
+        if tid[0] == "Z" and n < len(a.zones):
+            zi = n
+        elif tid[0] == "B" and n < len(a.blocks):
+            bi = n
+    elif isinstance(box, dict) and all(k in box for k in ("x0", "y0", "x1", "y1")):
+        x0, x1 = sorted((box["x0"], box["x1"]))
+        y0, y1 = sorted((box["y0"], box["y1"]))
+        selected = a.blocks_in_box(x0, y0, x1, y1)
+        if selected:
+            bi = selected[0]
+    elif isinstance(at, dict) and "x" in at and "y" in at:
+        bi = a.block_at(at["x"], at["y"])
+    if bi is None and zi is None:
+        return {"ok": False, "error": "not_found",
+                "message": "no machine block at that id/place (a click must be on or next to a machine)"}
+    if level == "block":
+        if bi is None:
+            return {"ok": False, "error": "bad_request", "message": "level=block needs a block: id B<n>, at or box"}
+        view = a.block_view(bi, _live_status(a, a.blocks[bi]["machines"]))
+        if selected:
+            view["selected_blocks"] = [f"B{b}" for b in selected]
+    else:
+        zi = a.zone_of[bi] if zi is None else zi
+        view = a.zone_view(zi, _live_status(a, a.machines_of(a.zones[zi]["blocks"])), item=args.get("item"),
+                           selected=set(selected) if selected else None)
+        rows = view["block_list"]
+        if len(rows) > limit:
+            view["block_list"], view["more_blocks"] = rows[:limit], len(rows) - limit
+        if selected:
+            others = sorted({a.zone_of[b] for b in selected} - {zi})
+            if others:
+                view["box_also_covers_zones"] = [f"Z{z}" for z in others]
+    view["ok"] = True
+    view["surface"] = a.surface
+    if c.get("tick_now") is not None and a.tick is not None:
+        view["structure_age_s"] = round((c["tick_now"] - a.tick) / 60)
+    return view
+
+
 def call_tool(name: str, args: dict) -> dict:
     if name == "factorio_compute":
         return compute(args or {})
+    if name == "factorio_atlas":
+        return atlas_tool(args or {})
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

@@ -23,6 +23,7 @@ VERSION = 1
 PACKET_MAX = 4000  # bytes per UDP packet to the game; see encode()
 MAX_PARTS = 1024
 OUTBOX_LIMIT = 200  # replies/statuses waiting for an offline game
+ATLAS_TIMEOUT = 300.0  # a big base at a small per-tick budget takes a while; the game never stalls for it
 ACTIVITY_MAX = 80  # chars of a progress note shown in the window's status line
 TRACE_MAX = 240  # chars of one trace line (what Kira wrote / which tool she ran) for the window
 
@@ -151,6 +152,7 @@ class Bridge(asyncio.DatagramProtocol):
         self.transport: asyncio.DatagramTransport | None = None
         self.reasm = Reassembler()
         self.pending: dict[str, asyncio.Future] = {}
+        self.atlas_parts: dict[str, dict[int, str]] = {}  # request id -> seq -> text of a running dump
         self.asks: deque[dict] = deque()  # waiting for the dispatcher
         self.leased: dict[str, tuple[dict, float]] = {}  # taken, not yet confirmed
         self.seen_asks: deque[str] = deque(maxlen=1000)
@@ -203,6 +205,11 @@ class Bridge(asyncio.DatagramProtocol):
                                                     "pointers")})
             self.ask_event.set()
             log.info("ask %s [%s] %r", msg.get("id"), msg.get("chat"), msg.get("text"))
+        elif t == "atlas_part":
+            # a slice of an atlas dump in progress; the final "result" says how many there were
+            parts = self.atlas_parts.get(str(msg.get("id")))
+            if parts is not None and isinstance(msg.get("seq"), int) and isinstance(msg.get("text"), str):
+                parts[msg["seq"]] = msg["text"]
         elif t == "result":
             fut = self.pending.pop(str(msg.get("id")), None)
             if fut and not fut.done():
@@ -239,6 +246,8 @@ class Bridge(asyncio.DatagramProtocol):
         msg = dict(msg, id=rid)
         fut = asyncio.get_running_loop().create_future()
         self.pending[rid] = fut
+        if msg["type"] == "atlas":
+            self.atlas_parts[rid] = {}
         started = time.monotonic()
         self.send_game(msg)
         try:
@@ -247,7 +256,14 @@ class Bridge(asyncio.DatagramProtocol):
             raise BridgeError("game_timeout", "the game did not answer in time (paused, or a query is still running)")
         finally:
             self.pending.pop(rid, None)
+            parts = self.atlas_parts.pop(rid, None)
         res = {k: v for k, v in res.items() if k not in ("v", "type", "id")}
+        if msg["type"] == "atlas" and res.get("ok"):
+            want = (res.get("data") or {}).get("parts")
+            if not isinstance(want, int) or sorted(parts or {}) != list(range(1, want + 1)):
+                raise BridgeError("atlas_incomplete", f"got {len(parts or {})} of {want} dump parts (a packet was lost); "
+                                                      "ask again")
+            res["text"] = "\n".join(parts[i] for i in range(1, want + 1))
         res["ms"] = round((time.monotonic() - started) * 1000)
         return normalize_lists(msg["type"], res)
 
@@ -391,6 +407,12 @@ class Bridge(asyncio.DatagramProtocol):
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, {"ok": True, "updated": self.activity(chat, text, step=False)}
+        if method == "POST" and path == "/atlas":
+            # the structure dump of a surface, a few chunks per tick in the game (docs/atlas.md)
+            if body.get("_agent"):
+                self.activity(None, "reading the base")
+            msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget")}
+            return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
             # Only the agent's own calls (the MCP server flags them) are steps of a turn: tests,
             # tools/ui_dev.py or anything else polling the game must not move the counter.
