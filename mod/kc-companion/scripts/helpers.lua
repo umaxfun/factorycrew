@@ -741,4 +741,5 @@ function M.best(ptype, key, opts)
   return { name = b.name, item = b.item, value = b.value, craftable = b.craftable, have = b.have, candidates = list }
 end
 
+M.circuits = require("scripts.circuits").read -- circuit snapshot, docs/circuits-format.md
 return M

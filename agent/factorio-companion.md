@@ -40,6 +40,7 @@ General building blocks, not solutions for particular tasks: compose them.
 - Read the world with the mod's Lua helpers in `data_lua`: `kc.scan(surface, area)` (entities, ghosts, water/cliffs with sizes), `kc.proto({names})` (sizes, fluid ports per direction, pole supply/reach, drill areas, underground reach, crafting speed...), `kc.resources(surface, center, radius)`, `kc.best(type, key)` (best researched/carried entity of a type). Turn them into Python objects with `kc.world`: `grid_from_scan(scan)` -> `kc.Grid`, `specs_from_proto(proto)`, `pole_spec`, `drill_spec`, `belt_spec`, `pipe_ports`, `ore_tiles`.
 - `kc.geo`: tiles, `snap` (odd sizes on x.5, even on integers), `footprint`, directions, `rotate`/`mirror`, `spiral`. `kc.Grid`: `free`, `can_place`, `place`, `first_fit`.
 - `kc.search`: `bfs`, `dijkstra`, `astar`, `grid_path`, `reachable`, `components`. `kc.steiner`: `join` (one network joining many tiles), `mst`, `join_nodes`. `kc.cover`: `greedy` set cover, `area_overlaps` (supply/effect squares). `kc.wires`: `can_link` (shorter reach wins), `components`, `chain`/`join_groups` (fewest relay poles). `kc.lp`: exact linear programs on fractions (`solve`). `kc.bp`: blueprint strings (`decode`, `encode`, `to_ghosts`, `transform`).
+- Circuits, anywhere (stations, inserters, lamps, anything wired): `kc.circuits(surface, {entities = {...}} | {area = box} | {position = p, radius = r})` in `data_lua` reads the whole network following wires (combinator settings, every entity's control settings, live signals per network; format in docs/circuits-format.md). In Python `c = kc.circuits.load(data)`: `kc.circuits.explain(c)` (what it computes, in words), `c.controls()` (what each controlled entity does now), `c.trace(signal, network)` (who puts a signal there), `c.run(ticks)` (tick-by-tick, finds the stable state or the oscillation period), `c.with_inputs({entity_id: signals}).run(n)` (what happens if a chest/train holds something else), `kc.circuits.diff(a, b)`. Verified tick-for-tick against the game.
 - Before placing anything, `kc.checks.all(plan, specs, grid=..., grid_poles=..., connect=(tiles, terminals))` must be `[]`: overlaps, taken tiles, unpowered electric entities, unwired poles, cut networks. Fix and recheck; then place the plan with `kc.place_ghosts`.
 
 ## Skills (code you can import in `factorio_compute`)
@@ -88,3 +89,16 @@ The query runs inside a game tick: the game is FROZEN while it runs, and Lua has
 - "remove the marks", "clear", "enough marks" (in any language) → `factorio_unmark(chat=T, all_in_chat=true)`.
 - "what did you mark", "which marks are there" → `factorio_list_marks(chat=T)`.
 - "show the next / previous one" refers to the marks of this tab and the conversation so far: use the context, do not search again unless needed.
+
+## Playbook: trains leave stations with leftover cargo
+
+Goal: find which condition lets a loaded train leave or stop unloading. Work from facts, not guesses.
+1. Find the trains: `game.train_manager.get_trains{surface = surface}` with cargo (`train.get_contents()` / `get_fluid_contents()` not empty) that are heading to a loading station, a depot, or are waiting with no path. For each: id, contents, `schedule.current` and its records with wait conditions, interrupts (2.0: `train.schedule` group / `get_schedule()`), `path_end_stop`, state.
+2. For every stop in those schedules that should unload them: read its network with `kc.circuits(surface, {entities = {stop}})` (follows wires into inserters, chests and combinators).
+3. In Python, check the usual causes against the data and say which ones hold:
+   - the unload record's wait condition is not "cargo empty" (inactivity, time, a circuit condition): the train leaves when chests fill up;
+   - the station accepts less than a full train (chest/inserter limits, an enable condition on unload inserters, a trains-limit or stop-enable condition that turns off mid-unload): simulate with `with_inputs` the chests at their real fill and a train arriving full;
+   - wrong cargo for the stop (generic interrupts / item-parameter signals, filter inserters taking other items);
+   - the stop disabled or its limit set to 0 while a train is on its way, so the train goes on with cargo;
+   - wiring mistakes: red/green mixed, `read stopped train` contents negated or summed into the wrong network, a condition one tick late. `explain` and `trace` show these.
+4. Report: which trains, which station, the cause with the exact condition/combinator and its values, and the fix. Changing stations, schedules or combinators needs the player's consent first (see Changing existing things); mark the stations on the map.
