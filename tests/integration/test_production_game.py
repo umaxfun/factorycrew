@@ -25,7 +25,7 @@ local out = {recipes = {}, machines = {}, modules = {}, beacon = {}}
 for _, n in pairs(RECIPES) do
   local r = prototypes.recipe[n]
   if r then
-    out.recipes[n] = {name = n, category = r.category, energy = r.energy,
+    out.recipes[n] = {name = n, category = (function() local ok, c = pcall(function() return r.category end) if ok then return c end local cs = r.categories return cs[1] or next(cs) end)(), energy = r.energy,
       maximum_productivity = get(function() return r.maximum_productivity end),
       allowed_effects = get(function() return r.allowed_effects end),
       ingredients = r.ingredients, products = r.products}
@@ -61,6 +61,8 @@ local function power(x, y, px, py)
   eei.energy = 1e9
   s.create_entity{name = "medium-electric-pole", position = {px, py}, force = "player"}
 end
+-- a machine does not craft an unresearched recipe (status recipe_not_researched); the stand has none
+game.forces.player.recipes["electronic-circuit"].enabled = true
 local function asm(x, y)
   local a = s.create_entity{name = "assembling-machine-2", position = {x, y}, force = "player", recipe = "electronic-circuit"}
   a.insert{name = "iron-plate", count = 100}
@@ -76,14 +78,18 @@ power(X0 + 31, Y0 + 5, X0 + 32.5, Y0 + 2.5)
 local b = asm(X0 + 35.5, Y0 + 0.5)
 local beacon = s.create_entity{name = "beacon", position = {X0 + 35.5, Y0 + 3.5}, force = "player"}
 beacon.get_module_inventory().insert{name = "speed-module-3", count = 2}
-storage.prod_test = {a = a, b = b}
-return true
+return true  -- the query env has no `storage`; SAMPLE finds the machines again by position
 """
 
 SAMPLE = """
-local t = storage.prod_test
+local s = game.surfaces[1]
+local t = {a = s.find_entity("assembling-machine-2", {X0 + 5.5, Y0 + 0.5}),
+           b = s.find_entity("assembling-machine-2", {X0 + 35.5, Y0 + 0.5})}
 local function one(e) return {count = e.get_output_inventory().get_item_count("electronic-circuit"),
-  speed = e.speed_bonus, productivity = e.productivity_bonus, status = e.status} end
+  speed = e.speed_bonus, productivity = e.productivity_bonus,
+  status = (function() for k, v in pairs(defines.entity_status) do if v == e.status then return k end end end)(),
+  energy = e.energy, network = e.electric_network_id,
+  why = {recipe = e.get_recipe() and e.get_recipe().name, input = e.get_inventory(defines.inventory.crafter_input).get_contents(), ingredients = e.get_recipe() and e.get_recipe().ingredients}} end
 return {tick = game.tick, a = one(t.a), b = one(t.b)}
 """
 
@@ -131,7 +137,7 @@ def test_planned_rates_and_effects_match_the_game(stack, mcp):
     assert built["ok"] and built["data"] is True, built
 
     def sample():
-        s = mcp.tool("factorio_query", lua=SAMPLE)
+        s = mcp.tool("factorio_query", lua=SAMPLE.replace("X0", str(X0)).replace("Y0", str(Y0)))
         assert s["ok"], s
         return s["data"]
 
@@ -149,5 +155,6 @@ def test_planned_rates_and_effects_match_the_game(stack, mcp):
     made_a, made_b = s1["a"]["count"] - s0["a"]["count"], s1["b"]["count"] - s0["b"]["count"]
     print(f"game over {secs:.2f}s: A {made_a} (planned {float(rate_a) * secs:.1f}), "
           f"B {made_b} (planned {float(rate_b) * secs:.1f})")
+    print("status", s1["a"].get("status"), s1["b"].get("status"), s1["a"].get("why"))
     assert abs(made_a - float(rate_a) * secs) <= 2, (made_a, float(rate_a) * secs, s1)
     assert abs(made_b - float(rate_b) * secs) <= 2, (made_b, float(rate_b) * secs, s1)

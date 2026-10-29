@@ -12,7 +12,7 @@ Inside `factorio_compute`: `import solar`. Pure Python, no game access; you feed
 1. `data_lua` reads, never hardcoding names (Nullius renames everything):
    - the surface: `ticks_per_day, dusk, evening, morning, dawn, always_day, freeze_daytime, daytime, solar_power_multiplier`, and `solar_power = surface.get_property("solar-power")` (inside pcall; 100 if it fails). Panel output = peak * `solar_power_multiplier` * `solar-power` / 100.
    - the panel: `name, tile_width, tile_height`, `peak_kw = get_max_energy_production() * 60 / 1000`.
-   - the accumulator: `name, tile_width, tile_height`, from `electric_energy_source_prototype`: `capacity_mj = buffer_capacity / 1e6`, `input_kw`/`output_kw = input_flow_limit`/`output_flow_limit * 60 / 1000`.
+   - the accumulator: `name, tile_width, tile_height`, from `electric_energy_source_prototype`: `capacity_mj = buffer_capacity / 1e6`, `input_kw`/`output_kw = get_input_flow_limit()`/`get_output_flow_limit() * 60 / 1000` (methods, not fields).
    - the pole (substation unless told otherwise): `name, tile_width, tile_height`, `supply = get_supply_area_distance()`, `reach = get_max_wire_distance()`.
    - blocked tiles in the target area: every entity and ghost (all tiles of big ones, `kc.footprint`), water, cliffs, ore the player wants kept free.
 2. `r = solar.ratio(panel["peak_kw"], acc["capacity_mj"], day, accumulator_input_kw=..., accumulator_output_kw=..., target_mw=...)` gives `accumulators_per_panel`, `average_kw_per_panel`, `limited_by` and, with `target_mw`, `panels`/`accumulators`. Vanilla: 0.84 per panel on a 25000-tick day, 0.84672 on 2.0 Nauvis (7 min), 42 kW per 60 kW panel.

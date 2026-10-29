@@ -10,7 +10,7 @@ Inside `factorio_compute`: `import production`. Pure Python, exact fractions; yo
 ## Steps
 
 1. `data_lua` reads, from `prototypes` (never assume vanilla names; Nullius renames everything):
-   - recipes: for every non-hidden recipe the player has (`force.recipes[n].enabled`), `{name, category, energy, ingredients, products, maximum_productivity, allowed_effects}`, plus `productivity_bonus` from `force.recipes[n].productivity_bonus` when research gave one. Pass the lists as the game gives them.
+   - recipes: for every non-hidden recipe the player has (`force.recipes[n].enabled`), `{name, category, energy, ingredients, products, maximum_productivity, allowed_effects}` (2.0: `r.category`; 2.1 renamed it to the list `r.categories`, take its first), plus `productivity_bonus` from `force.recipes[n].productivity_bonus` when research gave one. Pass the lists as the game gives them.
    - machines: `prototypes.get_entity_filtered{{filter = "crafting-category", ...}}`, each `{name, crafting_speed = get_crafting_speed(), crafting_categories, module_inventory_size, energy_usage, allowed_effects, effect_receiver}`.
    - modules: `prototypes.item[n].module_effects`; beacons: `distribution_effectivity`, `profile`, `module_inventory_size`.
 2. `r = production.plan(recipes, machines, {item: per_second}, choices, module_defs=..., beacon_defs=...)`

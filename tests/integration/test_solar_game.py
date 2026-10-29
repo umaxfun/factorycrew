@@ -46,7 +46,7 @@ return {{
   panel = {{name = panel.name, width = panel.tile_width, height = panel.tile_height,
            peak_kw = panel.get_max_energy_production() * 60 / 1000}},
   acc = {{name = acc.name, width = acc.tile_width, height = acc.tile_height, capacity_mj = es.buffer_capacity / 1e6,
-         input_kw = es.input_flow_limit * 60 / 1000, output_kw = es.output_flow_limit * 60 / 1000}},
+         input_kw = es.get_input_flow_limit() * 60 / 1000, output_kw = es.get_output_flow_limit() * 60 / 1000}},
   pole = {{name = sub.name, width = sub.tile_width, height = sub.tile_height,
           supply = sub.get_supply_area_distance(), reach = sub.get_max_wire_distance()}},
 }}
