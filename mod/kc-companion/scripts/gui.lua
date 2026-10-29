@@ -562,7 +562,8 @@ end
 function M.click(name, send, index)
   local player = player_of(index)
   local frame = root(player)
-  local el = frame and find(frame, name) or mod_gui.get_button_flow(player)[name]
+  local lib = player.gui.left.kc_library
+  local el = (frame and find(frame, name)) or (lib and find(lib, name)) or mod_gui.get_button_flow(player)[name]
   if not el then return false end
   M.on_click({ element = el, player_index = player.index }, send)
   return true
