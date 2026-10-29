@@ -498,7 +498,7 @@ class Bridge(asyncio.DatagramProtocol):
         g = self.game
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
-            "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version,
+            "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),
             "dispatcher_seen_s": ago(self.dispatcher_seen), "agent_seen_s": ago(self.agent_seen),
