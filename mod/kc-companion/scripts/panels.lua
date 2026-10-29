@@ -170,8 +170,48 @@ local function bar(parent, i, value, max, caption, color)
   cut_after(f, 2)
 end
 
+-- The position a link cell points at, or nil: {gps = {x, y}, surface?}, {gps = {x =, y =}},
+-- {gps = entity.position}, or the chat tag {gps = "[gps=x,y,surface]"} ("goto" is a Lua keyword).
+local function gps_of(v)
+  local g = v.gps
+  local x, y, s
+  if type(g) == "string" then
+    local a, b, c = g:match("^%s*%[?gps=(%-?[%d%.]+),(%-?[%d%.]+),?([^%]]*)%]?%s*$")
+    x, y, s = tonumber(a), tonumber(b), c
+  elseif type(g) == "table" then
+    x, y, s = tonumber(g.x or g[1]), tonumber(g.y or g[2]), g.surface or g[3]
+  end
+  if not (x and y) then return nil end
+  s = v.surface or s
+  if type(s) == "table" and s.name then s = s.name end -- a LuaSurface
+  return { x = x, y = y, surface = (s and s ~= "") and tostring(s) or nil }
+end
+
+-- A link cell: a flat button; a click opens the remote view at the position (on_click).
+local function link(parent, i, v, pos)
+  -- the ordinary button with its own dark text: `color` is ignored here, colored text on it is unreadable
+  local b, new = slot(parent, i, "gps", { type = "button" })
+  if new then
+    local s = b.style
+    s.height, s.minimal_width, s.top_padding, s.bottom_padding, s.left_padding, s.right_padding = 24, 0, 0, 0, 6, 6
+  end
+  local text = v.text
+  if type(text) == "number" then text = M.fmt(text) end
+  if text == nil then text = string.format("%d, %d", math.floor(pos.x), math.floor(pos.y)) end
+  local icon = v.item and ("[item=" .. v.item .. "] ") or (v.fluid and ("[fluid=" .. v.fluid .. "] ")) or ""
+  b.caption = icon .. tostring(text)
+  b.tooltip = string.format("Show on the map (%d, %d%s)", math.floor(pos.x), math.floor(pos.y),
+    pos.surface and (", " .. pos.surface) or "")
+  local tags = b.tags
+  tags.kc_gps = pos
+  b.tags = tags
+end
+
 local function cell(parent, i, v)
-  if type(v) == "number" then
+  local pos = type(v) == "table" and gps_of(v)
+  if pos then
+    link(parent, i, v, pos)
+  elseif type(v) == "number" then
     label(parent, i, M.fmt(v))
   elseif type(v) ~= "table" then
     label(parent, i, tostring(v == nil and "" or v))
@@ -502,9 +542,25 @@ end
 
 -- ── events ───────────────────────────────────────────────────────────────
 
+--- A link cell's click: the remote view (the map) centred on the position. The character stays put.
+function M.go_to(player, pos)
+  local surface = game.get_surface(pos.surface or player.physical_surface.name)
+  if not surface then
+    player.print("[KC] no surface " .. tostring(pos.surface))
+    return false
+  end
+  player.set_controller{ type = defines.controllers.remote, surface = surface, position = { pos.x, pos.y } }
+  return true
+end
+
 function M.on_click(e)
   local el = e.element
-  if not (el and el.valid and el.tags and el.tags.kc_panel) then return false end
+  if not (el and el.valid and el.tags) then return false end
+  if el.tags.kc_gps then
+    M.go_to(game.get_player(e.player_index), el.tags.kc_gps)
+    return true
+  end
+  if not el.tags.kc_panel then return false end
   local player = game.get_player(e.player_index)
   if el.tags.kc_panel_collapse then
     M.collapse(player, el.tags.kc_panel)

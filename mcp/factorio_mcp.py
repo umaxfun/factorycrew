@@ -148,7 +148,10 @@ TOOLS = [
             "RETURN A VIEW: a list of blocks: a string (rich text ok, [item=iron-plate], [color=red]..[/color]); "
             "{title?, columns={...}, rows={{cell,...},...}, empty?}; {bar=v, max=m, caption?, color?}. "
             "Cells: string, number (formatted 1.2k), {item=name, text?} / {fluid=} / {signal=} (icon), "
-            "{bar=v, max=m, caption?, color?}, {text=, color=red|green|yellow|orange|gray|blue}. "
+            "{bar=v, max=m, caption?, color?}, {text=, color=red|green|yellow|orange|gray|blue}, "
+            "LINK {gps={x,y}, surface?, text?, item?} (a button: a click opens the map at that "
+            "position; any cell can be one, e.g. the number itself: {text=9759, gps=chest.position, surface='nauvis'}). "
+            "[gps=..] rich text is NOT clickable in a panel (only in chat): use a link cell. "
             "`inputs`: drop-downs for the player, e.g. [{key:'period', label:'Period', options:['1m','10m','1h'], default:'10m'}]. "
             "The body runs once now and you get its `view` (or `error`) back: CHECK the numbers against a "
             "query before replying. It runs inside a game tick on every refresh: keep it cheap (filtered "
@@ -486,6 +489,13 @@ def _plain(v) -> str:
             return v.get("caption") or (_plain(v["bar"]) + (f" / {_plain(v['max'])}" if v.get("max") is not None else ""))
         name = v.get("item") or v.get("fluid") or v.get("signal") or v.get("sprite")
         text = v.get("text")
+        g = v.get("gps")
+        if text is None and g is not None:  # a link cell without text shows its position
+            if isinstance(g, dict):
+                g = [g.get("x"), g.get("y")]
+            elif isinstance(g, str):
+                g = re.findall(r"-?[\d.]+", g)[:2]
+            text = ", ".join(_plain(c) for c in g[:2]) if isinstance(g, list) else _plain(g)
         return " ".join(x for x in [str(name) if name else "", _plain(text) if text is not None else ""] if x)
     s = re.sub(r"\[(?:item|fluid|virtual-signal|entity|recipe)=([\w-]+)[^\]]*\]", r"\1", str(v if v is not None else ""))
     s = re.sub(r"\[/?(?:color|font)[^\]]*\]", "", s)

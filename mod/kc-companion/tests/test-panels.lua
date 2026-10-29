@@ -157,6 +157,40 @@ describe("panels", function()
     assert(not frame("fold").kc_panel_inner.visible)
   end)
 
+  it("draws link cells as buttons that open the map at their position", function()
+    local r = panels.set{ name = "links", lua = [[
+      return {{columns = {"item", "short", "chest"}, rows = {
+        {{item = "iron-plate"}, {text = 9759, gps = {51, 33}, surface = "nauvis", color = "red"}, {gps = "[gps=-20,14,nauvis]"}},
+        {{item = "copper-plate"}, {text = 5, gps = {x = 7.6, y = -3.2}}, {gps = {1, 2}, item = "iron-chest", text = "box"}},
+      }}}]] }
+    assert(r.ok, serpent.line(r))
+    if not player then return end
+    local buttons = {}
+    local function walk(el)
+      if el.type == "button" and el.tags.kc_gps then buttons[#buttons + 1] = el end
+      for _, c in pairs(el.children) do walk(c) end
+    end
+    walk(frame("links"))
+    assert(#buttons == 4, "link buttons: " .. #buttons)
+    local caps = {}
+    for _, b in ipairs(buttons) do caps[#caps + 1] = b.caption end
+    local s = table.concat(caps, "|")
+    assert(s == "9759|-20, 14|5|[item=iron-chest] box", s)
+    assert(buttons[2].tags.kc_gps.x == -20 and buttons[2].tags.kc_gps.surface == "nauvis")
+    -- a refresh keeps the buttons (in place) and their positions
+    due("links")
+    panels.tick()
+    assert(buttons[1].valid and buttons[1].tags.kc_gps.x == 51)
+    local before = player.physical_position
+    panels.on_click({ element = buttons[1], player_index = player.index })
+    local remote = player.controller_type == defines.controllers.remote
+    local at = player.position
+    if remote then player.exit_remote_view() end
+    assert(remote, "the click did not open the map: controller " .. tostring(player.controller_type))
+    assert(at.x == 51 and at.y == 33, serpent.line(at))
+    assert(player.physical_position.x == before.x, "the character moved")
+  end)
+
   it("lists, opens and deletes the run's saved panels from Kira's window, with no model", function()
     storage.kc.library = nil
     local out = {}

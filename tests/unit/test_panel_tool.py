@@ -110,6 +110,12 @@ def test_snapshot_markdown_is_readable():
     assert 'restore the panel Science made' in md
 
 
+def test_link_cells_read_as_their_text_or_position():
+    assert m._plain({"text": 9759, "gps": [51, 33], "surface": "nauvis"}) == "9759"
+    assert m._plain({"gps": {"x": -20, "y": 14}}) == "-20, 14"
+    assert m._plain({"gps": "[gps=1,2,nauvis]"}) == "1, 2"
+
+
 SLUG = "factorio-panel-d988dac8-0-science-made"
 
 
