@@ -17,6 +17,10 @@ docker_bounded "fc-l1-$(basename "$ROOT")-$$" "${FC_L1_TIMEOUT:-300}" --platform
   DATA=/work/.test-data/level1
   mkdir -p "$DATA/mods"
   cp -r /opt/factorio-test-mods/. "$DATA/mods/"
+  # A data dir with no mod list starts with the Space Age mods on, and kc.best then ranks their
+  # entities too: the first run of a fresh worktree failed two tests. Start from the list a
+  # finished run leaves behind (DLC off), so every run sees the same game.
+  [ -f "$DATA/mods/mod-list.json" ] || printf "%s\n" "{\"mods\": [{\"name\": \"base\", \"enabled\": true}, {\"name\": \"elevated-rails\", \"enabled\": false}, {\"name\": \"quality\", \"enabled\": false}, {\"name\": \"space-age\", \"enabled\": false}]}" > "$DATA/mods/mod-list.json"
   factorio-test run \
     --mod-path /work/mod/kc-companion \
     --factorio-path /opt/factorio/bin/x64/factorio \
