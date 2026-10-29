@@ -84,6 +84,20 @@ def alive(name):
         return None
 
 
+def mod_digest(src=None):
+    """Hash of the mod as the game loads it (tests left out, protocol.lua's port line ignored)."""
+    import hashlib
+    src = Path(src or os.environ.get("FC_UI_MOD_SRC") or ROOT / "mod" / "kc-companion")
+    h = hashlib.sha256()
+    for f in sorted(p for p in src.rglob("*") if p.is_file() and "tests" not in p.relative_to(src).parts
+                    and p.name != ".factorycrew-managed"):
+        data = f.read_bytes()
+        if f.name == "protocol.lua":
+            data = b"\n".join(l for l in data.split(b"\n") if not l.startswith(b"M.BRIDGE_PORT ="))
+        h.update(str(f.relative_to(src)).encode() + b"\0" + data + b"\0")
+    return h.hexdigest()
+
+
 def deploy():
     mods = DATA / "mods"
     mods.mkdir(parents=True, exist_ok=True)
@@ -128,6 +142,8 @@ def start():
         env = dict(os.environ, SteamAppId="427520", SteamGameId="427520")
         spawn("game", [str(BIN), "-c", str(DATA / "config.ini"), "--load-game", str(SAVE),
                        "--enable-lua-udp", str(UDP_GAME)], env)
+        # what this game process loaded; scripts/stand.sh check compares it with the checkout
+        (DEV / "game-mod.sha").write_text(mod_digest())
     deadline = time.time() + 120
     while time.time() < deadline:
         if online():
@@ -226,6 +242,8 @@ def main(argv):
         shot(argv[1], argv[2:])
     elif cmd == "lua":
         print(json.dumps(lua(argv[1]), ensure_ascii=False))
+    elif cmd == "digest":
+        print(mod_digest())
     elif cmd == "steps":
         for s in argv[1:]:
             run_step(s)
