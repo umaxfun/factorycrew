@@ -151,6 +151,8 @@ Done when:
 
 Depends on: 1.
 
+Status: done. Unfiltered map on the fixture: 111 zones of 3+ machines, ~2.2k tokens. Live statuses of the whole base come in batches of 2000 machines (positions grouped by name, statuses back as numbers). e2e (real client, 97 s): "Glass is made in 3 places on nauvis (58 machines), all marked: Z10 (103,38)-(185,140): 26 machines; Z37 (-51,78)-(-6,105): 26 machines, closest to you; Z71 (103,37)-(113,61): 6 machines. All three zones are short on power (low_power)."
+
 ### 4. Feed modes and logistic networks
 
 Scope: feed mode per block, zones cut by it, network nodes (`kind=network`: what goes in explicitly, what goes out, items handed out that nothing puts in).
