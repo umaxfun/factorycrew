@@ -66,5 +66,16 @@ for _ in $(seq 1 120); do docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_R
 docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY || { docker logs "$FC_E2E_CONTAINER" | tail -20; exit 1; }
 
 cd "$ROOT"
+rc=0
 FC_E2E_BRIDGE="$BRIDGE" KIROCREW_HOME="$FC_KC_HOME" \
-  uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/e2e "$@"
+  uv run --no-project --with pytest==8.3.5 python -m pytest -p no:cacheprovider -s -q tests/e2e "$@" || rc=$?
+if [ "$rc" != 0 ]; then
+  # the whole chain at the moment of failure, before cleanup takes it down
+  echo "--- e2e failed (rc $rc): state of the chain ---"
+  echo "bridge: $(curl -fsS --max-time 3 "$BRIDGE/health" 2>&1 || echo down)"
+  echo "gateway: $("$K" status 2>&1 || true)"
+  echo "dispatcher wakes running: $(ls "$FC_KC_HOME/cron-running" 2>/dev/null | wc -l | tr -d ' ')"
+  echo "game container (last lines):"; docker logs --tail 8 "$FC_E2E_CONTAINER" 2>&1 | sed 's/^/  /'
+  echo "gateway log (errors):"; grep -E "ERROR|Error|unavailable" "$FC_KC_HOME/gateway.log" 2>/dev/null | tail -5 | cut -c1-240 | sed 's/^/  /'
+fi
+exit "$rc"

@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "integration"))
 from conftest import lua_str, wait_until  # noqa: E402
 from test_bridge import SETUP_CHESTS, TAGS  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests" / "e2e"))
+from watch import wait_reply  # noqa: E402
 
 BRIDGE = os.environ.get("FC_APP_BRIDGE", "http://127.0.0.1:34298")
 KC_HOME = Path(os.environ.get("FC_APP_HOME", Path.home() / ".kirocrew-factorio-app"))
@@ -72,14 +74,9 @@ class Player:
         before = len([e for e in self.tab(chat)["feed"] if e.get("from") == "kira"])
         t0 = time.monotonic()
         assert self.ui("ui_confirm", "kc_input", text), "no input field"
-        wait_until(lambda: self.tab(chat)["state"] == "thinking", timeout=90, step=0.3,
-                   what=f"dispatcher picked up {text!r}")
-        t_pick = time.monotonic() - t0
-
-        def answered():
-            kira = [e for e in self.tab(chat)["feed"] if e.get("from") == "kira"]
-            return kira[-1] if len(kira) > before else None
-        reply = wait_until(answered, timeout=timeout or ANSWER_TIMEOUT, step=1, what=f"reply to {text!r}")
+        # fails within seconds of a hang and names the link that stopped (tests/e2e/watch.py)
+        reply, t_pick = wait_reply(health=lambda: http("GET", "/health"), tab=self.tab, chat=chat, before=before,
+                                   kc_home=KC_HOME, timeout=timeout or ANSWER_TIMEOUT, text=text)
         return reply["text"], t_pick, time.monotonic() - t0
 
     def kc_tags(self):

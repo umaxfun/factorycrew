@@ -30,6 +30,7 @@ KC_HOME = Path(os.environ.get("KIROCREW_HOME", Path.home() / ".kirocrew-factorio
 ANSWER_TIMEOUT = float(os.environ.get("FC_E2E_ANSWER_TIMEOUT", "180"))
 
 from test_bridge import SETUP_CHESTS, TAGS  # noqa: E402  (same 20-chest scenario as level 2)
+from watch import wait_reply  # noqa: E402
 
 
 def http(path):
@@ -58,14 +59,9 @@ class Player:
         before = len([e for e in self.tab(chat)["feed"] if e.get("from") == "kira"])
         t0 = time.monotonic()
         self.ask(chat, text)
-        wait_until(lambda: self.tab(chat)["state"] == "thinking", timeout=90, step=0.2,
-                   what=f"dispatcher picked up {text!r}")
-        t_pick = time.monotonic() - t0
-
-        def answered():
-            kira = [e for e in self.tab(chat)["feed"] if e.get("from") == "kira"]
-            return kira[-1] if len(kira) > before else None
-        reply = wait_until(answered, timeout=ANSWER_TIMEOUT, step=1, what=f"reply to {text!r}")
+        # fails within seconds of a hang and names the link that stopped (tests/e2e/watch.py)
+        reply, t_pick = wait_reply(health=lambda: http("/health"), tab=self.tab, chat=chat, before=before,
+                                   kc_home=KC_HOME, timeout=ANSWER_TIMEOUT, text=text)
         return reply["text"], t_pick, time.monotonic() - t0
 
     def kc_tags(self):

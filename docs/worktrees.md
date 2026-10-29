@@ -76,6 +76,18 @@ Every test script stays inside the worktree's slot, so any number of worktrees c
 
 They need no running stand; `claim` only reserves the slot. Both e2e use a real model (a few agent turns).
 
+A hung e2e fails fast and says where. Every wait for Kira's reply goes through `tests/e2e/watch.py`, which checks each link of the chain once a second. It fails within about a minute when one stops moving, naming the link and what it saw:
+
+- the game stopped sending heartbeats;
+- the bridge never acked the question;
+- the question sits in the bridge queue (no dispatcher polling);
+- no chat was opened;
+- the turn failed (an `error` row in the transcript, such as "Crew Member … is unavailable");
+- the turn stopped moving (no MCP step, no transcript growth for 120 s);
+- the bridge gave up.
+
+On failure, `test-e2e.sh` also prints the bridge health, the gateway status, the running dispatcher wakes, and the last lines of the container and gateway logs. Thresholds: `FC_E2E_ACK_S` (10), `FC_E2E_PICKUP_S` (60), `FC_E2E_CHAT_S` (45), `FC_E2E_SILENCE_S` (120), `FC_E2E_ANSWER_TIMEOUT` (180).
+
 ## Slots, claims, data
 
 - Slot N (1..20 by default), with P = `34198 + 100·N`: stand bridge P (UDP P+1, game P+2) and gateway `5500 + N`; e2e bridge P+10, RCON P+11, gateway `5600 + N`; app e2e bridge P+20 (UDP P+21, game P+22), gateway `5700 + N`. Slot 0 would be the default ports of a plain install, so it is never handed out. Override the bases and the count with `FC_STAND_BRIDGE_BASE`, `FC_STAND_GATEWAY_BASE`, `FC_STAND_MAX`.
