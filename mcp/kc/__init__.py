@@ -10,6 +10,7 @@ Layers (lower never imports higher):
   lp       exact linear programming on fractions
   bp       blueprint string codec and transforms
   checks   validators: overlaps, connectivity, coverage, wiring
+  circuits circuit networks read by the mod's kc.circuits: simulate, explain, trace
   world    adapters for the mod's kc.scan / kc.proto / kc.resources / kc.best (Lua) results
 
 Skills are built on these and live in skills/<name>/lib. The names below are the stable surface;
@@ -27,7 +28,9 @@ from .grid import Grid  # noqa: F401
 
 import importlib as _importlib
 
-for _m in ("search", "steiner", "cover", "wires", "lp", "bp", "world", "checks"):
+MODULES = ("search", "steiner", "cover", "wires", "lp", "bp", "world", "circuits", "checks")
+
+for _m in MODULES:
     try:  # modules land one by one; a missing one must not break `import kc`
         globals()[_m] = _importlib.import_module(f".{_m}", __name__)
     except ImportError:  # pragma: no cover

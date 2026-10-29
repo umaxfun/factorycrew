@@ -96,6 +96,62 @@ function M.place_ghosts(surface, items, force)
   if #failed > 0 then
     out.failed_hint = "Some items were refused; move them (recompute the layout) and place them, do not leave the design partial."
   end
+  -- Inserter check: what each placed inserter picks from and drops into. A backwards inserter
+  -- (its direction points to where it picks up, not where it drops) is the usual silent failure.
+  local ends = M.inserter_ends(surface, items)
+  if #ends > 0 then
+    out.inserters = ends
+    local lines, empty = {}, false
+    for _, e in ipairs(ends) do
+      lines[#lines + 1] = string.format("%s at (%g, %g) picks from %s, drops into %s", e.name, e.x, e.y,
+        e.picks or "NOTHING", e.drops or "NOTHING")
+      empty = empty or not e.picks or not e.drops
+    end
+    out.inserter_hint = (empty and "An inserter has nothing at one end. " or "") ..
+      "Check each is what you meant: " .. table.concat(lines, "; ") .. ". An inserter's direction points to " ..
+      "the tile it picks from; it drops on the opposite side. If one is backwards, fix it now."
+  end
+  return out
+end
+
+local function rotate(v, d)
+  if d == 4 then return { x = -v.y, y = v.x } end
+  if d == 8 then return { x = -v.x, y = -v.y } end
+  if d == 12 then return { x = v.y, y = -v.x } end
+  return { x = v.x, y = v.y }
+end
+
+local function what_at(surface, p)
+  local fx, fy = math.floor(p.x), math.floor(p.y)
+  for _, e in pairs(surface.find_entities_filtered{ area = { { fx + 0.1, fy + 0.1 }, { fx + 0.9, fy + 0.9 } } }) do
+    if e.type ~= "character" and e.type ~= "item-request-proxy" then
+      return e.type == "entity-ghost" and e.ghost_name or e.name
+    end
+  end
+  return nil
+end
+
+--- For the inserters among `items` ({name, x, y, direction}): where each picks up and drops, and
+--- what entity or ghost stands there: {{name, x, y, direction, pickup = {x, y}, drop = {x, y},
+--- picks = name|nil, drops = name|nil}, ...}. Works before anything is built (reads ghosts too).
+function M.inserter_ends(surface, items)
+  local out = {}
+  for _, it in ipairs(items or {}) do
+    local proto = it.name and prototypes.entity[it.name]
+    if proto and proto.type == "inserter" then
+      local x = it.x or (it.position and it.position.x)
+      local y = it.y or (it.position and it.position.y)
+      if proto.tile_width == 1 then x, y = math.floor(x) + 0.5, math.floor(y) + 0.5 end  -- as placed
+      local d = it.direction or 0
+      local pu, dr = proto.inserter_pickup_position, proto.inserter_drop_position
+      pu = { x = pu.x or pu[1], y = pu.y or pu[2] }
+      dr = { x = dr.x or dr[1], y = dr.y or dr[2] }
+      local a, b = rotate(pu, d), rotate(dr, d)
+      local pickup, drop = { x = x + a.x, y = y + a.y }, { x = x + b.x, y = y + b.y }
+      out[#out + 1] = { name = it.name, x = x, y = y, direction = d, pickup = pickup, drop = drop,
+                        picks = what_at(surface, pickup), drops = what_at(surface, drop) }
+    end
+  end
   return out
 end
 
@@ -142,9 +198,11 @@ function M.nearest_pole(surface, position, radius, force)
     if not best_d or d < best_d then best, best_d = e, d end
   end
   if not best then return nil end
+  local g = M.grid_power(best)
   return {
     name = best.name, position = { x = best.position.x, y = best.position.y },
     distance = math.floor(best_d * 10 + 0.5) / 10, network_id = best.electric_network_id,
+    sources = g.sources, producing = g.producing, production_w = g.production_w, consumption_w = g.consumption_w,
   }
 end
 
@@ -742,4 +800,6 @@ function M.best(ptype, key, opts)
 end
 
 M.circuits = require("scripts.circuits").read -- circuit snapshot, docs/circuits-format.md
+local trial = require("scripts.trial")    -- run a plan on a hidden copy of its area
+M.trial_start, M.trial_report, M.grid_power = trial.start, trial.report, trial.grid_power
 return M

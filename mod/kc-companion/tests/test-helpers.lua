@@ -96,6 +96,39 @@ describe("kc.place_ghosts (query helper)", function()
   end)
 end)
 
+describe("kc.inserter_ends (query helper)", function()
+  it("matches a real inserter's pickup and drop in every direction", function()
+    local s = game.surfaces[1]
+    for _, d in ipairs({ 0, 4, 8, 12 }) do
+      local e = s.create_entity{ name = "inserter", position = { 470.5, 470.5 }, direction = d, force = "player" }
+      local r = q(string.format([[return kc.inserter_ends(surface, {{name = "inserter", x = 470.5, y = 470.5, direction = %d}})]], d))[1]
+      local pu, dr = e.pickup_position, e.drop_position
+      e.destroy()
+      assert(math.abs(r.pickup.x - pu.x) < 0.01 and math.abs(r.pickup.y - pu.y) < 0.01, serpent.line({ d, r, pu }))
+      assert(math.abs(r.drop.x - dr.x) < 0.01 and math.abs(r.drop.y - dr.y) < 0.01, serpent.line({ d, r, dr }))
+    end
+  end)
+
+  it("place_ghosts says what each inserter picks from and drops into", function()
+    local s = game.surfaces[1]
+    local tiles = {}
+    for x = 455, 470 do for y = 455, 465 do tiles[#tiles + 1] = { name = "grass-1", position = { x, y } } end end
+    s.set_tiles(tiles)
+    local chest = s.create_entity{ name = "wooden-chest", position = { 460.5, 460.5 }, force = "player" }
+    -- chest -> inserter -> belt: the inserter faces west (towards the chest it picks from)
+    local good = q([[return kc.place_ghosts(surface, {
+      {name = "transport-belt", x = 462.5, y = 460.5, direction = defines.direction.east},
+      {name = "inserter", x = 461.5, y = 460.5, direction = defines.direction.west}})]])
+    local lone = q([[return kc.place_ghosts(surface, {{name = "inserter", x = 461.5, y = 463.5, direction = defines.direction.west}})]])
+    chest.destroy()
+    for _, g in pairs(s.find_entities_filtered{ name = "entity-ghost", area = { { 455, 455 }, { 470, 465 } } }) do g.destroy() end
+    local i = good.inserters[1]
+    assert(i.picks == "wooden-chest" and i.drops == "transport-belt", serpent.line(good))
+    assert(good.inserter_hint:find("picks from wooden-chest, drops into transport-belt", 1, true), good.inserter_hint)
+    assert(lone.inserters[1].picks == nil and lone.inserter_hint:find("nothing at one end", 1, true), serpent.line(lone))
+  end)
+end)
+
 describe("kc.nearest_pole (query helper)", function()
   it("finds the closest real pole and ignores ghosts", function()
     local s = game.surfaces[1]
