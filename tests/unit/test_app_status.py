@@ -29,7 +29,7 @@ def fake_bridge(health):
     return srv
 
 
-def setup(tmp_path, monkeypatch, mcp_servers=True, version="0.11.0-rc.1"):
+def fake_install(tmp_path, monkeypatch, mcp_servers=True, version="0.11.0-rc.1"):
     home = tmp_path / "home"
     agents = home / "kiro" / "agents"
     agents.mkdir(parents=True)
@@ -59,7 +59,7 @@ HEALTHY = {"ok": True, "game_online": True, "run_name": "Run 1", "tick": 100, "t
 
 
 def test_all_green(tmp_path, monkeypatch):
-    mods = setup(tmp_path, monkeypatch)
+    mods = fake_install(tmp_path, monkeypatch)
     srv = fake_bridge(HEALTHY)
     res = st.status({"http_port": srv.server_port}, mods, "mod installed")
     srv.shutdown()
@@ -68,7 +68,7 @@ def test_all_green(tmp_path, monkeypatch):
 
 
 def test_old_kirocrew_and_an_agent_without_tools_are_named(tmp_path, monkeypatch):
-    mods = setup(tmp_path, monkeypatch, mcp_servers=False, version="0.10.0")
+    mods = fake_install(tmp_path, monkeypatch, mcp_servers=False, version="0.10.0")
     srv = fake_bridge(HEALTHY)
     c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
     srv.shutdown()
@@ -77,14 +77,14 @@ def test_old_kirocrew_and_an_agent_without_tools_are_named(tmp_path, monkeypatch
 
 
 def test_bridge_down_marks_what_depends_on_it_unknown(tmp_path, monkeypatch):
-    mods = setup(tmp_path, monkeypatch)
+    mods = fake_install(tmp_path, monkeypatch)
     c = by_id(st.status({"http_port": 1}, mods, ""))
     assert c["bridge"]["state"] == "fail"
     assert c["game"]["state"] == "idle" and c["dispatcher"]["state"] == "idle"
 
 
 def test_offline_game_and_a_silent_dispatcher(tmp_path, monkeypatch):
-    mods = setup(tmp_path, monkeypatch)
+    mods = fake_install(tmp_path, monkeypatch)
     srv = fake_bridge({**HEALTHY, "game_online": False, "last_seen_s": None, "dispatcher_seen_s": 600.0})
     res = st.status({"http_port": srv.server_port, "game_port": 34200}, mods, "")
     srv.shutdown()
@@ -95,7 +95,7 @@ def test_offline_game_and_a_silent_dispatcher(tmp_path, monkeypatch):
 
 
 def test_stale_mod_in_the_mods_folder(tmp_path, monkeypatch):
-    mods = setup(tmp_path, monkeypatch)
+    mods = fake_install(tmp_path, monkeypatch)
     (mods / "kc-companion" / "info.json").write_text(json.dumps({"version": "0.0.1"}))
     srv = fake_bridge(HEALTHY)
     c = by_id(st.status({"http_port": srv.server_port}, mods, "left as is"))

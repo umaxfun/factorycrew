@@ -1,0 +1,51 @@
+# The fast check on every push and pull request: the same scripts as ./scripts/check.sh,
+# one job per step so a red one is visible on its own. Linux runners are amd64, so the
+# linux/amd64 test images run natively. The e2e levels need a Kiro Crew login, a real model
+# and (for the app e2e) a game window, so they stay local (README, "Tests").
+name: check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: ./scripts/test-unit.sh
+
+  game:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: level 1, Factorio 2.0.77
+            script: ./scripts/test-mod.sh
+          - name: level 1, Factorio 2.1.23
+            script: ./scripts/test-mod-2.1.sh
+          - name: level 2, Factorio 2.1.23
+            script: ./scripts/test-integration.sh
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      # the scripts build factorycrew-test:<version> from docker/Dockerfile when it is missing
+      - run: ${{ matrix.script }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-data-${{ strategy.job-index }}
+          path: .test-data/
+          if-no-files-found: ignore
