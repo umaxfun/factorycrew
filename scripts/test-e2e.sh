@@ -10,6 +10,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="factorycrew-test:2.1.23"
+. "$ROOT/scripts/lib/docker.sh"
+docker_alive
 
 eval "$("$ROOT/scripts/stand.sh" claim)"
 export FC_KC_HOME="$FC_E2E_KC_HOME" FC_KC_PORT="$FC_E2E_KC_PORT" FC_BRIDGE_HTTP="$FC_E2E_HTTP"
@@ -50,20 +52,29 @@ fresh_wake || { echo "no dispatcher wake with the installed script after 90 s" >
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || \
   docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.23 -t "$IMAGE" "$ROOT/docker"
-docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
+docker_ok "$IMAGE"
+timeout -k 3 20 docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
 cleanup() {
-  docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
+  timeout -k 3 20 docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
   [ -n "${FC_E2E_KEEP_GATEWAY:-}" ] || "$K" stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 # Inside the container the bridge and RCON keep their usual ports; the host side is the slot's.
 # Published to host loopback only: the bridge API has no auth.
-docker run -d --name "$FC_E2E_CONTAINER" --platform linux/amd64 \
+timeout -k 3 "$FC_DOCKER_START_S" docker run -d --name "$FC_E2E_CONTAINER" --platform linux/amd64 \
   -p "127.0.0.1:$FC_E2E_HTTP:34198" -p "127.0.0.1:$FC_E2E_RCON:27015" \
   -e FC_INT_DATA=/work/.test-data/e2e -v "$ROOT:/work" "$IMAGE" \
   python3 -u /work/tests/e2e/stand.py >/dev/null
-for _ in $(seq 1 120); do docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY && break; sleep 1; done
-docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY || { docker logs "$FC_E2E_CONTAINER" | tail -20; exit 1; }
+# the stand must reach STAND_READY, and must still be running while we wait
+for _ in $(seq 1 120); do
+  timeout -k 3 10 docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY && break
+  st="$(timeout -k 3 10 docker inspect -f '{{.State.Status}}' "$FC_E2E_CONTAINER" 2>/dev/null || echo unknown)"
+  [ "$st" = running ] || [ "$st" = created ] || { echo "e2e stand container is $st:" >&2; timeout -k 3 10 docker logs --tail 20 "$FC_E2E_CONTAINER" >&2; exit 1; }
+  sleep 1
+done
+timeout -k 3 10 docker logs "$FC_E2E_CONTAINER" 2>&1 | grep -q STAND_READY || {
+  echo "e2e stand not ready in 120 s (container $(timeout -k 3 10 docker inspect -f '{{.State.Status}}' "$FC_E2E_CONTAINER" 2>/dev/null)):" >&2
+  timeout -k 3 10 docker logs --tail 20 "$FC_E2E_CONTAINER" >&2; exit 1; }
 
 cd "$ROOT"
 rc=0
@@ -75,7 +86,7 @@ if [ "$rc" != 0 ]; then
   echo "bridge: $(curl -fsS --max-time 3 "$BRIDGE/health" 2>&1 || echo down)"
   echo "gateway: $("$K" status 2>&1 || true)"
   echo "dispatcher wakes running: $(ls "$FC_KC_HOME/cron-running" 2>/dev/null | wc -l | tr -d ' ')"
-  echo "game container (last lines):"; docker logs --tail 8 "$FC_E2E_CONTAINER" 2>&1 | sed 's/^/  /'
+  echo "game container: $(timeout -k 3 10 docker inspect -f '{{.State.Status}}' "$FC_E2E_CONTAINER" 2>/dev/null || echo gone), last lines:"; timeout -k 3 10 docker logs --tail 8 "$FC_E2E_CONTAINER" 2>&1 | sed 's/^/  /'
   echo "gateway log (errors):"; grep -E "ERROR|Error|unavailable" "$FC_KC_HOME/gateway.log" 2>/dev/null | tail -5 | cut -c1-240 | sed 's/^/  /'
 fi
 exit "$rc"

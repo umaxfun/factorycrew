@@ -8,10 +8,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${FACTORIO_L2_VERSION:-2.1.23}"
 IMAGE="factorycrew-test:$VERSION"
+. "$ROOT/scripts/lib/docker.sh"
+docker_alive
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build --platform linux/amd64 --build-arg FACTORIO_VERSION="$VERSION" -t "$IMAGE" "$ROOT/docker"
 fi
 
-docker run --rm --platform linux/amd64 -v "$ROOT:/work" "$IMAGE" \
+docker_ok "$IMAGE"
+docker_bounded "fc-l2-$(basename "$ROOT")-$$" "${FC_L2_TIMEOUT:-900}" --platform linux/amd64 -v "$ROOT:/work" "$IMAGE" \
   python3 -m pytest -p no:cacheprovider -q /work/tests/integration "$@"

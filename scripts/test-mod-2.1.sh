@@ -4,7 +4,10 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="factorycrew-test:2.1.23"
-docker run --rm --platform linux/amd64 -v "$ROOT:/work" "$IMAGE" bash -c '
+. "$ROOT/scripts/lib/docker.sh"
+docker_alive
+docker_ok "$IMAGE"
+docker_bounded "fc-l1-21-$(basename "$ROOT")-$$" "${FC_L1_TIMEOUT:-300}" --platform linux/amd64 -v "$ROOT:/work" "$IMAGE" bash -c '
   set -e
   DATA=/work/.test-data/level1-2.1
   mkdir -p "$DATA/mods"
