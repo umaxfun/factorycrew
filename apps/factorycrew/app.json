@@ -1,0 +1,71 @@
+{
+  "name": "factorycrew",
+  "version": "0.3.2",
+  "displayName": "Factorio Companion",
+  "description": "Kira, a Factorio companion: ask about your live run from an in-game window; she reads the save, answers in the tab and marks places on the map.",
+  "author": "umaxfun",
+  "iconPath": "assets/icon.png",
+  "tags": [
+    "games",
+    "factorio"
+  ],
+  "agents": [
+    "agents/factorio-companion.json"
+  ],
+  "mcpServers": {
+    "factorio": {
+      "command": "python3",
+      "args": [
+        "mcp/factorio_mcp.py"
+      ]
+    }
+  },
+  "backend": {
+    "entryPoint": "backend/server.py",
+    "type": "python",
+    "port": "auto",
+    "healthCheck": "/health"
+  },
+  "crons": [
+    {
+      "name": "factorio-dispatch",
+      "every": 30,
+      "script": "dispatcher/factorio_dispatch.py:run",
+      "timeout": 3600,
+      "timeout_secs": 3610,
+      "persistent_session": false,
+      "silent": true
+    }
+  ],
+  "ui": {
+    "entry": "index.mjs",
+    "pages": [
+      {
+        "route": "/apps/factorycrew",
+        "label": "Factorio",
+        "icon": "Activity"
+      }
+    ]
+  },
+  "permissions": {
+    "cron": true,
+    "storage": true,
+    "api": [
+      "/apps/factorycrew/api",
+      "/apps/factorycrew/api/*"
+    ]
+  },
+  "dependencies": {
+    "commands": [
+      "python3"
+    ]
+  },
+  "configuration": [
+    "Start Factorio with the launch option --enable-lua-udp 34200 (Steam: Factorio > Properties > Launch Options).",
+    "Turn on agent.session_control in Kiro Crew settings: the dispatcher opens one chat per in-game tab.",
+    "The app installs the kc-companion mod into your Factorio mods folder when it starts; enable it in the game's Mods menu if it is off. Any mod turns Steam achievements off for that save."
+  ],
+  "skills": [
+    "skills/belts"
+  ]
+}

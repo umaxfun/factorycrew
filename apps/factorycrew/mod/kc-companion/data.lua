@@ -1,0 +1,70 @@
+data:extend({
+  {
+    type = "custom-input",
+    name = "kc-toggle",
+    key_sequence = "CONTROL + SHIFT + K",
+    consuming = "none",
+    order = "a",
+  },
+  {
+    -- pointers (scripts/pointers.lua): click a thing or drag a box to show Kira a place
+    type = "selection-tool",
+    name = "kc-pointer",
+    icon = "__kc-companion__/graphics/pointer.png",
+    icon_size = 64,
+    flags = { "only-in-cursor", "not-stackable", "spawnable" },
+    hidden = true,
+    stack_size = 1,
+    subgroup = "tool",
+    order = "z[kc-pointer]",
+    draw_label_for_cursor_render = true,
+    select = {
+      border_color = { r = 0.3, g = 0.8, b = 1 },
+      cursor_box_type = "entity",
+      mode = { "any-entity" },
+    },
+    alt_select = {
+      border_color = { r = 1, g = 0.4, b = 0.3 },
+      cursor_box_type = "not-allowed",
+      mode = { "nothing" },
+    },
+  },
+  {
+    type = "shortcut",
+    name = "kc-pointer",
+    action = "spawn-item",
+    item_to_spawn = "kc-pointer",
+    associated_control_input = "kc-pointer",
+    icon = "__kc-companion__/graphics/pointer.png",
+    icon_size = 64,
+    small_icon = "__kc-companion__/graphics/pointer.png",
+    small_icon_size = 64,
+    order = "z[kc-pointer]",
+  },
+  {
+    type = "custom-input",
+    name = "kc-pointer",
+    key_sequence = "ALT + K",
+    action = "spawn-item",
+    item_to_spawn = "kc-pointer",
+    consuming = "game-only",
+    order = "b",
+  },
+  {
+    -- Q (whatever it is bound to): the game's own clear-cursor, seen by the mod too
+    type = "custom-input",
+    name = "kc-clear-cursor",
+    key_sequence = "",
+    linked_game_control = "clear-cursor",
+    consuming = "none",
+    order = "c",
+  },
+  {
+    -- Kira's face (tools/draw_kira.py): top-bar button, window title, her lines in the feed
+    type = "sprite",
+    name = "kc-kira",
+    filename = "__kc-companion__/graphics/kira.png",
+    size = 64,
+    flags = { "gui-icon" },
+  },
+})
