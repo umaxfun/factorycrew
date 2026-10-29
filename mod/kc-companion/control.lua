@@ -1,6 +1,7 @@
 local protocol = require("scripts.protocol")
 local gui = require("scripts.gui")
 local pointers = require("scripts.pointers")
+local atlas = require("scripts.atlas")
 
 -- recv_udp/send_udp raise when the game was not started with --enable-lua-udp
 -- (e.g. under FactorioTest). Probe once per load and stay quiet afterwards.
@@ -48,6 +49,12 @@ end)
 
 script.on_nth_tick(60, function()
   gui.tick()
+end)
+
+-- the atlas dump, a few chunks per tick (scripts/atlas.lua)
+script.on_event(defines.events.on_tick, function()
+  if not atlas.running() then return end
+  for _, m in ipairs(atlas.step()) do send(m) end
 end)
 
 -- what changes the window when it arrives from the bridge
@@ -136,6 +143,14 @@ remote.add_interface("kc", {
     return p
   end,
   pointers = function(index) return pointers.list(game.get_player(index or 1)) end,
+  -- the atlas structure dump in one call, into script-output/<file> (scripts/atlas-fixture.sh)
+  atlas_dump = function(surface, budget, file)
+    local text, data = atlas.dump_now(surface, budget)
+    if not text then return { ok = false, error = data } end
+    helpers.write_file(file or "atlas/dump.txt", text)
+    data.ok, data.bytes = true, #text
+    return data
+  end,
   -- a bridge message delivered locally (status, reply, ...), for UI work without a bridge
   ui_inject = function(msg)
     for _, r in ipairs(protocol.handle(msg)) do send(r) end

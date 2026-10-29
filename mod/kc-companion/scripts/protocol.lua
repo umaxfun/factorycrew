@@ -2,6 +2,7 @@
 -- Pure functions over storage/game so FactorioTest can exercise them without UDP.
 
 local helpers_lib = require("scripts.helpers") -- `kc` in the query environment
+local atlas = require("scripts.atlas")
 
 local M = {}
 
@@ -384,6 +385,11 @@ function M.handle(msg)
     r.type = "result"
     r.id = msg.id
     return { r }
+  elseif t == "atlas" then
+    -- runs over the next ticks (control.lua steps it); parts and the result go out from there
+    local err = atlas.start(msg)
+    if err then return { { type = "result", id = msg.id, ok = false, error = "atlas_" .. err:gsub(" ", "_") } } end
+    return {}
   elseif t == "mark" then
     return { result(msg, M.mark(msg.chat, msg.marks)) }
   elseif t == "unmark" then
