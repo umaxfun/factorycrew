@@ -130,7 +130,14 @@ check() {
   if echo "$h" | grep -q '"game_online": true'; then ok "bridge :$FC_UI_HTTP_PORT, game online"
   else bad "bridge :$FC_UI_HTTP_PORT: ${h:-not answering}"; fi
   pid="$(holder tcp "$FC_UI_HTTP_PORT")"
-  if [ -n "$pid" ] && ps -o command= -p "$pid" | grep -qF "$ROOT/bridge/factorio_bridge.py"; then ok "bridge runs this checkout's code"
+  if [ -n "$pid" ] && ps -o command= -p "$pid" | grep -qF "$ROOT/bridge/factorio_bridge.py"; then
+    # the path alone is not enough: a bridge started before an edit keeps running the old code
+    # (on 2026-10-29 it silently dropped the new library messages). ui_dev.py records what it started.
+    if [ ! -s "$FC_UI_HOME/bridge.sha" ]; then
+      bad "no record of the code the bridge started with (started before this check existed): scripts/stand.sh ui restart"
+    elif [ "$(cat "$FC_UI_HOME/bridge.sha")" = "$(python3 "$ROOT/tools/ui_dev.py" digest bridge)" ]; then
+      ok "bridge runs this checkout's code"
+    else bad "the bridge runs older code than this checkout's (started before a change): scripts/stand.sh ui restart"; fi
   else bad "bridge on :$FC_UI_HTTP_PORT is not this checkout's (pid ${pid:-none})"; fi
   t1="$(python3 "$ROOT/tools/ui_dev.py" lua 'return game.tick' 2>/dev/null || true)"; sleep 1.2
   t2="$(python3 "$ROOT/tools/ui_dev.py" lua 'return game.tick' 2>/dev/null || true)"

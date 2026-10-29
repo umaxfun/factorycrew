@@ -41,7 +41,7 @@ The scripts enforce part of this. In a linked worktree, `kc.sh` and `tools/ui_de
 `./scripts/stand.sh check` verifies the chain end to end and only for this stand:
 
 - your bridge answers and its game is online;
-- the bridge process runs this checkout's `bridge/factorio_bridge.py`;
+- the bridge process runs this checkout's `bridge/factorio_bridge.py`, and the version of it that is in the checkout now (a hash `tools/ui_dev.py` writes when it starts the bridge), so an edit without `ui restart` shows up: a running bridge keeps the code it started with;
 - a Lua query makes the round trip and the tick advances, so the game is not paused or sitting in a menu;
 - the running game loaded this checkout's mod (a hash `tools/ui_dev.py` writes when it starts the game, against the checkout now), so an edit without `ui restart` shows up;
 - the gateway on your port has your `KIROCREW_HOME`;
@@ -55,7 +55,7 @@ Run it after `up`, after every restart, and before reporting a result from the s
 ```bash
 ./scripts/stand.sh status
 ./scripts/stand.sh ui shot window open           # UI loop against your game (tools/ui_dev.py steps)
-./scripts/stand.sh ui restart                    # after a mod change (data.lua / control.lua)
+./scripts/stand.sh ui restart                    # after a mod or bridge change: restarts the game and the bridge
 ./scripts/stand.sh ui lua 'return game.tick'
 ./scripts/stand.sh kc install                    # after an agent prompt or dispatcher change
 ./scripts/stand.sh kc token                      # your gateway's dashboard with a login token

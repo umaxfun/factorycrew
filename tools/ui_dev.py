@@ -10,6 +10,7 @@ clashes with the game the player runs under `gamer` (34199/34200/34198).
   tools/ui_dev.py restart               # after a mod change (data.lua / control.lua)
   tools/ui_dev.py shot NAME [STEP ...]  # run steps, then a screenshot with the GUI
   tools/ui_dev.py lua 'return ...'      # one query
+  tools/ui_dev.py digest [bridge]       # hash of the mod (or the bridge) in this checkout
 
 Steps (each one argument, verb:args):
   open | close | click:<element> | type:<element>=<text> | reply:<tab>=<text>
@@ -107,6 +108,12 @@ def mod_digest(src=None):
     return h.hexdigest()
 
 
+def bridge_digest():
+    """Hash of the bridge code; a running bridge keeps the code it started with."""
+    import hashlib
+    return hashlib.sha256((ROOT / "bridge" / "factorio_bridge.py").read_bytes()).hexdigest()
+
+
 def deploy():
     mods = DATA / "mods"
     mods.mkdir(parents=True, exist_ok=True)
@@ -145,6 +152,8 @@ def start():
     if not alive("bridge") and not os.environ.get("FC_UI_EXTERNAL_BRIDGE"):
         spawn("bridge", ["/usr/bin/python3", str(ROOT / "bridge" / "factorio_bridge.py"),
                          "--udp-port", str(UDP_BRIDGE), "--game-port", str(UDP_GAME), "--http-port", str(HTTP)])
+        # what this bridge process runs; scripts/stand.sh check compares it with the checkout
+        (DEV / "bridge.sha").write_text(bridge_digest())
         time.sleep(1)
     if not alive("game"):
         # The Steam build relaunches itself through Steam unless it is told its app id.
@@ -256,7 +265,7 @@ def main(argv):
     elif cmd == "lua":
         print(json.dumps(lua(argv[1]), ensure_ascii=False))
     elif cmd == "digest":
-        print(mod_digest())
+        print(bridge_digest() if argv[1:2] == ["bridge"] else mod_digest())
     elif cmd == "steps":
         for s in argv[1:]:
             run_step(s)
