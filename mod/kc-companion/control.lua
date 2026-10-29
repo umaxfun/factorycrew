@@ -78,6 +78,7 @@ script.on_event(defines.events.on_player_selected_area, function(e)
   if e.item ~= pointers.TOOL then return end
   local player = game.get_player(e.player_index)
   local p, why = pointers.add(player, e.surface, e.area, e.entities)
+  pointers.drop_tool(player) -- one pointer per pick-up: the tool leaves the hand
   if p then
     gui.on_pointer(player, p)
   elseif why == "limit" then
@@ -90,7 +91,12 @@ script.on_event(defines.events.on_player_alt_selected_area, function(e)
   if e.item ~= pointers.TOOL then return end
   local player = game.get_player(e.player_index)
   pointers.clear(player)
+  pointers.drop_tool(player)
   gui.refresh(player)
+end)
+
+script.on_event("kc-clear-cursor", function(e)
+  pointers.drop_tool(game.get_player(e.player_index))
 end)
 
 script.on_event(defines.events.on_gui_click, function(e)

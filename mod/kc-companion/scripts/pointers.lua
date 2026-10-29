@@ -229,6 +229,13 @@ function M.give_tool(player)
   return player.cursor_stack.set_stack{ name = M.TOOL }
 end
 
+--- Take the tool out of the hand, if it is there.
+function M.drop_tool(player)
+  if not (player and player.valid) then return end
+  local c = player.cursor_stack
+  if c and c.valid_for_read and c.name == M.TOOL then player.clear_cursor() end
+end
+
 --- Short label for the window: "@1 assembling-machine-2 · electronic-circuit", "@2 box 30×20 · 45".
 function M.label(p)
   if p.kind == "box" then

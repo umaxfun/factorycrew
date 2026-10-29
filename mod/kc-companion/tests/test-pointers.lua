@@ -138,6 +138,9 @@ describe("pointers", function()
     if not player.character then return end -- headless: no hand to hold it
     assert(pointers.give_tool(player))
     assert(player.cursor_stack.valid_for_read and player.cursor_stack.name == "kc-pointer")
-    player.clear_cursor()
+    pointers.drop_tool(player) -- what a selection and Q do
+    assert(not player.cursor_stack.valid_for_read, "the tool stayed in the hand")
+    local inv = player.get_main_inventory() -- nil in the headless run
+    assert(not inv or inv.get_item_count("kc-pointer") == 0, "the tool went into the inventory")
   end)
 end)

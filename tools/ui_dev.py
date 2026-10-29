@@ -29,12 +29,15 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEV = Path.home() / ".factorycrew-dev"
+# FC_UI_HOME / FC_UI_HTTP_PORT: a second stand beside the default one (e.g. one per worktree),
+# with its own data dir and ports http, http+1 (bridge UDP), http+2 (game UDP)
+DEV = Path(os.environ.get("FC_UI_HOME") or Path.home() / ".factorycrew-dev")
 DATA = DEV / "factorio"
 APP = Path(os.environ.get("FACTORIO_APP", "/Users/Shared/factorio.app"))
 BIN = APP / "Contents" / "MacOS" / "factorio"
 SAVE = DATA / "saves" / "ui-test.zip"
-UDP_BRIDGE, UDP_GAME, HTTP = 34299, 34300, 34298
+HTTP = int(os.environ.get("FC_UI_HTTP_PORT") or 34298)
+UDP_BRIDGE, UDP_GAME = HTTP + 1, HTTP + 2
 BRIDGE = f"http://127.0.0.1:{HTTP}"
 SHOTS = DATA / "script-output" / "kc"
 

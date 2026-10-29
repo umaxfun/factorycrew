@@ -10,7 +10,7 @@ data:extend({
     -- pointers (scripts/pointers.lua): click a thing or drag a box to show Kira a place
     type = "selection-tool",
     name = "kc-pointer",
-    icon = "__kc-companion__/graphics/kira.png",
+    icon = "__kc-companion__/graphics/pointer.png",
     icon_size = 64,
     flags = { "only-in-cursor", "not-stackable", "spawnable" },
     hidden = true,
@@ -35,9 +35,9 @@ data:extend({
     action = "spawn-item",
     item_to_spawn = "kc-pointer",
     associated_control_input = "kc-pointer",
-    icon = "__kc-companion__/graphics/kira.png",
+    icon = "__kc-companion__/graphics/pointer.png",
     icon_size = 64,
-    small_icon = "__kc-companion__/graphics/kira.png",
+    small_icon = "__kc-companion__/graphics/pointer.png",
     small_icon_size = 64,
     order = "z[kc-pointer]",
   },
@@ -49,6 +49,15 @@ data:extend({
     item_to_spawn = "kc-pointer",
     consuming = "game-only",
     order = "b",
+  },
+  {
+    -- Q (whatever it is bound to): the game's own clear-cursor, seen by the mod too
+    type = "custom-input",
+    name = "kc-clear-cursor",
+    key_sequence = "",
+    linked_game_control = "clear-cursor",
+    consuming = "none",
+    order = "c",
   },
   {
     -- Kira's face (tools/draw_kira.py): top-bar button, window title, her lines in the feed

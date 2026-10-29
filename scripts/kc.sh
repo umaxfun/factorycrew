@@ -33,7 +33,9 @@ up() { curl -fsS -o /dev/null --max-time 2 "$URL/api/health" 2>/dev/null; }
 install_files() {
   mkdir -p "$KIRO_HOME/agents" "$KIROCREW_HOME/crons"
   # agent template with absolute paths to this checkout
-  sed "s#__ROOT__#$ROOT#g" "$ROOT/agent/factorio-companion.json" > "$KIRO_HOME/agents/factorio-companion.json"
+  # FC_BRIDGE_HTTP: the bridge's HTTP port for this instance's MCP (a stand per worktree, scripts/stand.sh)
+  sed -e "s#__ROOT__#$ROOT#g" -e "s#127.0.0.1:34198#127.0.0.1:${FC_BRIDGE_HTTP:-34198}#" \
+    "$ROOT/agent/factorio-companion.json" > "$KIRO_HOME/agents/factorio-companion.json"
   echo "installed agent -> $KIRO_HOME/agents/factorio-companion.json"
   # Copy only on change: a running wake exits when this file's mtime moves (it compiled the
   # old source), so an identical copy would restart it for nothing.
