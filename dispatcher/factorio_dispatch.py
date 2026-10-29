@@ -283,6 +283,17 @@ def trace_lines(row):
     return []
 
 
+def older_than(row, since):
+    """True when the row's `ts` is before `since` (epoch seconds); rows without one are kept."""
+    if since is None or not isinstance(row.get("ts"), str):
+        return False
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(row["ts"].replace("Z", "+00:00")).timestamp() < since
+    except ValueError:
+        return False
+
+
 def turn_ended(row):
     """The gateway writes turn_stats on the last assistant message of a turn."""
     return row.get("role") == "assistant" and bool((row.get("meta") or {}).get("turn_stats"))
@@ -293,11 +304,15 @@ class Tracer:
         self.cfg = cfg
         self.watch = {}  # slot -> {"chat", "run_id", "pos", "seen"}
 
-    def start(self, slot, ask):
+    def start(self, slot, ask, since=None):
+        """Follow the turn `ask` started. `since`: wall-clock time before the question was sent.
+        The byte offset alone is not enough: the gateway may rewrite the file when the question
+        arrives, and reading from the old offset then met the PREVIOUS turn's last message (with
+        turn_stats): it was forwarded as this turn's answer, in English, a second after the question."""
         p = transcript_path(slot)
         pos = p.stat().st_size if p.exists() else 0  # only what this turn adds
-        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "pos": pos, "seen": time.monotonic(),
-                            "last_text": ""}
+        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
+                            "seen": time.monotonic(), "last_text": "", "since": since}
 
     def forward(self, w):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
@@ -309,7 +324,8 @@ class Tracer:
             # fallback: the bridge drops it if the turn did answer. The transcript may show the
             # turn's end before its factorio_reply row, and then this copy (in the dashboard's
             # language, with the dashboard's [OPTIONS]) came on top of the real answer.
-            r = bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text, "fallback": True}, timeout=10)
+            r = bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text, "fallback": True,
+                                                    "ask_id": w.get("ask_id")}, timeout=10)
             if r.get("skipped"):
                 return
             print(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
@@ -334,6 +350,8 @@ class Tracer:
                     row = json.loads(raw)
                 except ValueError:
                     continue
+                if older_than(row, w.get("since")):
+                    continue  # an earlier turn's row, met again after the file was rewritten
                 if turn_ended(row):
                     # the turn's last message carries turn_stats; no factorio_reply came before it
                     content = row.get("content")
@@ -448,6 +466,7 @@ def library(cfg, ask):
 def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
+        since = time.time() - 1  # rows of this turn are written after this; a second of clock slack
         try:
             ctx.send_to_session(slot, render(ask))
         except Exception as exc:  # noqa: BLE001
@@ -463,7 +482,7 @@ def handle(ctx, cfg, st, ask, tracer=None):
             slot = open_chat(ctx, cfg, st, ask)
             ctx.send_to_session(slot, render(ask))
         if tracer is not None:
-            tracer.start(slot, ask)
+            tracer.start(slot, ask, since)
     except Exception as exc:  # noqa: BLE001 - every failure is retried, then reported
         n = st["attempts"].get(ask["id"], 0) + 1
         st["attempts"][ask["id"]] = n

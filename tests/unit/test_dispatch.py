@@ -77,7 +77,7 @@ def test_forwards_the_last_text_when_the_turn_skipped_factorio_reply(tmp_path, m
         {"role": "user", "content": "[Factorio ...]\nкак дела?"},
         {"role": "assistant", "content": "Всё отлично! Готова помочь.", "meta": {"turn_stats": {"credits": 0.16}}},
     ])
-    assert ("/reply", {"chat": "General", "text": "Всё отлично! Готова помочь.", "fallback": True}) in posted
+    assert ("/reply", {"chat": "General", "text": "Всё отлично! Готова помочь.", "fallback": True, "ask_id": None}) in posted
     assert t.watch == {}
 
 
@@ -90,12 +90,35 @@ def test_does_not_forward_when_factorio_reply_was_called(tmp_path, monkeypatch):
     assert [p for p, _ in posted if p == "/reply"] == []
 
 
+def test_an_earlier_turn_met_again_after_a_rewrite_is_not_forwarded(tmp_path, monkeypatch):
+    # The gateway rewrote the transcript when the question came, the old offset fell inside the
+    # previous turn, and its English chat text went to the game as this turn's answer.
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    (tmp_path / "sessions").mkdir()
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {})
+    path = d.transcript_path("s1")
+    t = d.Tracer({})
+    t.start("s1", {"chat": "панелька", "run_id": "r", "id": "ask-2"}, since=1_795_000_000)  # 2026-11-18: between the two rows
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"_type": "metadata", "title": "панелька"}) + "\n")
+        f.write(json.dumps({"role": "assistant", "content": "I rewrote the panel.", "ts": "2026-10-29T21:12:09+00:00",
+                            "meta": {"turn_stats": {"credits": 1}}}) + "\n")
+    t.poll()
+    assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "assistant", "content": "Готово.", "ts": "2027-01-15T08:00:00+00:00",
+                            "meta": {"turn_stats": {"credits": 1}}}) + "\n")
+    t.poll()
+    assert ("/reply", {"chat": "панелька", "text": "Готово.", "fallback": True, "ask_id": "ask-2"}) in posted
+
+
 def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypatch):
     posted, _ = _turn(tmp_path, monkeypatch, [
         {"role": "assistant", "content": "The furnace needs coal."},
         {"role": "assistant", "content": "", "meta": {"turn_stats": {"credits": 0.2}}},
     ])
-    assert ("/reply", {"chat": "General", "text": "The furnace needs coal.", "fallback": True}) in posted
+    assert ("/reply", {"chat": "General", "text": "The furnace needs coal.", "fallback": True, "ask_id": None}) in posted
 
 
 def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):

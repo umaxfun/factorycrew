@@ -191,11 +191,15 @@ def test_dispatchers_fallback_copy_is_dropped_after_a_real_answer(stack, mcp):
     assert mcp.tool("factorio_reply", chat="Dup", text="Ответ")["delivered"]
     r = http("POST", "/reply", {"chat": "Dup", "text": "Answer (dashboard copy)", "fallback": True})
     assert r["skipped"] == "already_answered" and not r["delivered"]
-    # the next question has no answer yet: its fallback is delivered
+    first = ask_id
+    # the next question has no answer yet: its fallback is delivered, but a late copy of the
+    # FIRST turn (what the tab got after a transcript rewrite) is not
     ask_id = stack.ask("Dup", "second question")
     assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
     http("POST", "/asks/done", {"ids": [ask_id]})
-    assert http("POST", "/reply", {"chat": "Dup", "text": "Всё отлично", "fallback": True})["delivered"]
+    r = http("POST", "/reply", {"chat": "Dup", "text": "I rewrote the panel.", "fallback": True, "ask_id": first})
+    assert r["skipped"] == "stale" and not r["delivered"]
+    assert http("POST", "/reply", {"chat": "Dup", "text": "Всё отлично", "fallback": True, "ask_id": ask_id})["delivered"]
     t = wait_until(lambda: (lambda t: t if t["feed"][-1].get("text") == "Всё отлично" else None)(stack.tab("Dup")),
                    what="fallback answer")
     assert [e["text"] for e in t["feed"] if e["from"] == "kira"] == ["Ответ", "Всё отлично"]
