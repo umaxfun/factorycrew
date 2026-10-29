@@ -29,8 +29,10 @@
 
 local M = {}
 
-M.BUDGET = 300      -- entities per tick; measured ~10 ms per 1000 under x86 emulation, less natively
-M.MAX_CHUNKS = 200  -- chunks looked at per tick, so empty map costs little per tick too
+M.BUDGET = 200      -- entities per tick
+M.MAX_CHUNKS = 4    -- chunks looked at per tick. Looking is the cost, empty or not: on the real client with a
+                    -- 7888-chunk base, 24 per tick gave 34-53 UPS, 2 per tick a flat 60, while the entity
+                    -- budget (10..200) and the send size (1000..4000) barely mattered
 M.SEND_BYTES = 4000  -- text sent per tick (~240 KB/s at 60 UPS); entities wait while more is queued.
                     -- 2.2 MB in 269 ticks (~500 KB/s) once left the real client answering nothing
 
@@ -230,7 +232,8 @@ function M.start(msg)
   if not surface then return "no surface" end
   job = { id = msg.id, surface = surface, budget = tonumber(msg.budget) or M.BUDGET, chunks = nil, next = 1,
           names = {}, nid = 0, recipes = {}, out = {}, seq = 0, count = 0, ticks = 0,
-          queue = {}, qhead = 1, qtail = 0, queued = 0, send_bytes = msg.send_bytes }
+          queue = {}, qhead = 1, qtail = 0, queued = 0, send_bytes = tonumber(msg.send_bytes),
+          max_chunks = tonumber(msg.max_chunks) }
   job.out[1] = concat({ "H", 1, clean(surface.name), game.tick, job.budget }, "|")
   return nil
 end
@@ -267,7 +270,7 @@ step = function()
     local done, looked = 0, 0
     local s = j.surface
     local backlog = j.queued > 4 * (j.send_bytes or M.SEND_BYTES)  -- sending is behind: let it catch up
-    while not backlog and j.next <= #j.chunks and done < j.budget and looked < M.MAX_CHUNKS do
+    while not backlog and j.next <= #j.chunks and done < j.budget and looked < (j.max_chunks or M.MAX_CHUNKS) do
       local c = j.chunks[j.next]
       j.next = j.next + 1
       looked = looked + 1

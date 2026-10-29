@@ -411,7 +411,8 @@ class Bridge(asyncio.DatagramProtocol):
             # the structure dump of a surface, a few chunks per tick in the game (docs/atlas.md)
             if body.get("_agent"):
                 self.activity(None, "reading the base")
-            msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget")}
+            msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget"),
+                   "send_bytes": body.get("send_bytes"), "max_chunks": body.get("max_chunks")}
             return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
             # Only the agent's own calls (the MCP server flags them) are steps of a turn: tests,

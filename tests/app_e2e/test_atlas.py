@@ -75,3 +75,20 @@ def test_a_box_on_one_furnace_is_about_the_whole_block(kira):
     assert "factorio_atlas" in log, "Kira did not use factorio_atlas"
     assert "32" in text, "the reply does not name the whole block"
     assert re.search(r"train|station|stop", text, re.I), "the reply does not say rutile comes by train"
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("FC_ATLAS_UPS_SWEEP"), reason="diagnostic: FC_ATLAS_UPS_SWEEP=1")
+@pytest.mark.parametrize("budget,send_bytes,max_chunks", [
+    (200, 4000, 24), (10, 4000, 24), (200, 1000, 24), (200, 4000, 2), (10, 500, 2)])
+def test_ups_sweep(kira, budget, send_bytes, max_chunks):
+    """Which part of a dump tick costs the frames: entities, sending, or looking at chunks."""
+    res = {}
+    body = {"timeout": 600, "budget": budget, "send_bytes": send_bytes, "max_chunks": max_chunks}
+    th = threading.Thread(target=lambda: res.update(r=http("POST", "/atlas", body, timeout=620)))
+    th.start()
+    samples = []
+    while th.is_alive() and len(samples) < 6:
+        samples.append(ups(2))
+    th.join()
+    print(f"\nbudget {budget} send {send_bytes} chunks {max_chunks}: UPS {[round(x) for x in samples]}, "
+          f"{res['r'].get('data')}")
