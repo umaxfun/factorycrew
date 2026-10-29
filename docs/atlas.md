@@ -46,7 +46,35 @@ One MCP tool, `factorio_atlas`, with flat parameters (weak models handle it bett
 | `min_machines`, `limit` | map, zone | size cut and row cap |
 | `refresh` | all | rebuild from a fresh dump |
 
-Data path: the full dump of a large base is several MB of JSON, and a query result is capped at 64 KB. So the mod writes the dump into the game's `script-output`, the MCP reads the file, builds the atlas in Python and caches it.
+Data path: the full dump of a large base is several MB, and a query result is capped at 64 KB. So the mod writes the dump into the game's `script-output`, the MCP reads the file, builds the atlas in Python and caches it.
+
+## Reading the base without stalling the game
+
+Measured inside the game on the reported save (123 939 player entities), headless 2.0.77 under x86 emulation on Apple Silicon, so a native client should be faster; how much is not measured yet. Scripts: `tools/atlas_proto/bench.lua`, `bench2.lua`.
+
+| phase | time |
+|---|---|
+| `find_entities_filtered{force="player"}`, whole surface | 294 ms |
+| name, position, direction of every entity | 376 ms |
+| recipe and status of all 6137 machines | 24 ms |
+| contents of all 18 661 belt pieces | 82 ms |
+| fluid segments of every machine's connections | 40 ms |
+| `helpers.table_to_json` of the static records (4.5 MB) | **7 964 ms** |
+| the same records as hand-built text (name id, x·2, y·2, direction; `table.concat`), 1.7 MB | 579 ms |
+| `helpers.write_file` | 13–25 ms |
+| one 32×32 chunk (408 entities) | 15 ms |
+| status of every machine (live state of the whole base) | 44 ms |
+
+What follows from it:
+- `table_to_json` is the only slow part. The dump is hand-built text: names as numeric ids with a name table, coordinates as integers (doubled, so half-tiles stay exact), one line per entity. That is 14 times faster for the same data.
+- The dump is spread over ticks: about 40 ms per 10 000 entities here, so a budget of 2–3 ms per tick reads the whole base in the background in 2–4 s of game time and never freezes it. UPS drops a little meanwhile; how much on this base in the live client is not measured yet.
+- In multiplayer `helpers.write_file` writes on every client unless `for_player` is given: always pass the asking player's index.
+
+Two kinds of data, kept apart:
+1. **Structure**: what stands where, recipes, directions, pickup/drop points, stop names, fluid segments, logistic network ids. It changes only when the player builds. It is cached and updated by chunk: the mod marks a chunk dirty on build (player, robot, `script_raised_built`), removal (mined by player or robot, died, `script_raised_destroy`), rotation, flip, settings paste, and closing a machine's GUI (the way a recipe usually changes). The next atlas call re-reads only dirty chunks. A full rebuild runs on save load and on mod changes (`on_configuration_changed`). Whether these events catch every way a recipe or filter can change is not verified, so a rare full background rebuild and `refresh=true` stay as a safety net.
+2. **State**: statuses, belt and chest contents, train positions and cargo, network stock. It changes every tick, is never cached, and is read live for what the question touches: milliseconds for one zone, 44 ms for every machine's status.
+
+The Python side builds the whole atlas from scratch in about 6 s, so after a build it rebuilds only the zones that touch dirty chunks; otherwise the first question after building waits.
 
 ## What the prototype measured
 
@@ -81,11 +109,13 @@ Each task extends the chain that already works end to end; none is done until an
 
 ### 1. One zone, end to end
 
-Scope: the mod writes the dump (`kc.atlas_dump`, entities with recipe/status/speed/pickup/drop/belt contents/stop names, stops, trains with schedules, recipes in use, drill targets, fluid segments, logistic network ids) into `script-output`; `mcp/kc/atlas.py` builds blocks, zones and edges; `factorio_atlas(level="zone", at=...)` and `level="block"` answer; a short section in `agent/factorio-companion.md` says when to use it ("a pointer or a question about a factory, not one machine: start from `zone` at the pointer").
+Scope: the mod writes the structure dump (`kc.atlas_dump`: entities with recipe/speed/pickup/drop/stop names, stops, train schedules, recipes in use, drill targets, fluid segments, logistic network ids) into `script-output` as hand-built text (see "Reading the base"), spread over ticks with a per-tick time budget, written for the asking player only. State (statuses, belt contents, trains, stock) is not in the dump: `factorio_atlas` reads it live for the entries it returns. `mcp/kc/atlas.py` parses the dump and builds blocks, zones and edges; `factorio_atlas(level="zone", at=...)` and `level="block"` answer; a short section in `agent/factorio-companion.md` says when to use it ("a pointer or a question about a factory, not one machine: start from `zone` at the pointer"). This task does a full dump on every refresh; dirty chunks are task 6.
 
 Done when:
-- `scripts/atlas-fixture.sh dump` loads `FC_ATLAS_SAVE` in headless 2.0.77 with `FC_ATLAS_MODS` and writes the dump; its entity count equals `count_entities_filtered{force="player"}` minus characters.
-- The time the game is frozen by `kc.atlas_dump` on the fixture is measured and written into this file. If it is over 1 s, the dump is spread over ticks before task 1 closes.
+- `scripts/atlas-fixture.sh dump` loads `FC_ATLAS_SAVE` in headless 2.0.77 with `FC_ATLAS_MODS` and writes the dump; its entity count equals `count_entities_filtered{force="player"}` minus characters, and Python parses it back to the same names, positions and directions as a reference read.
+- No single tick of the dump takes more than its budget (3 ms by default), checked by the mod's own profiler on the fixture; the whole dump finishes and reports how many ticks it took.
+- In the live client on the fixture save, UPS before and during a full dump are measured and written into this file. If it drops below 50 the budget is lowered until it does not.
+- `table_to_json` is not used for the dump (a test greps the dump path).
 - Unit tests on the fixture dump: `zone at (-357.5, -122.5)` is one block of 32 machines on `nullius-titanium-tetrachloride`; its inputs are graphite <- the graphite unloading stop, rutile <- the rutile unloading stop, chlorine <- a zone by pipe; nothing in `missing`. The block found from a box over one furnace and from a box over the opposite corner is the same 32.
 - Unit tests on prototype pitfalls: fluids never on belt edges, items never on pipe edges; a shared belt does not join blocks whose products are not each other's ingredients; underground reach comes from the prototype.
 - e2e on the real client with the fixture loaded: a box pointer over one furnace, "why doesn't @1 work". Kira calls `factorio_atlas`; the reply names the whole block (32 machines) and says which input is short and that it comes by train.
@@ -137,10 +167,13 @@ Depends on: 2.
 
 ### 6. Freshness
 
-Scope: cache the built atlas; rebuild on `refresh=true` or when the dump is older than a set age; later, only the chunks that changed.
+Scope: the structure stays cached between calls and is updated by chunk. The mod marks chunks dirty on the events listed in "Reading the base" and keeps the set in `storage`; an atlas call first re-reads the dirty chunks (spread over ticks like the full dump) and the MCP rebuilds only the zones that touch them. A full rebuild runs on save load, on `on_configuration_changed`, on `refresh=true`, and as a rare background safety net. State is still read live on every call.
 
 Done when:
-- A second `factorio_atlas` call on the same dump answers in under 200 ms.
-- After ghosts are built in a test, `refresh=true` shows the new block, and a call without it says how old the data is.
+- A second `factorio_atlas` call with no dirty chunks answers in under 200 ms, state read included, on the fixture.
+- In a test, building a machine (player, robot, `script_raised_built`), mining it, rotating an inserter, pasting settings, and changing a recipe through the machine's GUI each mark exactly the chunks touched; the next call shows the change and re-reads only those chunks (counted).
+- A change made with no event (a script setting a recipe directly) is caught by `refresh=true`, and every answer says how old its structure data is.
+- After one dirty chunk, the Python rebuild takes under 0.5 s on the fixture (against about 6 s from scratch).
+- The dirty set survives save and load; mod changes trigger a full rebuild.
 
 Depends on: 1.
