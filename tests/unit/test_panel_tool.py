@@ -110,6 +110,14 @@ def test_snapshot_markdown_is_readable():
     assert 'restore the panel Science made' in md
 
 
+def test_actions_reach_the_game_and_the_saved_artifact():
+    args = {"name": "logi", "lua": "return {}", "actions": {"ping": "player.print(args.item)"}}
+    lua = m.panel_lua(args)
+    assert '"actions": {"ping": "player.print(args.item)"}' in lua
+    md = m.panel_markdown(args, {"view": []})
+    assert '"actions": {' in md and "player.print(args.item)" in md
+
+
 def test_link_cells_read_as_their_text_or_position():
     assert m._plain({"text": 9759, "gps": [51, 33], "surface": "nauvis"}) == "9759"
     assert m._plain({"gps": {"x": -20, "y": 14}}) == "-20, 14"

@@ -189,30 +189,47 @@ local function gps_of(v)
   return { x = x, y = y, surface = (s and s ~= "") and tostring(s) or nil, zoom = zoom }
 end
 
--- A link cell: a flat button; a click opens the remote view at the position (on_click).
-local function link(parent, i, v, pos)
+local drawing -- the panel being drawn: a button cell names it in its tags, for its action
+
+-- A button cell: a link (`gps`: the click opens the remote view there) and/or an action (`action`:
+-- the click runs that handler of the panel's `actions`, Kira's Lua). on_click does the work.
+local function button(parent, i, v, pos, action)
   -- the ordinary button with its own dark text: `color` is ignored here, colored text on it is unreadable
-  local b, new = slot(parent, i, "gps", { type = "button" })
+  local b, new = slot(parent, i, "btn", { type = "button" })
   if new then
     local s = b.style
     s.height, s.minimal_width, s.top_padding, s.bottom_padding, s.left_padding, s.right_padding = 24, 0, 0, 0, 6, 6
   end
   local text = v.text
   if type(text) == "number" then text = M.fmt(text) end
-  if text == nil then text = string.format("%d, %d", math.floor(pos.x), math.floor(pos.y)) end
+  if text == nil then
+    text = pos and string.format("%d, %d", math.floor(pos.x), math.floor(pos.y)) or action
+  end
   local icon = v.item and ("[item=" .. v.item .. "] ") or (v.fluid and ("[fluid=" .. v.fluid .. "] ")) or ""
   b.caption = icon .. tostring(text)
-  b.tooltip = string.format("Show on the map (%d, %d%s)", math.floor(pos.x), math.floor(pos.y),
-    pos.surface and (", " .. pos.surface) or "")
+  if v.tooltip then
+    b.tooltip = tostring(v.tooltip)
+  elseif pos then
+    b.tooltip = string.format("Show on the map (%d, %d%s)", math.floor(pos.x), math.floor(pos.y),
+      pos.surface and (", " .. pos.surface) or "")
+  else
+    b.tooltip = ""
+  end
   local tags = b.tags
-  tags.kc_gps = pos
+  tags.kc_gps, tags.kc_act, tags.kc_act_panel, tags.kc_args = pos or nil, action, action and drawing or nil, nil
   b.tags = tags
+  if action and v.args ~= nil then
+    -- args go through tags; something that cannot (a LuaEntity) is reported, not fatal
+    local ok = pcall(function() tags.kc_args = v.args b.tags = tags end)
+    if not ok then b.tooltip = "args must be plain values (numbers, strings, tables), not game objects" end
+  end
 end
 
 local function cell(parent, i, v)
   local pos = type(v) == "table" and gps_of(v)
-  if pos then
-    link(parent, i, v, pos)
+  local action = type(v) == "table" and type(v.action) == "string" and v.action or nil
+  if pos or action then
+    button(parent, i, v, pos or nil, action)
   elseif type(v) == "number" then
     label(parent, i, M.fmt(v))
   elseif type(v) ~= "table" then
@@ -371,6 +388,7 @@ local function draw(player, p, index)
   fold.sprite, fold.tooltip = folded and "utility/expand" or "utility/collapse", folded and "Expand" or "Collapse"
   if folded then return end -- nothing to draw; it is redrawn on expand
   local body = inner.kc_panel_body
+  drawing = p.name
   local i = 1
   if p.error then
     label(body, i, "data failed: " .. p.error, "red")
@@ -433,12 +451,22 @@ function M.set(spec)
       input[tostring(inp.key)] = want
     end
   end
+  local actions = {}
+  if spec.actions ~= nil and type(spec.actions) ~= "table" then
+    return { ok = false, error = "actions must be a table: name -> Lua body" }
+  end
+  for k, src in pairs(spec.actions or {}) do
+    if type(src) ~= "string" then return { ok = false, error = "action " .. tostring(k) .. " must be a Lua body (string)" } end
+    local fn, err = load(src, "=panel:" .. name .. ":" .. tostring(k), "t", {})
+    if not fn then return { ok = false, error = "action " .. tostring(k) .. ": " .. tostring(err) } end
+    actions[tostring(k)] = src
+  end
   local every = math.floor(tonumber(spec.every) or M.DEFAULT_EVERY)
   every = math.max(M.MIN_EVERY, math.min(M.MAX_EVERY, every))
   local p = {
     name = name, title = trim(spec.title) ~= "" and trim(spec.title) or name, lua = spec.lua,
     description = trim(spec.description) ~= "" and trim(spec.description) or nil,
-    every = every, inputs = inputs, input = input, state = (old and old.state) or {},
+    every = every, inputs = inputs, input = input, state = (old and old.state) or {}, actions = actions,
     chat = spec.chat, hidden = {}, collapsed = (old and old.collapsed) or {}, created_tick = game.tick, errors = 0, refreshes = 0,
   }
   storage.kc.seq = (storage.kc.seq or 0) + 1
@@ -483,6 +511,7 @@ function M.list(with_view)
       out[#out + 1] = {
         name = name, title = p.title, description = p.description, every = p.every, input = p.input, inputs = p.inputs,
         error = p.error, paused = p.paused or false, refreshes = p.refreshes, last_tick = p.last_tick,
+        action_error = p.action_error, actions = with_view and p.actions or nil,
         lua = with_view and p.lua or nil, view = with_view and p.view or nil, chat = p.chat,
       }
     end
@@ -557,14 +586,55 @@ function M.go_to(player, pos)
   return true
 end
 
+--- A button's action: the panel's `actions[name]` body, in the panel's environment (its `state`
+--- and `input`) plus `player` (who clicked) and `args` (the cell's). An error is printed to the
+--- player and kept as `action_error` (kc.panels()); it never stops the game. The panel refreshes after.
+function M.run_action(player, name, action, args)
+  local p = store()[name]
+  if not p then return false, "no panel " .. tostring(name) end
+  local src = p.actions and p.actions[action]
+  if not src then return false, "panel " .. name .. " has no action " .. tostring(action) end
+  local c = compile(p)
+  c.actions = c.actions or {}
+  local a = c.actions[action]
+  if not (a and a.src == src) then
+    local fn, err = load(src, "=panel:" .. name .. ":" .. action, "t", c.env)
+    a = { src = src, fn = fn, err = err }
+    c.actions[action] = a
+  end
+  local ok, err
+  if not a.fn then
+    ok, err = false, "compile: " .. tostring(a.err)
+  else
+    local fresh = protocol.query_env()
+    c.env.surface, c.env.player = player.surface, player
+    c.env.input, c.env.state, c.env.args = p.input, p.state, args
+    ok, err = pcall(a.fn)
+    c.env.player, c.env.surface, c.env.args = fresh.player, fresh.surface, nil
+  end
+  if ok then
+    p.action_error = nil
+  else
+    p.action_error = action .. ": " .. tostring(err)
+    player.print("[KC] panel " .. (p.title or name) .. ", button " .. action .. " failed: " .. tostring(err))
+  end
+  M.refresh_data(p)
+  M.draw_all(name)
+  return ok, (not ok) and tostring(err) or nil
+end
+
 function M.on_click(e)
   local el = e.element
   if not (el and el.valid and el.tags) then return false end
-  if el.tags.kc_gps then
-    -- an error in a click handler would stop the game: report it instead
+  if el.tags.kc_gps or el.tags.kc_act then
     local player = game.get_player(e.player_index)
-    local ok, err = pcall(M.go_to, player, el.tags.kc_gps)
-    if not ok then player.print("[KC] could not open the map there: " .. tostring(err)) end
+    local tags = el.tags -- read before the action: the refresh may replace the button
+    if tags.kc_gps then
+      -- an error in a click handler would stop the game: report it instead
+      local ok, err = pcall(M.go_to, player, tags.kc_gps)
+      if not ok then player.print("[KC] could not open the map there: " .. tostring(err)) end
+    end
+    if tags.kc_act then M.run_action(player, tags.kc_act_panel, tags.kc_act, tags.kc_args) end
     return true
   end
   if not el.tags.kc_panel then return false end
@@ -648,6 +718,12 @@ end
 -- in the query environment, beside the other kc helpers: kc.panel{...}, kc.panel_remove(name), kc.panels()
 local kc = require("scripts.helpers")
 kc.panel, kc.panel_remove = M.set, M.remove
+--- For actions: open the map (remote view) at a position; the character stays.
+kc.show_on_map = function(player, position, surface, zoom)
+  local x, y = position.x or position[1], position.y or position[2]
+  if type(surface) == "table" then surface = surface.name end
+  return M.go_to(player, { x = x, y = y, surface = surface, zoom = zoom })
+end
 kc.panels = function() return M.list(false) end
 kc.fmt = M.fmt
 

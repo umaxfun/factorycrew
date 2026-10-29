@@ -153,6 +153,11 @@ TOOLS = [
             "LINK {gps={x,y}, surface?, text?, item?} (a button: a click opens the map at that "
             "position; any cell can be one, e.g. the number itself: {text=9759, gps=chest.position, surface='nauvis'}). "
             "[gps=..] rich text is NOT clickable in a panel (only in chat): use a link cell. "
+            "BUTTONS WITH YOUR CODE: `actions` = {name: Lua body}; a cell {text=, action=name, args?={...}} is a "
+            "button that runs that body on click, in the query environment plus `player` (who clicked), `args` "
+            "(the cell's args; positions as {x=,y=}), `state`, `input`; the panel refreshes after it. With `gps` "
+            "too, the map opens first, then the action runs. `kc.show_on_map(player, position, surface?, zoom?)` "
+            "opens the map. Whatever the player asks a click to do (ping, zoom, mark, open a chest), write it as an action. "
             "`inputs`: drop-downs for the player, e.g. [{key:'period', label:'Period', options:['1m','10m','1h'], default:'10m'}]. "
             "The body runs once now and you get its `view` (or `error`) back: CHECK the numbers against a "
             "query before replying. It runs inside a game tick on every refresh: keep it cheap (filtered "
@@ -182,6 +187,10 @@ TOOLS = [
                         },
                         "required": ["key", "options"],
                     },
+                },
+                "actions": {
+                    "type": "object", "additionalProperties": {"type": "string"},
+                    "description": "click handlers: name -> Lua body, run when the player clicks a cell {text=, action=name, args?}",
                 },
                 "chat": {"type": "string", "description": "the tab that asked"},
                 "remove": {"type": "boolean"},
@@ -390,7 +399,7 @@ def panel_lua(args: dict) -> str:
     if args.get("remove"):
         body = json.dumps({"name": str(args.get("name", ""))}, ensure_ascii=False)
         return f"return kc.panel_remove(helpers.json_to_table({lua_long_string(body)}).name)"
-    spec = {k: args[k] for k in ("name", "title", "description", "lua", "every", "inputs", "chat") if args.get(k) is not None}
+    spec = {k: args[k] for k in ("name", "title", "description", "lua", "every", "inputs", "actions", "chat") if args.get(k) is not None}
     return f"return kc.panel(helpers.json_to_table({lua_long_string(json.dumps(spec, ensure_ascii=False))}))"
 
 
@@ -532,7 +541,7 @@ def panel_markdown(spec: dict, res: dict) -> str:
     inputs = spec.get("inputs") or []
     filters = "; ".join(f"{i.get('label') or i['key']}: {', '.join(i['options'])}" for i in inputs) or "none"
     chosen = ", ".join(f"{k} = {v}" for k, v in (res.get("input") or {}).items() if v) if res.get("input") else ""
-    saved = {k: spec[k] for k in ("name", "title", "description", "lua", "every", "inputs") if spec.get(k) is not None}
+    saved = {k: spec[k] for k in ("name", "title", "description", "lua", "every", "inputs", "actions") if spec.get(k) is not None}
     return "\n".join([
         f"# {spec.get('title') or spec['name']}",
         "",

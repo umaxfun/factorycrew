@@ -191,6 +191,50 @@ describe("panels", function()
     assert(player.physical_position.x == before.x, "the character moved")
   end)
 
+  it("runs Kira's own Lua on a button click: actions with args, state and the clicking player", function()
+    local r = panels.set{ name = "acts", every = 60,
+      actions = {
+        ping = [[ state.pinged = (state.pinged or 0) + 1 state.last = args.item
+                  player.print("[KC] ping " .. args.item) ]],
+        boom = [[ error("nope") ]],
+      },
+      lua = [[ return {{rows = {
+        {{text = "ping " .. (state.pinged or 0), action = "ping", args = {item = "iron-plate", at = {x = 3, y = 4}}}},
+        {{text = "bad", action = "boom"}},
+        {{text = "go+ping", action = "ping", args = {item = "go"}, gps = {5, 6}}},
+      }}} ]] }
+    assert(r.ok, serpent.line(r))
+    -- a body that does not compile is refused at once, with the action's name
+    local bad = panels.set{ name = "acts-bad", lua = "return {'x'}", actions = { x = "if" } }
+    assert(not bad.ok and bad.error:find("action x", 1, true), serpent.line(bad))
+    if not player then return end
+    local function buttons()
+      local out = {}
+      local function walk(el)
+        if el.type == "button" and el.tags.kc_act then out[#out + 1] = el end
+        for _, c in pairs(el.children) do walk(c) end
+      end
+      walk(frame("acts"))
+      return out
+    end
+    local b = buttons()
+    assert(#b == 3 and b[1].caption == "ping 0" and b[1].tags.kc_args.at.y == 4, serpent.line(b[1].tags))
+    panels.on_click({ element = b[1], player_index = player.index })
+    local p = panels.get("acts")
+    assert(p.state.pinged == 1 and p.state.last == "iron-plate", serpent.line(p.state))
+    assert(buttons()[1].caption == "ping 1", "the panel did not refresh after the action")
+    -- an error is reported, kept for Kira, and the game goes on
+    panels.on_click({ element = buttons()[2], player_index = player.index })
+    assert(panels.list()[1].action_error:find("nope", 1, true), serpent.line(panels.list()[1]))
+    -- gps and action together: the map opens, then the action runs
+    panels.on_click({ element = buttons()[3], player_index = player.index })
+    local remote, at = player.controller_type == defines.controllers.remote, player.position
+    if remote then player.exit_remote_view() end
+    assert(remote and at.x == 5 and at.y == 6 and p.state.last == "go" and p.action_error == nil, serpent.line(at))
+    -- kc.show_on_map is there for actions that move the camera themselves
+    assert(type(protocol.query_env().kc.show_on_map) == "function")
+  end)
+
   it("turns a trailing [OPTIONS: a | b] of an answer into buttons that send the choice", function()
     local text, opts = protocol.split_options("Ставить метки?\n\n[OPTIONS: Поставь метки | Не надо |  ]")
     assert(text == "Ставить метки?" and #opts == 2 and opts[1] == "Поставь метки" and opts[2] == "Не надо", serpent.line(opts))
