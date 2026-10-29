@@ -29,8 +29,8 @@
 
 local M = {}
 
-M.BUDGET = 200      -- entities per tick
-M.MAX_CHUNKS = 4    -- chunks looked at per tick. Looking is the cost, empty or not: on the real client with a
+M.BUDGET = 150      -- entities per tick, also inside one busy chunk
+M.MAX_CHUNKS = 3    -- chunks looked at per tick. Looking is the cost, empty or not: on the real client with a
                     -- 7888-chunk base, 24 per tick gave 34-53 UPS, 2 per tick a flat 60, while the entity
                     -- budget (10..200) and the send size (1000..4000) barely mattered
 M.SEND_BYTES = 4000  -- text sent per tick (~240 KB/s at 60 UPS); entities wait while more is queued.
@@ -270,32 +270,44 @@ step = function()
     local done, looked = 0, 0
     local s = j.surface
     local backlog = j.queued > 4 * (j.send_bytes or M.SEND_BYTES)  -- sending is behind: let it catch up
-    while not backlog and j.next <= #j.chunks and done < j.budget and looked < (j.max_chunks or M.MAX_CHUNKS) do
-      local c = j.chunks[j.next]
-      j.next = j.next + 1
-      looked = looked + 1
-      local x0, y0 = c[1] * 32, c[2] * 32
-      local area = { { x0, y0 }, { x0 + 32, y0 + 32 } }
-      local pf = M.prof
-      if pf then pf.find.restart() end
-      local found = s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0
-        and s.find_entities_filtered{ area = area, force = "player" } or nil
-      if pf then pf.find.stop() end
-      if found then
+    local pf = M.prof
+    while not backlog and done < j.budget do
+      if not j.cur then -- the next chunk with entities of ours
+        if j.next > #j.chunks or looked >= (j.max_chunks or M.MAX_CHUNKS) then break end
+        local c = j.chunks[j.next]
+        j.next = j.next + 1
+        looked = looked + 1
+        local x0, y0 = c[1] * 32, c[2] * 32
+        local area = { { x0, y0 }, { x0 + 32, y0 + 32 } }
+        if pf then pf.find.restart() end
+        local found = s.count_entities_filtered{ area = area, force = "player", limit = 1 } > 0
+          and s.find_entities_filtered{ area = area, force = "player" } or nil
+        if pf then pf.find.stop() end
+        if found then j.cur = { list = found, i = 1, x0 = x0, y0 = y0 } end
+      else
+        -- a busy chunk (up to ~900 entities on a real base) is spread over ticks as well:
+        -- one whole chunk in a tick made 42-47 UPS dips where the base is dense
+        local cur = j.cur
+        local list, x0, y0 = cur.list, cur.x0, cur.y0
         if pf then pf.line.restart() end
-        for _, e in pairs(found) do
-          local p = e.position
-          -- an entity crossing a chunk border is found from both chunks: keep it in its own
-          if p.x >= x0 and p.x < x0 + 32 and p.y >= y0 and p.y < y0 + 32 and entity_line(j, e) then
-            j.count = j.count + 1
-            done = done + 1
+        while cur.i <= #list and done < j.budget do
+          local e = list[cur.i]
+          cur.i = cur.i + 1
+          if e.valid then
+            local p = e.position
+            -- an entity crossing a chunk border is found from both chunks: keep it in its own
+            if p.x >= x0 and p.x < x0 + 32 and p.y >= y0 and p.y < y0 + 32 and entity_line(j, e) then
+              j.count = j.count + 1
+            end
           end
+          done = done + 1
         end
         if pf then pf.line.stop() end
+        if cur.i > #list then j.cur = nil end
       end
     end
   end
-  local scanned = j.chunks and j.next > #j.chunks
+  local scanned = j.chunks and j.next > #j.chunks and not j.cur
   if scanned and not j.tail then
     tail_lines(j)
     j.tail = true

@@ -58,7 +58,7 @@ def test_ups_during_a_full_dump(kira):
     r = res["r"]
     assert r.get("ok"), {k: v for k, v in r.items() if k != "text"}
     during = min(samples) if samples else None
-    print(f"\nUPS before {before:.1f}, during a full dump min {during} over {len(samples)} samples; dump {r['data']} "
+    print(f"\nUPS before {before:.1f}, during a full dump min {during} over {len(samples)} samples {[round(x) for x in samples]}; dump {r['data']} "
           f"in {r['ms'] / 1000:.1f} s")
     assert during is None or during >= 50, samples
 
