@@ -272,7 +272,7 @@ local function build(player, p, index)
                                       tags = { kc_panel = p.name } }
   local bar_ = frame.add{ type = "flow", direction = "horizontal" }
   bar_.style.vertical_align = "center"
-  bar_.add{ type = "label", caption = p.title, style = "frame_title", tooltip = p.description }
+  bar_.add{ type = "label", caption = p.title, style = "frame_title", ignored_by_interaction = true }
   local grip = bar_.add{ type = "empty-widget", ignored_by_interaction = true }
   grip.style.horizontally_stretchable, grip.style.minimal_width = true, 8
   bar_.add{ type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
@@ -280,11 +280,6 @@ local function build(player, p, index)
   local inner = frame.add{ type = "frame", name = "kc_panel_inner", direction = "vertical",
                            style = "inside_shallow_frame_with_padding" }
   inner.style.minimal_width = 220
-  if p.description then
-    -- what the panel is about, in the player's words: a quiet line above the view
-    local d = plain_label(inner, p.description, "gray")
-    d.style.maximal_width = 400
-  end
   local inputs = inner.add{ type = "flow", name = "kc_panel_inputs", direction = "horizontal" }
   inputs.style.vertical_align = "center"
   -- always a scroll pane: a long view scrolls inside the panel instead of growing off the screen

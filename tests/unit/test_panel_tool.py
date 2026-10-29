@@ -48,15 +48,20 @@ if verb == "update":
         print("Error: no artifact " + rest[0], file=sys.stderr); sys.exit(1)
     d = json.load(open(path(rest[0])))
     d["versions"].append(open(opt("--content-file")).read()); d["name"] = opt("--name") or d["name"]
+    d["description"] = opt("--description") or d.get("description")
     json.dump(d, open(path(rest[0]), "w")); print("updated")
 elif verb == "save":
     slug = opt("--slug")
-    json.dump({"name": opt("--name"), "tags": opt("--tags"), "kind": opt("--kind"),
+    json.dump({"name": opt("--name"), "tags": opt("--tags"), "kind": opt("--kind"), "description": opt("--description"),
                "versions": [open(opt("--content-file")).read()]}, open(path(slug), "w")); print("saved " + slug)
 elif verb == "show":
     if not os.path.exists(path(rest[0])):
         print("Error: not found", file=sys.stderr); sys.exit(1)
-    print(json.load(open(path(rest[0])))["versions"][-1])
+    d = json.load(open(path(rest[0])))
+    if "--meta" in rest:
+        print(json.dumps({"slug": rest[0], "name": d["name"], "description": d.get("description"), "updated_at": "t"}))
+    else:
+        print(d["versions"][-1])
 elif verb == "list":
     for f in sorted(os.listdir(store)):
         d = json.load(open(os.path.join(store, f)))
@@ -109,6 +114,10 @@ def test_a_working_panel_is_saved_versioned_and_restored(fake_crew, monkeypatch)
     assert len(d["versions"]) == 2 and d["tags"] == "factorio-panel" and d["kind"] == "markdown"
     listed = m.library_list()
     assert listed["ok"] and [p["name"] for p in listed["panels"]] == ["science-made"]
+    one = listed["panels"][0]
+    assert one["title"] == "Science packs made" and one["description"] == "Science packs crafted in the chosen period."
+    assert [p["name"] for p in m.library_list("CRAFTED period")["panels"]] == ["science-made"]
+    assert m.library_list("logistics")["panels"] == []
     got = m.library_get("Science made")
     assert got["ok"] and got["spec"] == {k: changed[k] for k in ("name", "title", "description", "lua", "every", "inputs")}
     assert m.library_get("factorio-panel-science-made")["spec"]["every"] == 10

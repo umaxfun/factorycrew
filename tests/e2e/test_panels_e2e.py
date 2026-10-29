@@ -123,7 +123,7 @@ def test_science_panel_with_a_period_filter(kira):
     assert "automation-science-pack" in md and "120" in md, "the snapshot in the artifact shows the planted numbers"
     assert "kc-panel" in md and "get_flow_count" in md, "the artifact keeps the panel code"
     desc = (p.get("description") or "").strip()
-    assert len(desc) >= 15, f"the panel needs a description the player understands: {desc!r}"
+    assert 15 <= len(desc) <= 140, f"the panel needs a short one-line description for its artifact: {desc!r}"
     assert desc in md, "the artifact carries the description"
 
     # after the turn: more packs are made; the panel shows them by itself
@@ -153,7 +153,7 @@ def test_logistics_panel_shows_what_is_missing_live(kira):
     print(f"\nlogistics panel reply ({t:.0f}s): {text}")
     p = new_panel(kira, before)
     assert not p.get("error"), p
-    assert len((p.get("description") or "").strip()) >= 15, f"no description: {p.get('description')!r}"
+    assert 15 <= len((p.get("description") or "").strip()) <= 140, f"description missing or too long: {p.get('description')!r}"
 
     def blocks_of(view, item):
         return {i for i, b in enumerate(view) if rows_about([b], item)}

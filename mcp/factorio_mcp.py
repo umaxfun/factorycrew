@@ -140,7 +140,7 @@ TOOLS = [
     {
         "name": "factorio_panel",
         "description": (
-            "Create or replace a LIVE PANEL in the game (always give `title` and a `description` the player understands): a small window the mod refreshes by itself every "
+            "Create or replace a LIVE PANEL in the game (give a short `title` and a one-line `description` for the saved artifact): a small window the mod refreshes by itself every "
             "`every` seconds (default 2) by running your Lua body, with no further turns from you. Use it when "
             "the player asks to SHOW/WATCH/KEEP an eye on something over time (a dashboard, 'show me live', "
             "'a panel with...'). `lua` has the factorio_query environment plus `input` (current values of "
@@ -164,7 +164,7 @@ TOOLS = [
             "properties": {
                 "name": {"type": "string", "description": "id, short; the same name replaces"},
                 "title": {"type": "string"},
-                "description": {"type": "string", "description": "1-2 sentences for the player: what the panel shows and how the numbers are counted"},
+                "description": {"type": "string", "description": "one short sentence (max ~100 chars) for the saved artifact in the dashboard; not shown in the game"},
                 "lua": {"type": "string"},
                 "every": {"type": "integer", "description": "seconds between refreshes, 1-600"},
                 "inputs": {
@@ -187,8 +187,12 @@ TOOLS = [
     },
     {
         "name": "factorio_saved_panels",
-        "description": "Panels saved as Kiro Crew artifacts, from any save: [{name, slug}]. Bring one back with factorio_panel(restore=name).",
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": (
+            "Panels saved as Kiro Crew artifacts, from any save, newest first: [{name, title, description, updated}]. "
+            "`query`: only those whose name/title/description contain all its words. "
+            "Bring one back with factorio_panel(restore=name)."
+        ),
+        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
     },
     {
         "name": "factorio_progress",
@@ -538,8 +542,10 @@ def library_save(spec: dict, res: dict) -> dict:
         os.unlink(path)
 
 
-def library_list() -> dict:
-    """Saved panels: [{slug, name}] from the artifacts tagged factorio-panel."""
+def library_list(query: str | None = None) -> dict:
+    """Saved panels from the artifacts tagged factorio-panel: [{name, slug, title, description, updated}].
+
+    `query` keeps those whose name, title or description contain every word of it (any case)."""
     p = _kc("list", "--tag", ARTIFACT_TAG)
     if p is None:
         return {"ok": False, "error": "no_library", "message": "not running under Kiro Crew"}
@@ -550,7 +556,25 @@ def library_list() -> dict:
     for line in p.stdout.splitlines():
         m = re.search(r"(factorio-panel-[a-z0-9-]+)", line)
         if m and m.group(1) not in [x["slug"] for x in found]:
-            found.append({"slug": m.group(1), "name": m.group(1)[len(ARTIFACT_PREFIX):], "line": line.strip()})
+            found.append({"slug": m.group(1), "name": m.group(1)[len(ARTIFACT_PREFIX):]})
+
+    def meta(x):
+        p = _kc("show", x["slug"], "--meta")
+        try:
+            d = json.loads(p.stdout) if p and p.returncode == 0 else {}
+        except ValueError:
+            d = {}
+        title = (d.get("name") or "").removeprefix("Factorio panel: ")
+        return {**x, "title": title or x["name"], "description": d.get("description") or "",
+                "updated": d.get("updated_at") or ""}
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        found = list(pool.map(meta, found))
+    if query:
+        words = query.lower().split()
+        found = [x for x in found
+                 if all(w in f"{x['name']} {x['title']} {x['description']}".lower() for w in words)]
+    found.sort(key=lambda x: x["updated"], reverse=True)
     return {"ok": True, "panels": found}
 
 
@@ -581,7 +605,7 @@ def call_tool(name: str, args: dict) -> dict:
     if name == "factorio_panel":
         return panel(args or {})
     if name == "factorio_saved_panels":
-        return library_list()
+        return library_list((args or {}).get("query"))
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

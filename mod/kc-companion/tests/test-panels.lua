@@ -43,7 +43,8 @@ describe("panels", function()
     assert(p.every == 3 and p.refreshes == 1 and p.error == nil)
     if not player then return end
     local s = shown("t1")
-    assert(s:find("What the test panel is about.", 1, true) and panels.list()[1].description == "What the test panel is about.", s)
+    -- the description is for the saved artifact only; the panel in the game does not show it
+    assert(not s:find("What the test panel is about.", 1, true) and panels.list()[1].description == "What the test panel is about.", s)
     assert(s:find("Test panel", 1, true) and s:find("1235", 1, true) and s:find("12.3k", 1, true), s)
     assert(s:find("3 of 4", 1, true) and s:find("30 / 120", 1, true), s)
   end)
