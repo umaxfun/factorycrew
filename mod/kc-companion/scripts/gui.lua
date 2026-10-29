@@ -2,6 +2,7 @@
 -- per-player view state (selected tab, mark cursor) in storage.kc.ui[player_index].
 
 local protocol = require("scripts.protocol")
+local pointers = require("scripts.pointers")
 local mod_gui = require("mod-gui")
 
 local M = {}
@@ -94,12 +95,18 @@ local function build(player)
   local kc_marks_row = inner.add{ type = "flow", name = "kc_marks_row", direction = "horizontal" }
   kc_marks_row.style.vertical_align = "center"
 
+  local kc_pointers_row = inner.add{ type = "flow", name = "kc_pointers_row", direction = "vertical" }
+  kc_pointers_row.style.vertical_spacing = 0
+
   local input_row = inner.add{ type = "flow", name = "kc_input_row", direction = "horizontal" }
   input_row.style.vertical_align = "center"
   local field = input_row.add{ type = "textfield", name = "kc_input", lose_focus_on_confirm = false,
                                tooltip = "Enter to send" }
   field.style.horizontally_stretchable = true
   field.style.maximal_width = 0
+  input_row.add{ type = "sprite-button", name = "kc_point", sprite = "item/kc-pointer", style = "tool_button",
+                 tooltip = "Point (Alt+K): click a thing or drag a box, then mention it as @1, @2 in the question. "
+                        .. "Shift-drag removes pointers." }
   input_row.add{ type = "button", name = "kc_send", caption = "Send" }
   return frame
 end
@@ -190,7 +197,8 @@ local function refresh_feed(player, frame)
       if not e.acked and now - e.tick > protocol.ACK_TIMEOUT_TICKS then
         warn = " [color=red](not delivered: no connection)[/color]"
       end
-      who = "[font=default-bold][color=0.6,0.8,1]You:[/color][/font] " .. e.text .. warn
+      local with = e.pointers and (" [color=0.3,0.8,1](+" .. e.pointers .. (e.pointers == 1 and " pointer" or " pointers") .. ")[/color]") or ""
+      who = "[font=default-bold][color=0.6,0.8,1]You:[/color][/font] " .. e.text .. with .. warn
     elseif e.from == "trace_summary" then
       who = TRACE_COLOR .. "(worked: " .. e.text .. ")[/color]"
     else
@@ -236,6 +244,24 @@ local function refresh_marks(player, frame)
   tool(row, "kc_mark_clear", "utility/trash", "Remove all marks of this tab", enabled, "tool_button_red")
 end
 
+local function refresh_pointers(player, frame)
+  local row = find(frame, "kc_pointers_row")
+  row.clear()
+  local list = pointers.list(player)
+  row.visible = #list > 0
+  if #list == 0 then return end
+  local head = row.add{ type = "flow", direction = "horizontal" }
+  head.style.vertical_align = "center"
+  head.add{ type = "label", caption = "[color=0.3,0.8,1]Pointers (go with the next question):[/color]" }
+  local filler = head.add{ type = "empty-widget" }
+  filler.style.horizontally_stretchable = true
+  tool(head, "kc_pointer_clear", "utility/trash", "Remove the pointers", true, "tool_button_red")
+  for _, p in ipairs(list) do
+    local l = row.add{ type = "label", caption = "[color=0.3,0.8,1]" .. pointers.label(p) .. "[/color]" }
+    l.style.maximal_width = WIDTH - 40
+  end
+end
+
 function M.refresh(player)
   local frame = root(player)
   if not frame then return end
@@ -244,6 +270,7 @@ function M.refresh(player)
   refresh_status(player, frame)
   refresh_feed(player, frame)
   refresh_marks(player, frame)
+  refresh_pointers(player, frame)
 end
 
 function M.refresh_all()
@@ -284,7 +311,7 @@ local function submit(player, send)
   local text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
   if text == "" then return end
   field.text = ""
-  send(protocol.ask(view(player).tab, text, player))
+  send(protocol.ask(view(player).tab, text, player, pointers.take(player)))
   M.refresh(player)
   field.focus()
 end
@@ -328,6 +355,11 @@ function M.on_click(e, send)
     go_to_mark(player, -1)
   elseif name == "kc_mark_next" then
     go_to_mark(player, 1)
+  elseif name == "kc_point" then
+    pointers.give_tool(player)
+  elseif name == "kc_pointer_clear" then
+    pointers.clear(player)
+    M.refresh(player)
   elseif name == "kc_mark_clear" then
     protocol.unmark(v.tab, { all_in_chat = true })
     v.mark = 0
@@ -357,6 +389,19 @@ function M.on_confirmed(e, send)
     if name ~= "" then storage.kc.run_name = name end
     M.refresh_all()
   end
+end
+
+--- A new pointer: open the window if needed and put "@n " at the end of the question.
+function M.on_pointer(player, p)
+  if not root(player) then
+    view(player)
+    build(player)
+  end
+  local field = find(root(player), "kc_input")
+  local text = field.text
+  if text ~= "" and not text:find("%s$") then text = text .. " " end
+  field.text = text .. "@" .. p.n .. " "
+  M.refresh(player)
 end
 
 -- ── driving the window from outside (UI iteration loop, tools/ui_dev.py) ──

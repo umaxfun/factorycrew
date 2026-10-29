@@ -33,6 +33,7 @@ function M.init_storage()
   kc.marks = kc.marks or {} -- chat -> tag_number -> {tag = LuaCustomChartTag, surface, position, text}
   kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
   kc.seq = kc.seq or 0
+  kc.pointers = kc.pointers or {} -- player_index -> {pointer, ...} (scripts/pointers.lua)
 end
 
 local function next_id(prefix)
@@ -102,13 +103,17 @@ local function whereabouts(player)
 end
 
 --- Record a player question in its tab and return the `ask` message for the bridge.
-function M.ask(chat, text, player)
+--- pointers: the player's @1, @2, ... (scripts/pointers.lua), omitted when empty.
+function M.ask(chat, text, player, pointers)
   local id = next_id("ask")
-  push(M.tab(chat), { from = "player", text = text, id = id, acked = false })
+  local entry = { from = "player", text = text, id = id, acked = false }
+  if pointers and #pointers > 0 then entry.pointers = #pointers end
+  push(M.tab(chat), entry)
   return {
     type = "ask", id = id, chat = chat, text = text,
     run_id = storage.kc.run_id, run_name = storage.kc.run_name, tick = game.tick,
     player = whereabouts(player),
+    pointers = (pointers and #pointers > 0) and pointers or nil,
   }
 end
 

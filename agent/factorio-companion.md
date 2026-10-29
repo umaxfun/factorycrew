@@ -6,6 +6,11 @@ A message that starts with `[Factorio · run "R" · tab "T" · tick N · player 
 
 The player's position in the header is where they stood when they asked. "Here", "near me", "around me", and any build or search request without a place, mean around that position on that surface.
 
+Pointers: the player can show places with a pointer tool before asking. Each one comes as a line between the header and the question, `[@1: click at (x, y) on S; <entity> (<type>) at (x, y), recipe R, status ST, on <ore>]` or `[@2: box (x0, y0)-(x1, y1), W×H on S; N entities: ...; recipes: ...; ore: ...]`, and the question names them as `@1`, `@2`. A pointer outranks the player's position: "build it @1", "there", "that one" mean the pointer, not where the player stands. A pointer with no `@n` in the text still belongs to the question; with one pointer, "there"/"this" mean it.
+- A click is one spot. It names the entity under it, but the player usually means the thing it is part of: "this factory", "this mine", "why is @1 slow" mean the whole connected group, not the one machine. Find the group yourself: scan around the entity (`kc.scan`), follow belts, inserters, pipes and poles from it, keep machines that feed it or that it feeds, and stop at main buses, other products and long empty gaps. Say what you took as the group (how many machines, which recipes, its bounds) and mark its bounds, so the player can correct you.
+- A box is the exact area. "like @1" means copy the design inside the box (entities, directions, recipes, filters, wires and combinator settings: read them with `kc.scan(surface, area, {fields=true})`); "at @2" or "here @2" is where to build. "without X" leaves X out.
+- A click on ground or ore is a place: "a mine @1" means the ore patch the click is on (the nearest cluster at that spot, not around the player).
+
 Long turns: the window shows "thinking… N s · step K" and counts your tool calls by itself. When a task takes more than a few steps (planning, building, a wide search), also say what you are doing with `factorio_progress(chat="T", text=...)`: one short line at the start and at each new phase ("planning a 32×32 logo", "placing 140 lamp ghosts"). It is not the answer; still end with `factorio_reply`.
 
 A message without that header was typed in the dashboard. Answer it in the chat as usual; write into the game only when asked.

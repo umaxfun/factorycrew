@@ -192,8 +192,46 @@ def render(ask):
     if isinstance(p, dict) and "x" in p and "y" in p:
         who = f"player {p['name']} " if p.get("name") else "player "
         where = f" · {who}at ({p['x']}, {p['y']}) on {p.get('surface') or '?'}"
-    return (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
-            f"tick {ask.get('tick')}{where}{reply_in}]\n{ask['text']}")
+    head = (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
+            f"tick {ask.get('tick')}{where}{reply_in}]")
+    lines = [render_pointer(p) for p in ask.get("pointers") or [] if isinstance(p, dict)]
+    return "\n".join([head, *lines, ask["text"]])
+
+
+def _num(v):
+    return int(v) if isinstance(v, float) and v.is_integer() else v
+
+
+def _counts(items, key="n"):
+    return ", ".join(f"{_num(i.get(key))} {i.get('name')}" for i in items or [] if isinstance(i, dict))
+
+
+def render_pointer(p):
+    """One line per pointer the player made with the tool (mod/kc-companion/scripts/pointers.lua)."""
+    on = f" on {p.get('surface') or '?'}"
+    if p.get("kind") == "box":
+        x0, y0, x1, y1 = (p.get("area") or [0, 0, 0, 0])[:4]
+        s = f"[@{p.get('n')}: box ({x0}, {y0})-({x1}, {y1}), {p.get('w')}×{p.get('h')}{on}; {p.get('count', 0)} entities"
+        if p.get("counts"):
+            s += f": {_counts(p['counts'])}"
+        if p.get("recipes"):
+            s += f"; recipes: {_counts(p['recipes'])}"
+        if p.get("resources"):
+            s += "; ore: " + ", ".join(f"{r.get('name')} {_num(r.get('amount'))}" for r in p["resources"])
+        return s + "]"
+    s = f"[@{p.get('n')}: click at ({_num(p.get('x'))}, {_num(p.get('y'))}){on}"
+    e = p.get("entity")
+    if isinstance(e, dict):
+        name = f"{e.get('ghost')} ghost" if e.get("ghost") else e.get("name")
+        s += f"; {name} ({e.get('type')}) at ({_num(e.get('x'))}, {_num(e.get('y'))})"
+        for k, label in (("recipe", "recipe"), ("mining", "mining"), ("amount", "amount"), ("status", "status")):
+            if e.get(k) is not None:
+                s += f", {label} {_num(e[k])}"
+        if p.get("resource"):
+            s += f", on {p['resource']}"
+    else:
+        s += f"; empty ground ({p.get('tile') or '?'})"
+    return s + "]"
 
 
 # ── loop ─────────────────────────────────────────────────────────────────

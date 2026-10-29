@@ -95,7 +95,7 @@ Each UDP packet holds one JSON string `{"v":1,"id":"…","type":"…",...}`. A l
 
 The game sends the bridge:
 - `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick` and the list of tabs;
-- `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds);
+- `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds), and `pointers` when the player made some (see "Pointers");
 - `result`: the answer to `query`, `mark` or `unmark`, with the same `id` and `ok`, `data` or `error`.
 
 The bridge sends the game:
@@ -168,7 +168,19 @@ In a tab:
 - a link indicator ("online" / "Kira is offline" / "UDP is off"), from `pong`;
 - a marks row "Marks: 14 ◀ ▶ 🗑". The arrows open the map view on the previous and next mark with `player.set_controller{type=remote, position, surface}` (2.0 has no `zoom_to_world`), Esc returns to the character; the trash button removes all marks of the tab.
 
+- a pointers row, shown while there are pointers: "@1 assembling-machine-2 · electronic-circuit", "@2 box 30×20 · 42", and a trash button; next to the input a Point button that puts the pointer tool in the hand.
+
 The run, tabs, feed and marks live in `storage` and survive save and load.
+
+### Pointers
+
+How the player says "there", "this factory", "like that station". The pointer is a selection tool (`kc-pointer`, like the deconstruction planner): the Point button in the window, `Alt+K`, or the shortcut bar. A click is a point: the entity under it (a building before the ore beneath it; ore looked up by tile, its collision box is ±0.1), or bare ground with its tile. A drag is a box, sent with a summary: entity counts (top 12), recipes, ore amounts. Shift-drag removes all pointers.
+
+Each pointer gets the next number for that player (up to 9), is drawn on the ground for that player only (a circle or a rectangle with "@n"), and puts "@n " at the end of the question field, opening the window if needed. The next question takes all pointers along and clears them and their drawings; the feed shows "(+2 pointers)" after the question.
+
+What a pointer MEANS is Kira's job, not the mod's: a click on one assembler in "why is @1 slow" means the connected group it belongs to, which she finds by following belts, inserters and pipes (agent rules, "Pointers"). The mod only says where and what is under the cursor.
+
+Wire form (`ask.pointers`): `{n, kind="point", surface, x, y, tile, entity?={name, type, x, y, recipe?, mining?, amount?, status?, ghost?}, resource?}` or `{n, kind="box", surface, area={x0,y0,x1,y1}, w, h, count, counts?=[{name,n}], recipes?=[{name,n}], resources?=[{name,amount}]}`.
 
 If the player deletes a `[KC]` mark on the map (`on_chart_tag_removed`), the mod drops it from `storage` and the agent no longer sees it.
 
@@ -177,6 +189,15 @@ If the player deletes a `[KC]` mark on the map (`on_chart_tag_removed`), the mod
 ```
 [Factorio · run "Megabase-2" · tab "Logistics" · tick 12345678]
 find yellow chests without a filter
+```
+
+With pointers, one line each between the header and the question:
+
+```
+[Factorio · run "Megabase-2" · tab "Build" · tick 12345678 · player p at (3.2, -1.5) on nauvis · reply in English]
+[@1: click at (12.4, -30.2) on nauvis; assembling-machine-2 (assembling-machine) at (12.5, -30.5), recipe electronic-circuit, status item_ingredient_shortage]
+[@2: box (10, -40)-(40, -20), 30×20 on nauvis; 42 entities: 30 transport-belt, 1 train-stop; recipes: 8 electronic-circuit]
+why is @1 slow? and build one like @2 here
 ```
 
 The agent sees which tab the question came from and answers into it. If the player writes into the same chat from the dashboard, the agent answers in the dashboard as usual and writes into the game only when asked.
