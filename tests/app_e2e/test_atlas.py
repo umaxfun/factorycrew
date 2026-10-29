@@ -46,14 +46,22 @@ def ups(seconds):
     return (lua("return game.tick") - t0) / (time.monotonic() - w0)
 
 
+def test_ups_baseline(kira):
+    """The base's own dips (autosave, big events) without any dump, for comparison."""
+    samples = [ups(2) for _ in range(30)]
+    print(f"\nUPS without a dump over 60 s: {[round(x) for x in samples]}")
+
+
 def test_ups_during_a_full_dump(kira):
     before = ups(10)
     res = {}
     th = threading.Thread(target=lambda: res.update(r=http("POST", "/atlas", {"timeout": 300}, timeout=320)))
     th.start()
     samples = []
+    # 5-s windows: each reading waits for the game's 10-tick UDP poll (up to ~170 ms), so a 2-s window
+    # read 46-47 UPS while the game itself had no such hitch (a lower budget did not move those dips)
     while th.is_alive():
-        samples.append(ups(2))
+        samples.append(ups(5))
     th.join()
     r = res["r"]
     assert r.get("ok"), {k: v for k, v in r.items() if k != "text"}

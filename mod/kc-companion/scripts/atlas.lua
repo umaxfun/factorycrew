@@ -29,7 +29,8 @@
 
 local M = {}
 
-M.BUDGET = 150      -- entities per tick, also inside one busy chunk
+M.BUDGET = 150      -- cost units per tick (COST below; 1 = a plain entity), also inside one busy chunk
+M.CHUNK_LIST = 1000 -- chunk positions collected per tick before the scan starts
 M.MAX_CHUNKS = 3    -- chunks looked at per tick. Looking is the cost, empty or not: on the real client with a
                     -- 7888-chunk base, 24 per tick gave 34-53 UPS, 2 per tick a flat 60, while the entity
                     -- budget (10..200) and the send size (1000..4000) barely mattered
@@ -46,6 +47,10 @@ local FLUID_MACHINE = { ["assembling-machine"] = true, furnace = true, ["rocket-
                         ["mining-drill"] = true }
 
 local fmt, floor, concat = string.format, math.floor, table.concat
+-- budget units per entity: reading a machine's fluid connections costs ~5 plain entities (profiled
+-- on the fixture), and a dense block of them made the only UPS dip left on the real client
+local COST = { ["assembling-machine"] = 5, furnace = 5, ["rocket-silo"] = 5, ["mining-drill"] = 5,
+               pump = 4, ["offshore-pump"] = 4 }
 local job = nil -- module state: one dump at a time; lost on save/load (the bridge times out)
 
 local function clean(s)
@@ -203,7 +208,7 @@ local function amounts(list)
   return concat(out, ";")
 end
 
-local function tail_lines(j)
+local function recipe_lines(j)
   local recipes = {}
   for rn in pairs(j.recipes) do recipes[#recipes + 1] = rn end
   table.sort(recipes)
@@ -213,15 +218,18 @@ local function tail_lines(j)
       j.out[#j.out + 1] = concat({ "R", rn, fmt("%.6g", r.energy), amounts(r.ingredients), amounts(r.products) }, "|")
     end
   end
+end
+
+local function train_lines(j)
   for _, tr in pairs(game.train_manager.get_trains{ surface = j.surface }) do
     local st = {}
     local sch = tr.schedule
     if sch and sch.records then
       for _, rec in ipairs(sch.records) do st[#st + 1] = clean(rec.station or "") end
     end
-    j.out[#j.out + 1] = concat({ "T", tr.id, #tr.cargo_wagons, #tr.fluid_wagons, concat(st, ";") }, "|")
+    j.out[#j.out + 1] = fmt("T|%d|%d|%d|", tr.id, #tr.cargo_wagons, #tr.fluid_wagons) .. concat(st, ";")
   end
-  j.out[#j.out + 1] = concat({ "Z", j.count, #j.chunks, j.ticks }, "|")
+  j.out[#j.out + 1] = fmt("Z|%d|%d|%d", j.count, #j.chunks, j.ticks)
 end
 
 --- Start a dump; returns an error string when one is already running or the surface is unknown.
@@ -263,9 +271,18 @@ step = function()
     return { { type = "result", id = j.id, ok = false, error = "surface_gone" } }
   end
   j.ticks = j.ticks + 1
-  if not j.chunks then -- first tick: only the chunk list, so the heavy part starts on a fresh tick
-    j.chunks = {}
-    for c in j.surface.get_chunks() do j.chunks[#j.chunks + 1] = { c.x, c.y } end
+  if not j.listed then
+    -- the chunk list first, CHUNK_LIST per tick: 7888 chunks in one go took 21 ms (headless, emulated)
+    j.chunks = j.chunks or {}
+    j.iter = j.iter or j.surface.get_chunks()
+    for _ = 1, M.CHUNK_LIST do
+      local c = j.iter()
+      if not c then
+        j.listed, j.iter = true, nil
+        break
+      end
+      j.chunks[#j.chunks + 1] = { c.x, c.y }
+    end
   else
     local done, looked = 0, 0
     local s = j.surface
@@ -299,18 +316,21 @@ step = function()
             if p.x >= x0 and p.x < x0 + 32 and p.y >= y0 and p.y < y0 + 32 and entity_line(j, e) then
               j.count = j.count + 1
             end
+            done = done + (COST[e.type] or 1)
+          else
+            done = done + 1
           end
-          done = done + 1
         end
         if pf then pf.line.stop() end
         if cur.i > #list then j.cur = nil end
       end
     end
   end
-  local scanned = j.chunks and j.next > #j.chunks and not j.cur
-  if scanned and not j.tail then
-    tail_lines(j)
-    j.tail = true
+  local scanned = j.listed and j.next > #j.chunks and not j.cur
+  if scanned and (j.tail or 0) < 2 then -- recipes on one tick, trains and the footer on the next
+    j.tail = (j.tail or 0) + 1
+    if j.tail == 1 then recipe_lines(j) else train_lines(j) end
+    scanned = j.tail == 2
   end
   -- queue this tick's lines in pieces of at most SEND_BYTES, then send at most that much
   local limit = j.send_bytes or M.SEND_BYTES
@@ -361,8 +381,17 @@ function M.dump_now(surface_name, budget, profile_file)
   if profile_file then M.prof = { find = prof(), line = prof(), fluid = prof(), total = game.create_profiler() } end
   M.start({ id = "now", surface = surface_name, budget = budget, send_bytes = math.huge })
   local texts, data = {}, nil
+  local per_step = profile_file and (profile_file .. ".steps")
+  if per_step then helpers.write_file(per_step, "") end
   while job do
-    for _, m in ipairs(M.step()) do
+    local sp = per_step and game.create_profiler()
+    local at_chunk = job.next
+    local msgs = M.step()
+    if sp then
+      sp.stop()
+      helpers.write_file(per_step, { "", "step chunk " .. at_chunk .. " ", sp, "\n" }, true)
+    end
+    for _, m in ipairs(msgs) do
       if m.type == "atlas_part" then texts[#texts + 1] = m.text else data = m.data end
     end
   end
