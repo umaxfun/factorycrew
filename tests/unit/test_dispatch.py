@@ -101,3 +101,18 @@ def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypa
 def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):
     posted, t = _turn(tmp_path, monkeypatch, [{"role": "assistant", "content": "Checking the belts."}])
     assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
+
+
+def test_trace_lines_carry_kiras_text_and_tool_labels():
+    """What the window's live trace shows for each transcript row. The app e2e only sees text lines
+    when the model happens to write between tool calls, so the mapping is pinned here."""
+    long = "checking the belts " * 30
+    (kind, text, done), = d.trace_lines({"role": "assistant", "content": "  Reading the\nstations  "})
+    assert (kind, text, done) == ("text", "Reading the stations", False)
+    (kind, text, _), = d.trace_lines({"role": "assistant", "content": long})
+    assert kind == "text" and len(text) == d.TRACE_MAX and text.endswith("…")
+    assert d.trace_lines({"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_reply"}) == [("", "", True)]
+    assert d.trace_lines({"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_progress"}) == []
+    (kind, label, _), = d.trace_lines({"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_atlas"})
+    assert kind == "tool" and label
+    assert d.trace_lines({"role": "assistant", "content": "   "}) == []
