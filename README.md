@@ -82,7 +82,7 @@ The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod ag
 
 ## UI loop (screenshots of the real window)
 
-A real 2.0.77 client under `umaxfun`, from the player's copy `/Users/Shared/factorio.app`, with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with the game under `gamer`:
+A real 2.0.77 client from the copy in `/Users/Shared/factorio.app`, with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with a game played on the same Mac (the app uses 34198-34200):
 
 ```bash
 tools/ui_dev.py start                                   # deploy mod, start bridge + game, wait until online
@@ -93,23 +93,6 @@ tools/ui_dev.py stop
 
 Screenshots land in `~/.factorycrew-dev/factorio/script-output/kc/`. The full step list is in the script's docstring.
 
-## Installing the mod for the player (account `gamer`)
+## Playing
 
-As `umaxfun`, once and after every mod change:
-
-```bash
-./scripts/deploy-mod.sh        # -> /Users/Shared/kc-companion
-./scripts/services.sh install  # bridge + factorycrew gateway in launchd (once)
-./scripts/services.sh status
-```
-
-As `gamer`, once:
-
-```bash
-mkdir -p "$HOME/Library/Application Support/factorio/mods"
-ln -s /Users/Shared/kc-companion "$HOME/Library/Application Support/factorio/mods/kc-companion"
-```
-
-Steam → Factorio → Properties → Launch Options: `--enable-lua-udp 34200`.
-
-Diagnostics as `gamer`: `grep -iE "kc-companion|udp" "$HOME/Library/Application Support/factorio/factorio-current.log"`; copy the log to `/Users/Shared/` to share it. As `umaxfun`: `tail -f ~/.kirocrew-factorio/bridge.launchd.log` shows every question that reaches the bridge.
+Players install the Kiro Crew app (see "Releases and updates" above): it runs the bridge, the dispatcher and Kira, and copies the mod into Factorio's mods folder. Start Factorio with the launch option `--enable-lua-udp 34200`. If something does not answer, the app's status page (sidebar → Factorio) says which piece is down and what to do; Factorio's own log is `~/Library/Application Support/factorio/factorio-current.log` (`grep -iE "kc-companion|udp"`).
