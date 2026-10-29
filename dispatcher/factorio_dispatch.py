@@ -279,6 +279,11 @@ def trace_lines(row):
     return []
 
 
+def turn_ended(row):
+    """The gateway writes turn_stats on the last assistant message of a turn."""
+    return row.get("role") == "assistant" and bool((row.get("meta") or {}).get("turn_stats"))
+
+
 class Tracer:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -287,7 +292,20 @@ class Tracer:
     def start(self, slot, ask):
         p = transcript_path(slot)
         pos = p.stat().st_size if p.exists() else 0  # only what this turn adds
-        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "pos": pos, "seen": time.monotonic()}
+        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "pos": pos, "seen": time.monotonic(),
+                            "last_text": ""}
+
+    def forward(self, w):
+        """The turn ended without factorio_reply (a light model under "auto" once answered "how are
+        you?" in the chat only, and the window kept "thinking"): send its last text to the tab."""
+        text = w["last_text"].strip()
+        if not text:
+            return
+        try:
+            bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text}, timeout=10)
+            print(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"could not forward the answer for [{w['chat']}]: {exc}")
 
     def poll(self):
         for slot, w in list(self.watch.items()):
@@ -307,6 +325,16 @@ class Tracer:
                     row = json.loads(raw)
                 except ValueError:
                     continue
+                if turn_ended(row):
+                    # the turn's last message carries turn_stats; no factorio_reply came before it
+                    content = row.get("content")
+                    if isinstance(content, str) and content.strip():
+                        w["last_text"] = content
+                    self.forward(w)
+                    done = True
+                    break
+                if row.get("role") == "assistant" and isinstance(row.get("content"), str) and row["content"].strip():
+                    w["last_text"] = row["content"]
                 for kind, text, fin in trace_lines(row):
                     if fin:
                         done = True

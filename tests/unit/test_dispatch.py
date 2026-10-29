@@ -50,3 +50,54 @@ def test_pointers_go_as_lines_between_header_and_question():
 def test_no_pointers_no_extra_lines():
     msg = d.render({"run_id": "r", "chat": "T", "tick": 1, "text": "hi"})
     assert msg.split("\n")[1] == "hi"
+
+
+# ── a turn that ends without factorio_reply ─────────────────────────────
+
+import json  # noqa: E402
+
+
+def _turn(tmp_path, monkeypatch, rows):
+    """Run the tracer over one turn's transcript rows; return what it posted to the bridge."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    (tmp_path / "sessions").mkdir()
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {})
+    t = d.Tracer({})
+    t.start("s1", {"chat": "General", "run_id": "r"})
+    with open(d.transcript_path("s1"), "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    t.poll()
+    return posted, t
+
+
+def test_forwards_the_last_text_when_the_turn_skipped_factorio_reply(tmp_path, monkeypatch):
+    posted, t = _turn(tmp_path, monkeypatch, [
+        {"role": "user", "content": "[Factorio ...]\nкак дела?"},
+        {"role": "assistant", "content": "Всё отлично! Готова помочь.", "meta": {"turn_stats": {"credits": 0.16}}},
+    ])
+    assert ("/reply", {"chat": "General", "text": "Всё отлично! Готова помочь."}) in posted
+    assert t.watch == {}
+
+
+def test_does_not_forward_when_factorio_reply_was_called(tmp_path, monkeypatch):
+    posted, _ = _turn(tmp_path, monkeypatch, [
+        {"role": "assistant", "content": "Looking."},
+        {"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_reply", "meta": {"mcp_server": "factorycrew:factorio"}},
+        {"role": "assistant", "content": "Done, answered in the game.", "meta": {"turn_stats": {"credits": 0.8}}},
+    ])
+    assert [p for p, _ in posted if p == "/reply"] == []
+
+
+def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypatch):
+    posted, _ = _turn(tmp_path, monkeypatch, [
+        {"role": "assistant", "content": "The furnace needs coal."},
+        {"role": "assistant", "content": "", "meta": {"turn_stats": {"credits": 0.2}}},
+    ])
+    assert ("/reply", {"chat": "General", "text": "The furnace needs coal."}) in posted
+
+
+def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):
+    posted, t = _turn(tmp_path, monkeypatch, [{"role": "assistant", "content": "Checking the belts."}])
+    assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
