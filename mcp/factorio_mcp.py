@@ -380,21 +380,29 @@ def _atlas(args: dict) -> tuple[object, dict | None]:
     key = args.get("surface") or ""
     health = bridge_health()
     run_id = health.get("run_id")
-    version = health.get("atlas_version")
     c = ATLAS_CACHE.get(key)
-    # another save, or something built/removed/reconfigured since the dump (the mod counts those events)
-    if args.get("refresh") or c is None or c["run_id"] != run_id or c.get("version") != version:
-        t0 = time.monotonic()
-        r = bridge_post("/atlas", {"surface": args.get("surface"), "_agent": True}, timeout=330)
-        if not r.get("ok"):
-            return None, {"ok": False, "error": r.get("error") or "atlas_failed", "message": r.get("message"),
-                          "detail": {k: v for k, v in r.items() if k != "text"}}
+    if c is not None and c["run_id"] != run_id:
+        c = None
+    # the bridge keeps the structure and re-reads only the chunks that changed; it answers
+    # "unchanged" when what we hold is current
+    t0 = time.monotonic()
+    body = {"surface": args.get("surface"), "_agent": True, "refresh": bool(args.get("refresh"))}
+    if c is not None:
+        body["have_version"] = c["version"]
+    r = bridge_post("/atlas", body, timeout=330)
+    if not r.get("ok"):
+        return None, {"ok": False, "error": r.get("error") or "atlas_failed", "message": r.get("message"),
+                      "detail": {k: v for k, v in r.items() if k != "text"}}
+    if not r.get("unchanged") or c is None:
+        if "text" not in r:
+            return None, {"ok": False, "error": "atlas_failed", "message": "the bridge sent no structure"}
         try:
             a = kc_atlas.Atlas(r["text"])
         except ValueError as e:
             return None, {"ok": False, "error": "atlas_bad_dump", "message": str(e)}
-        c = {"atlas": a, "run_id": run_id, "version": version, "read_s": round(time.monotonic() - t0, 2), "dump": r.get("data")}
+        c = {"atlas": a, "run_id": run_id, "version": r.get("version")}
         ATLAS_CACHE[key] = c
+    c.update(read_s=round(time.monotonic() - t0, 2), how=r.get("how"), chunks_read=r.get("chunks_read"))
     c["tick_now"] = health.get("tick")
     return c, None
 

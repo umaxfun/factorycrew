@@ -47,6 +47,7 @@ class Settings:
     offline_after: float = 15.0  # no heartbeat for this long => game offline
     idle_after: float = 90.0  # thinking without reply for this long => idle "no_reply"
     request_timeout: float = 10.0  # query/mark/unmark waiting for the game's result
+    atlas_prefetch: bool = True  # read the player's surface for the atlas when a game connects
     lease: float = 120.0  # an ask taken by the dispatcher returns to the queue unless confirmed
 
 
@@ -58,6 +59,7 @@ class GameState:
     tick: int | None = None
     tabs: list = field(default_factory=list)
     atlas_version: int | None = None
+    atlas_dirty: int | None = None
 
 
 # ── framing ──────────────────────────────────────────────────────────────
@@ -131,6 +133,86 @@ class Reassembler:
             del self.pending[k]
 
 
+# ── atlas store: the structure of a surface, merged from a full dump and partial ones ──
+
+
+class AtlasStore:
+    """Entity lines kept per chunk with their names resolved, so a partial dump (only the chunks
+    that changed, with its own name table) can replace those chunks, and the merged base can be
+    served as one dump again (mod/kc-companion/scripts/atlas.lua has the format)."""
+
+    def __init__(self, text: str, data: dict, run_id):
+        self.run_id = run_id
+        self.names: dict[str, tuple] = {}   # name -> (type, w, h, extras)
+        self.chunks: dict[tuple, list] = {}  # (cx, cy) -> [(name, rest of the E line)]
+        self.recipes: dict[str, str] = {}
+        self.trains: list[str] = []
+        self.head = ""
+        self.tick = None
+        self.version = None
+        self.apply(text, data, full=True)
+
+    def apply(self, text: str, data: dict, full: bool) -> int:
+        ids: dict[str, str] = {}
+        chunks: dict[tuple, list] = {}
+        listed: set[tuple] = set()
+        recipes: dict[str, str] = {}
+        trains: list[str] = []
+        for line in text.split("\n"):
+            k = line[:2]
+            if k == "E|":
+                f = line.split("|", 5)
+                name = ids[f[1]]
+                key = (int(f[2]) // 64, int(f[3]) // 64)  # doubled coordinates: 64 per chunk
+                chunks.setdefault(key, []).append((name, "|".join(f[2:])))
+            elif k == "N|":
+                f = line.split("|", 6)
+                ids[f[1]] = f[2]
+                self.names[f[2]] = (f[3], f[4], f[5], f[6] if len(f) > 6 else "")
+            elif k == "R|":
+                recipes[line.split("|", 2)[1]] = line
+            elif k == "T|":
+                trains.append(line)
+            elif k == "C|":
+                _, cx, cy = line.split("|")
+                listed.add((int(cx), int(cy)))
+            elif k == "H|":
+                self.head = line
+                try:
+                    self.tick = int(line.split("|")[3])
+                except (IndexError, ValueError):
+                    self.tick = None
+        if full:
+            self.chunks = chunks
+        else:
+            for key in listed:
+                self.chunks.pop(key, None)
+            self.chunks.update(chunks)
+        self.recipes.update(recipes)
+        self.trains = trains
+        self.version = (data or {}).get("version")
+        return len(listed) if not full else len(chunks)
+
+    def text(self) -> str:
+        out, ids = [], {}
+        h = self.head.split("|")
+        out.append("|".join(h[:5] + ["full"]))
+        body = []
+        n = 0
+        for key in sorted(self.chunks):
+            for name, rest in self.chunks[key]:
+                if name not in ids:
+                    n += 1
+                    ids[name] = n
+                    t, w, hh, ex = self.names[name]
+                    out.append(f"N|{n}|{name}|{t}|{w}|{hh}" + (f"|{ex}" if ex else ""))
+                body.append(f"E|{ids[name]}|{rest}")
+        out += body
+        out += list(self.recipes.values()) + self.trains
+        out.append(f"Z|{len(body)}|{len(self.chunks)}|0")
+        return "\n".join(out)
+
+
 # ── bridge ───────────────────────────────────────────────────────────────
 
 
@@ -154,6 +236,8 @@ class Bridge(asyncio.DatagramProtocol):
         self.reasm = Reassembler()
         self.pending: dict[str, asyncio.Future] = {}
         self.atlas_parts: dict[str, dict[int, str]] = {}  # request id -> seq -> text of a running dump
+        self.atlas_store: dict[str, AtlasStore] = {}  # requested surface ("" = the player's) -> structure
+        self.atlas_lock = asyncio.Lock()
         self.asks: deque[dict] = deque()  # waiting for the dispatcher
         self.leased: dict[str, tuple[dict, float]] = {}  # taken, not yet confirmed
         self.seen_asks: deque[str] = deque(maxlen=1000)
@@ -192,11 +276,15 @@ class Bridge(asyncio.DatagramProtocol):
         if t in ("hello", "heartbeat"):
             g = self.game
             g.last_seen = time.monotonic()
+            fresh = t == "hello" or g.run_id != msg.get("run_id")
             g.run_id, g.run_name, g.tick = msg.get("run_id"), msg.get("run_name"), msg.get("tick")
             g.tabs = msg.get("tabs") or []
             g.atlas_version = msg.get("atlas_version")
+            g.atlas_dirty = msg.get("atlas_dirty")
             self.send_game({"type": "pong", "id": msg.get("id")})
             self.flush_outbox()
+            if fresh and self.s.atlas_prefetch:
+                asyncio.get_running_loop().create_task(self.atlas_prefetch())
         elif t == "ask":
             self.game.last_seen = time.monotonic()
             self.send_game({"type": "ack", "id": msg.get("id")})
@@ -268,6 +356,56 @@ class Bridge(asyncio.DatagramProtocol):
             res["text"] = "\n".join(parts[i] for i in range(1, want + 1))
         res["ms"] = round((time.monotonic() - started) * 1000)
         return normalize_lists(msg["type"], res)
+
+    # ── atlas ──
+
+    async def atlas(self, surface: str, refresh: bool, have_version, timeout: float) -> dict:
+        async with self.atlas_lock:
+            st = self.atlas_store.get(surface)
+            g = self.game
+            started = time.monotonic()
+            how = "cached"
+            if refresh or st is None or st.run_id != g.run_id or g.atlas_dirty == -1:
+                r = await self.request({"type": "atlas", "surface": surface or None}, timeout)
+                if not r.get("ok"):
+                    return r
+                st = AtlasStore(r["text"], r.get("data"), g.run_id)
+                self.atlas_store[surface] = st
+                how, read = "full", len(st.chunks)
+            elif (g.tick is None or st.tick is None or g.tick > st.tick) and \
+                    (g.atlas_version != st.version or g.atlas_dirty):
+                # a heartbeat from before the last dump says nothing about what changed after it
+                r = await self.request({"type": "atlas", "surface": surface or None, "chunks": "dirty"}, timeout)
+                if not r.get("ok"):
+                    return r
+                data = r.get("data") or {}
+                if data.get("partial"):
+                    read = st.apply(r["text"], data, full=False)
+                    how = "partial"
+                else:
+                    st = AtlasStore(r["text"], data, g.run_id)
+                    self.atlas_store[surface] = st
+                    how, read = "full", len(st.chunks)
+            else:
+                read = 0
+            out = {"ok": True, "version": st.version, "how": how, "chunks_read": read,
+                   "ms": round((time.monotonic() - started) * 1000)}
+            if have_version is not None and have_version == st.version and how == "cached":
+                out["unchanged"] = True
+            else:
+                out["text"] = st.text()
+            return out
+
+    async def atlas_prefetch(self) -> None:
+        """Read the player's surface once the game is online, so the first question does not wait
+        for a full dump (a large base takes about a minute in the background)."""
+        try:
+            await asyncio.sleep(3)
+            if self.online() and "" not in self.atlas_store:
+                await self.atlas("", False, None, ATLAS_TIMEOUT)
+                log.info("atlas prefetched: %d chunks", len(self.atlas_store[""].chunks))
+        except Exception:
+            log.exception("atlas prefetch failed")
 
     # ── asks / thinking ──
 
@@ -410,12 +548,16 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, {"ok": True, "updated": self.activity(chat, text, step=False)}
         if method == "POST" and path == "/atlas":
-            # the structure dump of a surface, a few chunks per tick in the game (docs/atlas.md)
+            # the structure of a surface (docs/atlas.md): kept here, refreshed by partial dumps of the
+            # chunks that changed; `raw` asks the game for a dump as is, bypassing the store
             if body.get("_agent"):
                 self.activity(None, "reading the base")
-            msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget"),
-                   "send_bytes": body.get("send_bytes"), "max_chunks": body.get("max_chunks")}
-            return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
+            if body.get("raw"):
+                msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget"),
+                       "send_bytes": body.get("send_bytes"), "max_chunks": body.get("max_chunks")}
+                return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
+            return 200, await self.atlas(body.get("surface") or "", bool(body.get("refresh")),
+                                         body.get("have_version"), float(body.get("timeout") or ATLAS_TIMEOUT))
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
             # Only the agent's own calls (the MCP server flags them) are steps of a turn: tests,
             # tools/ui_dev.py or anything else polling the game must not move the counter.

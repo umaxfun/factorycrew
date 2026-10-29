@@ -26,6 +26,9 @@ end)
 script.on_configuration_changed(function()
   protocol.init_storage()
   init_players()
+  -- other mods (or their versions) changed: what stands may mean something else now
+  atlas.mark_all()
+  storage.kc.atlas_version = (storage.kc.atlas_version or 0) + 1
 end)
 
 script.on_event(defines.events.on_player_created, function(e)
@@ -58,6 +61,7 @@ local function changed(e)
   if e.name == defines.events.on_gui_closed and not ent then return end
   if ent and ent.valid and ent.force and ent.force.name ~= "player" then return end
   storage.kc.atlas_version = (storage.kc.atlas_version or 0) + 1
+  atlas.mark(ent or e.destination)
 end
 for _, ev in pairs({ "on_built_entity", "on_robot_built_entity", "script_raised_built", "script_raised_revive",
                      "on_space_platform_built_entity", "on_player_mined_entity", "on_robot_mined_entity",

@@ -358,6 +358,7 @@ function M.heartbeat(kind)
     tick = game.tick,
     tabs = storage.kc.tab_order,
     atlas_version = storage.kc.atlas_version,
+    atlas_dirty = atlas.dirty_count("nauvis"),
   }
 end
 

@@ -55,7 +55,7 @@ def test_ups_baseline(kira):
 def test_ups_during_a_full_dump(kira):
     before = ups(10)
     res = {}
-    th = threading.Thread(target=lambda: res.update(r=http("POST", "/atlas", {"timeout": 300}, timeout=320)))
+    th = threading.Thread(target=lambda: res.update(r=http("POST", "/atlas", {"timeout": 300, "raw": True}, timeout=320)))
     th.start()
     samples = []
     # 5-s windows: each reading waits for the game's 10-tick UDP poll (up to ~170 ms), so a 2-s window
@@ -91,7 +91,7 @@ def test_a_box_on_one_furnace_is_about_the_whole_block(kira):
 def test_ups_sweep(kira, budget, send_bytes, max_chunks):
     """Which part of a dump tick costs the frames: entities, sending, or looking at chunks."""
     res = {}
-    body = {"timeout": 600, "budget": budget, "send_bytes": send_bytes, "max_chunks": max_chunks}
+    body = {"timeout": 600, "raw": True, "budget": budget, "send_bytes": send_bytes, "max_chunks": max_chunks}
     th = threading.Thread(target=lambda: res.update(r=http("POST", "/atlas", body, timeout=620)))
     th.start()
     samples = []

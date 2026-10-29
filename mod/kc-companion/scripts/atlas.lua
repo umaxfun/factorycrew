@@ -246,9 +246,71 @@ function M.start(msg)
   job = { id = msg.id, surface = surface, budget = tonumber(msg.budget) or M.BUDGET, chunks = nil, next = 1,
           names = {}, nid = 0, recipes = {}, out = {}, seq = 0, count = 0, ticks = 0,
           queue = {}, qhead = 1, qtail = 0, queued = 0, send_bytes = tonumber(msg.send_bytes),
-          max_chunks = tonumber(msg.max_chunks) }
-  job.out[1] = concat({ "H", 1, clean(surface.name), game.tick, job.budget }, "|")
+          max_chunks = tonumber(msg.max_chunks), version = M.version() }
+  -- a dump takes the dirty chunks with it: changes from here on are the next dump's
+  local dirty = M.take_dirty(surface.name)
+  local partial = msg.chunks == "dirty" and not dirty.all
+  job.out[1] = concat({ "H", 1, clean(surface.name), game.tick, job.budget, partial and "partial" or "full" }, "|")
+  if partial then
+    job.chunks, job.listed, job.partial = {}, true, true
+    for key in pairs(dirty.chunks) do
+      local cx, cy = key:match("^(-?%d+),(-?%d+)$")
+      job.chunks[#job.chunks + 1] = { tonumber(cx), tonumber(cy) }
+      job.out[#job.out + 1] = fmt("C|%s|%s", cx, cy)
+    end
+  end
+  job.restore = dirty -- put back if the dump fails
   return nil
+end
+
+-- ── what changed since the last dump: chunks per surface, kept in storage (survives save/load) ──
+
+function M.version()
+  return storage.kc and storage.kc.atlas_version or 0
+end
+
+local function dirty_of(surface_name)
+  local kc = storage.kc
+  kc.atlas_dirty = kc.atlas_dirty or {}
+  local d = kc.atlas_dirty[surface_name]
+  if not d then
+    d = { chunks = {}, n = 0 }
+    kc.atlas_dirty[surface_name] = d
+  end
+  return d
+end
+
+--- An entity was built, removed or reconfigured: mark the chunks its box touches.
+function M.mark(entity)
+  if not (entity and entity.valid) then return end
+  local d = dirty_of(entity.surface.name)
+  local b = entity.bounding_box
+  for cx = math.floor(b.left_top.x / 32), math.floor(b.right_bottom.x / 32) do
+    for cy = math.floor(b.left_top.y / 32), math.floor(b.right_bottom.y / 32) do
+      local key = cx .. "," .. cy
+      if not d.chunks[key] then
+        d.chunks[key] = true
+        d.n = d.n + 1
+      end
+    end
+  end
+end
+
+--- Everything is stale (mods changed): the next dump of every surface is a full one.
+function M.mark_all()
+  for _, s in pairs(game.surfaces) do dirty_of(s.name).all = true end
+end
+
+function M.take_dirty(surface_name)
+  local d = dirty_of(surface_name)
+  storage.kc.atlas_dirty[surface_name] = { chunks = {}, n = 0 }
+  return d
+end
+
+function M.dirty_count(surface_name)
+  local d = storage.kc and storage.kc.atlas_dirty and storage.kc.atlas_dirty[surface_name or "nauvis"]
+  if not d then return 0 end
+  return d.all and -1 or d.n
 end
 
 function M.running()
@@ -264,6 +326,11 @@ function M.step()
   local j = job
   local ok, res = pcall(step)
   if ok then return res end
+  if j and j.restore then
+    local d = dirty_of(j.surface.name)
+    for k in pairs(j.restore.chunks) do d.chunks[k] = true end
+    d.all = d.all or j.restore.all
+  end
   job = nil
   return { { type = "result", id = j and j.id, ok = false, error = "atlas_failed", message = tostring(res) } }
 end
@@ -369,7 +436,8 @@ step = function()
   if finished then
     msgs[#msgs + 1] = { type = "result", id = j.id, ok = true,
                         data = { parts = j.seq, entities = j.count, chunks = #j.chunks, ticks = j.ticks,
-                                 budget = j.budget, surface = j.surface.name } }
+                                 budget = j.budget, surface = j.surface.name, version = j.version,
+                                 partial = j.partial or false } }
     job = nil
   end
   return msgs

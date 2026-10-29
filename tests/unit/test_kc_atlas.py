@@ -123,7 +123,7 @@ def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
     def post(path, body, timeout=30.0):
         calls.append(path)
         if path == "/atlas":
-            return {"ok": True, "text": text, "data": {"parts": 1}}
+            return {"ok": True, "text": text, "version": 1, "how": "full"}
         if path == "/query":
             return fake_status(body["lua"], "item_ingredient_shortage")
         return {"ok": True}
@@ -135,7 +135,7 @@ def test_mcp_atlas_tool_on_a_fake_bridge(at, monkeypatch):
     assert v["block_list"][0]["selected"] is True and v["structure_age_s"] == 10
     v2 = m.call_tool("factorio_atlas", {"level": "block", "at": {"x": -357.5, "y": -122.5}})
     assert v2["ok"] and v2["need_per_s"]["nullius-rutile"] == 25.6
-    assert calls.count("/atlas") == 1  # cached between calls
+    assert calls.count("/atlas") == 2  # asked each time; the bridge decides what to re-read
     v3 = m.call_tool("factorio_atlas", {"at": {"x": 0.5, "y": 0.5}})
     assert not v3["ok"] and v3["error"] == "not_found"
 
@@ -222,7 +222,7 @@ def test_mcp_trace_with_live_trains(at, monkeypatch):
 
     def post(path, body, timeout=30.0):
         if path == "/atlas":
-            return {"ok": True, "text": DUMP.read_text(), "data": {"parts": 1}}
+            return {"ok": True, "text": DUMP.read_text(), "version": 1, "how": "full"}
         if path == "/query" and "train_state" in body["lua"]:
             return {"ok": True, "data": {"371": {"state": "wait_station", "cargo": {"nullius-rutile": 1861},
                                                   "at_stop": "x", "capacity": 2500}}}
@@ -281,7 +281,7 @@ def test_mcp_map_reads_live_status_in_batches(at, monkeypatch):
 
     def post(path, body, timeout=30.0):
         if path == "/atlas":
-            return {"ok": True, "text": DUMP.read_text(), "data": {"parts": 1}}
+            return {"ok": True, "text": DUMP.read_text(), "version": 1, "how": "full"}
         if path == "/query":
             queries.append(body["lua"])
             return fake_status(body["lua"], "low_power")

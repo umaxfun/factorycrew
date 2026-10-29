@@ -71,3 +71,37 @@ return true""")["ok"]
     assert z2["ok"], z2
     after = {b["recipe"]: b["machines"] for b in z2["block_list"]}
     assert after["iron-gear-wheel"] == before["iron-gear-wheel"] + 1, (before, after)
+
+
+def test_only_the_changed_chunks_are_read_again(stack, mcp):
+    """docs/atlas.md task 6: after a build, the bridge asks the mod for the dirty chunks only."""
+    import json
+    import urllib.request
+    from conftest import HTTP, wait_until
+
+    def post(body):
+        req = urllib.request.Request(HTTP + "/atlas", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read())
+
+    def health():
+        with urllib.request.urlopen(HTTP + "/health", timeout=5) as r:
+            return json.loads(r.read())
+    first = post({})
+    assert first["ok"], first
+    again = post({"have_version": first["version"]})
+    assert again["ok"] and again.get("unchanged") and again["how"] == "cached", again
+    v = health()["atlas_version"]
+    # one machine in one chunk; a second one far away in another chunk
+    assert mcp.tool("factorio_query", lua=f"""
+local s = game.surfaces[1]
+s.create_entity{{name = "assembling-machine-1", position = {{{X0} + 20.5, {Y0} + 1.5}}, force = "player", raise_built = true}}
+return true""")["ok"]
+    wait_until(lambda: health()["atlas_version"] != v and health()["atlas_dirty"], timeout=20, step=0.5,
+               what="the build reaching the heartbeat")
+    r = post({"have_version": first["version"]})
+    assert r["ok"] and r["how"] == "partial" and r["chunks_read"] == 1, {k: x for k, x in r.items() if k != "text"}
+    assert "assembling-machine-1" in r["text"]
+    z = mcp.tool("factorio_atlas", at={"x": X0 + 20.5, "y": Y0 + 1.5})
+    assert z["ok"] and z["machines"] == 1, z
