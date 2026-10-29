@@ -25,14 +25,28 @@ planner keeps `slack` (default half a tile) under that limit; check() applies th
 exactly unless given a slack. Supply: an entity is powered when its tile footprint overlaps the
 pole's supply square (half-size = supply_area_distance) by more than an edge.
 
+The generic parts live in the kc library: candidate positions, the greedy cover and the prune in
+kc.cover; the link rule, wire groups, the A* chain and group joining in kc.wires. This file keeps
+what is specific to poles: specs, input forms, roles, and check().
+
 Written for factorycrew (MIT) from an idea only: greedy set cover + bridging groups in wire-reach
 hops as in demipixel/factorio-generators (power.js) and Ben-Ramchandani/PlannerCore; neither has a
 usable license, so no code was read into or copied from them.
 """
 from __future__ import annotations
 
-import heapq
 import math
+
+try:  # factorio_compute: the kc package sits next to this file
+    import kc  # noqa: F401
+except ImportError:  # the repo: skills/power/lib -> mcp/kc
+    import os as _os
+    import sys as _sys
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    _sys.path.insert(0, _os.path.abspath(_os.path.join(_here, "..", "..", "..", "mcp")))
+from kc import cover as _kcover  # noqa: E402
+from kc import wires as _kwires  # noqa: E402
+from kc.grid import Grid as _Grid  # noqa: E402
 
 EPS = 1e-9
 
@@ -112,16 +126,6 @@ def _off(size):
     return 0.5 if size % 2 else 0.0
 
 
-def _strict(lo, hi, o):
-    """Grid values n + o with lo < v < hi."""
-    return [n + o for n in range(math.floor(lo - o + EPS) + 1, math.ceil(hi - o - EPS))]
-
-
-def _incl(lo, hi, o):
-    """Grid values n + o with lo <= v <= hi."""
-    return [n + o for n in range(math.ceil(lo - o - EPS), math.floor(hi - o + EPS) + 1)]
-
-
 def _foot(x, y, w, h=None):
     h = w if h is None else h
     x0, y0 = x - w / 2, y - h / 2
@@ -129,18 +133,18 @@ def _foot(x, y, w, h=None):
             for i in range(int(round(w))) for j in range(int(round(h)))]
 
 
-def _covers(px, py, supply, c):
+def _box(c):
+    """Tile box (x0, y0, x1, y1) of a consumer (x, y, w, h)."""
     cx, cy, w, h = c
-    return abs(px - cx) < supply + w / 2 - EPS and abs(py - cy) < supply + h / 2 - EPS
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+
+def _covers(px, py, supply, c):
+    return _kcover.area_overlaps(_box(c), (px, py), supply)
 
 
 def _dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
-
-
-def _links(a, b, slack):
-    """a, b: (x, y, reach, ...). Factorio: distance <= the shorter reach (minus our slack)."""
-    return _dist(a, b) <= min(a[2], b[2]) - slack + EPS
 
 
 def _entity(spec, x, y, role):
@@ -154,105 +158,6 @@ def _node(p):
         raise ValueError(f"pole needs a reach: {p}")
     g = _gridpole(p)
     return (g[0], g[1], g[2])
-
-
-def _groups(nodes, slack):
-    """Wire groups (lists of indices, each sorted) under the link rule."""
-    seen, out = set(), []
-    for i in range(len(nodes)):
-        if i in seen:
-            continue
-        comp, todo = [], [i]
-        seen.add(i)
-        while todo:
-            k = todo.pop()
-            comp.append(k)
-            for j in range(len(nodes)):
-                if j not in seen and _links(nodes[k], nodes[j], slack):
-                    seen.add(j)
-                    todo.append(j)
-        out.append(sorted(comp))
-    return out
-
-
-# ── chains of poles (A*) ──
-
-def _chain(sources, targets, spec, taken, slack, margin=None, budget=4000):
-    """Fewest new `spec` poles wiring any source to any target. sources/targets: (x, y, reach).
-    taken: tiles a new pole may not cover. Returns (positions, target, source) or
-    (None, reason, None)."""
-    size, reach = spec["size"], spec["reach"]
-    hop = reach - slack
-    if hop <= 0:
-        return None, "slack is not below the pole's reach", None
-    o = _off(size)
-    margin = reach if margin is None else margin
-    pts = list(sources) + list(targets)
-    x0, x1 = min(p[0] for p in pts) - margin, max(p[0] for p in pts) + margin
-    y0, y1 = min(p[1] for p in pts) - margin, max(p[1] for p in pts) + margin
-    t_last = max(min(reach, t[2]) - slack for t in targets)
-
-    def near(n):
-        return min(targets, key=lambda t: (_dist(n, t), t[1], t[0]))
-
-    def h(n):
-        """(poles still needed at least, distance to the nearest target)."""
-        d = _dist(n, near(n))
-        if any(_links(n, t, slack) for t in targets):
-            return 0, d
-        return max(1, math.ceil((d - t_last) / hop - EPS)), d
-
-    free_cache = {}
-
-    def free(x, y):
-        k = (x, y)
-        if k not in free_cache:
-            free_cache[k] = not any(t in taken for t in _foot(x, y, size))
-        return free_cache[k]
-
-    frontier, best, came, tie = [], {}, {}, 0
-    for s in sorted(sources, key=lambda s: (s[1], s[0])):
-        for t in sorted(targets, key=lambda t: (_dist(s, t), t[1], t[0])):
-            if _links(s, t, slack):
-                return [], t, s
-        k = ("src",) + tuple(s)
-        best[k] = 0
-        came[k] = None
-        hh, d = h(s)
-        heapq.heappush(frontier, (hh, d, tie, 0, k, s))
-        tie += 1
-    expanded = 0
-    while frontier:
-        _, _, _, g, k, n = heapq.heappop(frontier)
-        if g > best.get(k, math.inf):
-            continue
-        if g > 0:
-            for t in sorted(targets, key=lambda t: (_dist(n, t), t[1], t[0])):
-                if _links(n, t, slack):
-                    path, cur = [], k
-                    while came[cur] is not None:
-                        path.append((cur[0], cur[1]))
-                        cur = came[cur]
-                    return path[::-1], t, tuple(cur[1:])
-        expanded += 1
-        if expanded > budget:
-            return None, f"search budget of {budget} poles spent", None
-        lim = min(n[2], reach) - slack
-        for x in _incl(max(x0, n[0] - lim), min(x1, n[0] + lim), o):
-            dy = math.sqrt(max(0.0, lim * lim - (x - n[0]) ** 2))
-            for y in _incl(max(y0, n[1] - dy), min(y1, n[1] + dy), o):
-                if (x, y) == (n[0], n[1]) or not free(x, y):
-                    continue
-                m = (x, y, reach)
-                if not _links(n, m, slack):
-                    continue
-                if g + 1 < best.get((x, y), math.inf):
-                    best[(x, y)] = g + 1
-                    came[(x, y)] = k
-                    hh, d = h(m)
-                    heapq.heappush(frontier, (g + 1 + hh, d, tie, g + 1, (x, y), m))
-                    tie += 1
-    return None, "no chain: the target is walled off within the search area", None
 
 
 # ── public API ──
@@ -288,105 +193,46 @@ def cover(consumers, pole=None, blocked=(), *, join=None, anchor=None, slack=0.5
         anchor = (sum(c[0] for c in cons) / len(cons), sum(c[1] for c in cons) / len(cons))
     else:
         anchor = _xy(anchor)
-    size, supply, o = spec["size"], spec["supply"], _off(spec["size"])
+    size, supply = spec["size"], spec["supply"]
 
-    # 1. candidates
-    covers, by_cons = {}, [[] for _ in cons]
-    for i, c in enumerate(cons):
-        cx, cy, w, h = c
-        for x in _strict(cx - supply - w / 2, cx + supply + w / 2, o):
-            for y in _strict(cy - supply - h / 2, cy + supply + h / 2, o):
-                p = (x, y)
-                if p not in covers:
-                    if any(t in taken for t in _foot(x, y, size)):
-                        covers[p] = None
-                        continue
-                    covers[p] = []
-                if covers[p] is not None:
-                    covers[p].append(i)
-                    by_cons[i].append(p)
-    uncoverable = [i for i in range(len(cons)) if not by_cons[i]]
-    covers = {p: v for p, v in covers.items() if v}
+    # 1. candidates: free positions whose supply square reaches a consumer (kc.cover)
+    covers = _kcover.candidates_around([_box(c) for c in cons], supply, _Grid(blocked=taken), size)
+    reached = {i for v in covers.values() for i in v}
+    uncoverable = [i for i in range(len(cons)) if i not in reached]
 
-    # 2. greedy max coverage with gain buckets
-    gain = {p: len(v) for p, v in covers.items()}
-    buckets = {}
-    for p, g in gain.items():
-        buckets.setdefault(g, set()).add(p)
-    alive, done, chosen = set(covers), [False] * len(cons), []
-    left = len(cons) - len(uncoverable)
+    # 2. greedy max coverage (kc.cover.greedy); ties: wires to a taken pole, near the anchor, y, x
+    reach = spec["reach"]
 
-    def move(p, g):
-        if gain[p] in buckets:
-            buckets[gain[p]].discard(p)
-        gain[p] = g
-        if g > 0:
-            buckets.setdefault(g, set()).add(p)
+    def key(p, chosen):
+        wired = any(_kwires.can_link((p[0], p[1], reach), (q[0], q[1], reach), slack) for q in chosen)
+        return (0 if wired or not chosen else 1, round(_dist(p, anchor), 6), p[1], p[0])
 
-    while left > 0:
-        top = max((g for g, s in buckets.items() if s), default=0)
-        if top == 0:
-            break
+    def overlapping(p):  # positions whose footprint overlaps a pole at p
+        return [(p[0] + dx, p[1] + dy) for dx in range(-size + 1, size) for dy in range(-size + 1, size)]
 
-        def key(p):
-            wired = any(_dist(p, q) <= spec["reach"] - slack + EPS for q in chosen)
-            return (0 if wired or not chosen else 1, round(_dist(p, anchor), 6), p[1], p[0])
-        p = min(buckets[top], key=key)
-        chosen.append(p)
-        for i in covers[p]:
-            if not done[i]:
-                done[i] = True
-                left -= 1
-                for q in by_cons[i]:
-                    if q in alive:
-                        move(q, gain[q] - 1)
-        for dx in range(-size + 1, size):
-            for dy in range(-size + 1, size):
-                q = (p[0] + dx, p[1] + dy)
-                if q in alive:
-                    alive.discard(q)
-                    move(q, 0)
+    chosen = _kcover.greedy(range(len(cons)), covers, tie=key, conflicts=overlapping)["chosen"]
 
     # 3. prune poles whose consumers are all covered by others
-    count = [0] * len(cons)
-    for p in chosen:
-        for i in covers[p]:
-            count[i] += 1
-    for p in list(reversed(chosen)):
-        if all(count[i] >= 2 for i in covers[p]):
-            chosen.remove(p)
-            for i in covers[p]:
-                count[i] -= 1
+    chosen = _kcover.prune(chosen, covers)
     chosen.sort(key=lambda p: (round(_dist(p, anchor), 6), p[1], p[0]))
     ents = [_entity(spec, p[0], p[1], "cover") for p in chosen]
     if uncoverable:
         return {"ok": False, "reason": f"{len(uncoverable)} consumers have no free pole position in reach",
                 "uncoverable": uncoverable, "entities": ents}
 
-    # 4. join wire groups
+    # 4. join wire groups (kc.wires.join_groups): the group holding ents[0], the pole nearest the
+    #    anchor, is chained to the nearest other group until one group remains
     for e in ents:
         taken.update(_foot(e["x"], e["y"], e["size"]))
-    joins = 0
-    while True:
-        nodes = [(e["x"], e["y"], e["reach"]) for e in ents]
-        comps = _groups(nodes, slack)
-        if len(comps) <= 1:
-            break
-        main = comps[0]  # holds ents[0], the pole nearest the anchor
-        rest = [k for c in comps[1:] for k in c]
-        nearest = min(rest, key=lambda k: (min(_dist(nodes[k], nodes[m]) for m in main), k))
-        other = next(c for c in comps if nearest in c)
-        path, why, _ = _chain([nodes[m] for m in main], [nodes[k] for k in other], jspec, taken, slack,
-                              margin=margin, budget=budget)
-        if path is None:
-            return {"ok": False, "reason": f"cannot wire the cover poles into one group: {why}",
-                    "entities": ents, "uncoverable": []}
-        for x, y in path:
-            ents.append(_entity(jspec, x, y, "join"))
-            taken.update(_foot(x, y, jspec["size"]))
-            joins += 1
-    return {"ok": True, "entities": ents, "poles": len(ents), "cover_poles": len(ents) - joins,
-            "join_poles": joins}
+    j = _kwires.join_groups([[(e["x"], e["y"], e["reach"]) for e in ents]], jspec["reach"],
+                            _Grid(blocked=taken), size=jspec["size"], slack=slack, margin=margin,
+                            budget=budget)
+    ents += [_entity(jspec, x, y, "join") for x, y in j["relays"]]
+    if not j["ok"]:
+        return {"ok": False, "reason": f"cannot wire the cover poles into one group: {j['reason']}",
+                "entities": ents, "uncoverable": []}
+    return {"ok": True, "entities": ents, "poles": len(ents), "cover_poles": len(ents) - j["count"],
+            "join_poles": j["count"]}
 
 
 def link(group, grid_poles, blocked=(), *, reach_pole=None, consumers=(), slack=0.5, candidates=8,
@@ -429,11 +275,12 @@ def link(group, grid_poles, blocked=(), *, reach_pole=None, consumers=(), slack=
         taken.update(_foot(g[0], g[1], g[4]))
     grid.sort(key=lambda g: (min(_dist(g, n) for n in nodes), g[1], g[0]))
     targets = [(g[0], g[1], g[2]) for g in grid[:max(1, int(candidates))]]
-    path, t, s = _chain(nodes, targets, spec, taken, slack, margin=margin, budget=budget)
-    if path is None:
-        return {"ok": False, "reason": t}
-    return {"ok": True, "entities": [_entity(spec, x, y, "link") for x, y in path], "poles": len(path),
-            "target": list(t), "source": list(s)}
+    c = _kwires.chain(nodes, targets, spec["reach"], _Grid(blocked=taken), size=spec["size"], slack=slack,
+                      margin=margin, budget=budget)
+    if not c["ok"]:
+        return {"ok": False, "reason": c["reason"]}
+    return {"ok": True, "entities": [_entity(spec, x, y, "link") for x, y in c["relays"]],
+            "poles": c["count"], "target": c["target"], "source": c["source"]}
 
 
 def plan(consumers, pole=None, blocked=(), grid_poles=(), *, reach_pole=None, slack=0.5, **kw):
@@ -502,17 +349,9 @@ def check(consumers, poles, grid_poles=(), blocked=(), slack=0.0):
     for i, c in enumerate(cons):
         if not any(_covers(n[0], n[1], n[3], c) for n in supplies):
             problems.append(f"consumer #{i} at {[c[0], c[1]]} is outside every pole's supply area")
-    nodes = grid + new
-    seeds = list(range(len(grid))) if grid else ([len(grid)] if new else [])
-    linked, todo = set(seeds), list(seeds)
-    while todo:
-        k = todo.pop()
-        for j in range(len(nodes)):
-            if j not in linked and _links(nodes[k], nodes[j], slack):
-                linked.add(j)
-                todo.append(j)
-    for i, n in enumerate(new):
-        if len(grid) + i not in linked:
-            where = "the grid" if grid else "the other new poles"
-            problems.append(f"pole #{i} at {[n[0], n[1]]} is not wired to {where}")
+    loose = _kwires.unwired([n[:3] for n in new], [g[:3] for g in grid], slack)
+    for i in loose:
+        n = new[i]
+        where = "the grid" if grid else "the other new poles"
+        problems.append(f"pole #{i} at {[n[0], n[1]]} is not wired to {where}")
     return problems

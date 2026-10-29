@@ -113,11 +113,10 @@ TOOLS = [
             "than a lookup: clustering, layouts, path finding for pipes/belts, pole placement, production "
             "ratios. Optional `data_lua` runs first in the game and its return value is the variable `data` "
             "(e.g. resource positions, entities in the area, recipes and machine speeds from prototypes). "
-            "Helpers as `kc`: kc.connect(outputs, sink, blocked) one connected pipe/belt network joining all outputs, "
-            "kc.footprint(x, y, w, h) tiles of an entity, kc.astar(start, goal, blocked) "
-            "pipe/belt route around blocked tiles, kc.unreached(pipes, start, targets) connectivity check "
-            "(must be [] before placing a pipe network), kc.unwired(poles, grid) copper-wire check (must be []), "
-            "kc.tile(x, y). Skills: `import belts` (belts.route / belts.check, belt routing with undergrounds). "
+            "Library `import kc` (stdlib): kc.geo, kc.Grid, kc.search (bfs/astar/grid_path), kc.steiner.join, "
+            "kc.cover.greedy, kc.wires (shorter-reach links, relay chains), kc.lp.solve (exact LP), kc.bp (blueprints), "
+            "kc.world (scan/proto adapters), kc.checks.all(plan, specs, ...) validator: [] before placing. "
+            "Skills: `import belts` and the others in your rules. "
             "Set the variable `result` to what you need back (JSON-serialisable, ≤64 KB, e.g. a list of "
             "{name, x, y, direction}); print() goes to stdout. Off the game tick, so the game does not freeze. "
             "No network, no files outside its temp dir. Timeout 60 s by default, `timeout` up to 120."
@@ -179,12 +178,13 @@ PRELUDE = '''\
 import json as _json
 import sys as _sys
 _sys.path.insert(0, ".")  # -I leaves the script's dir off sys.path; kc_compute.py sits there
-import kc_compute as kc
+import kc
 with open("data.json", encoding="utf-8") as _f:
     data = _json.load(_f)
 result = None
 '''
-KC_COMPUTE = Path(__file__).resolve().parent / "kc_compute.py"
+KC_COMPUTE = Path(__file__).resolve().parent / "kc_compute.py"  # old name, a shim over kc/
+KC_PKG = Path(__file__).resolve().parent / "kc"
 SKILLS = Path(__file__).resolve().parents[1] / "skills"  # repo root or the installed app's root
 EPILOGUE = '''
 with open("result.json", "w", encoding="utf-8") as _f:
@@ -254,6 +254,11 @@ def compute(args: dict) -> dict:
         for lib in [KC_COMPUTE, *sorted(SKILLS.glob("*/lib/*.py"))]:
             with open(lib, encoding="utf-8") as src, \
                     open(os.path.join(work, lib.name), "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+        os.makedirs(os.path.join(work, "kc"), exist_ok=True)
+        for lib in sorted(KC_PKG.glob("*.py")):  # the primitive library, as the package `kc`
+            with open(lib, encoding="utf-8") as src, \
+                    open(os.path.join(work, "kc", lib.name), "w", encoding="utf-8") as dst:
                 dst.write(src.read())
         argv = [sys.executable, "-I", "main.py"]
         sandboxed = own_sandbox_works(work)

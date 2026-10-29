@@ -1,11 +1,11 @@
-"""Level 2: blueprint strings from skills/blueprints/lib/blueprints.py against the real game.
+"""Level 2: blueprint strings from kc.bp (mcp/kc/bp.py) against the real game.
 
 A small blueprint (belts, an underground pair, a splitter, an inserter, an assembler with a recipe,
 a coloured lamp, a pole, a chest, an accumulator and one red wire) is encoded in Python, imported
 into a blueprint item in a script inventory (game.create_inventory + LuaItemStack.import_stack), and
 built with build_blueprint at fractional and whole positions in all four directions, plain and
 mirrored (the game cannot flip a print from script, so the mirrored cases build our flipped copy).
-Sizes and the entities that cannot turn (supports_direction == false) come from the prototypes. The ghosts the game makes must match blueprints.to_ghosts: names, positions, directions,
+Sizes and the entities that cannot turn (supports_direction == false) come from the prototypes. The ghosts the game makes must match kc.bp.to_ghosts: names, positions, directions,
 underground types. A real 2.0 print (Red Circuits Block, 254 entities) is built the same way, and
 the game's own export of our string must decode to the same contents.
 """
@@ -16,8 +16,8 @@ import sys
 
 from conftest import ROOT
 
-sys.path.insert(0, str(ROOT / "skills" / "blueprints" / "lib"))
-import blueprints  # noqa: E402
+sys.path.insert(0, str(ROOT / "mcp"))
+from kc import bp as blueprints  # noqa: E402
 
 X0, Y0 = 900, 900  # an empty corner of the test map, away from the belts test
 E, S, W, N = 4, 8, 12, 0
@@ -151,7 +151,7 @@ def test_build_blueprint_matches_to_ghosts(stack, mcp):
 
 
 def test_real_print_builds_where_to_ghosts_says(stack, mcp):
-    s = (ROOT / "skills" / "blueprints" / "examples" / "red-circuits-block.txt").read_text()
+    s = (ROOT / "tests" / "data" / "blueprints" / "red-circuits-block.txt").read_text()
     bp = blueprints.decode(s)
     assert blueprints.check(bp) == []
     sizes, fixed = _setup(mcp, set(blueprints.summary(bp)["counts"]))

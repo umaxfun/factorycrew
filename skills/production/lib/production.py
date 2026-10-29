@@ -24,6 +24,7 @@ Algorithm, ported from Kirk McDonald's Factorio calculator (Apache-2.0, see SOUR
    resort", Kirk's disableRecipe / FactorioLab's unproduceable penalty), so the LP is always
    feasible and a broken loop shows up as an import instead of an error. Dantzig pivoting with a
    switch to Bland's rule after a run of degenerate pivots (anti-cycling, not in Kirk's code).
+   The simplex itself is kc.lp.tableau_simplex (the same port, shared with every kc user).
 
 Module and beacon effects are applied to each recipe before solving, following FactorioLab's
 `src/state/adjustment.ts` (MIT): effects add up from research productivity, the machine's base
@@ -40,6 +41,15 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
+
+try:  # factorio_compute puts the kc package next to this file
+    from kc import lp as _lp
+except ImportError:  # a checkout: kc lives in <repo>/mcp
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[3] / "mcp"))
+    from kc import lp as _lp
 
 EFFECTS = ("speed", "productivity", "consumption", "pollution", "quality")
 MIN_FACTOR = Fraction(1, 5)
@@ -328,61 +338,12 @@ def adjust(recipe, machine, config=None, module_defs=None, beacon_defs=None, war
 
 
 # ---------------------------------------------------------------------------- simplex (simplex.js)
+# The tableau simplex lives in kc.lp (same port of simplex.js, same pivoting rules):
+# simplex(A, basis, max_iter) maximises in place and returns the pivot count, raising
+# ValueError (kc.lp.Unbounded / NotConverged) when the problem is unbounded or does not converge.
 
-def _pivot(A, row, col):
-    x = A[row][col]
-    A[row] = [v / x for v in A[row]]
-    prow = A[row]
-    for r in range(len(A)):
-        if r == row:
-            continue
-        ratio = A[r][col]
-        if ratio == 0:
-            continue
-        A[r] = [a - p * ratio for a, p in zip(A[r], prow)]
-
-
-def simplex(A, basis=None, max_iter=100000):
-    """Maximise over a tableau in place (simplex.js `simplex`). The last row is the objective
-    row (negated objective coefficients), the last column the right-hand side; every other row
-    starts with a basic slack (feasible: RHS >= 0). Returns the number of pivots.
-
-    Dantzig's rule (most negative column, first on ties) as in Kirk's code, plus Bland's rule
-    once degenerate pivots repeat, so it cannot cycle."""
-    rows, cols = len(A) - 1, len(A[0]) - 1
-    if basis is None:
-        basis = [None] * rows
-    bland, streak, n = False, 0, 0
-    while True:
-        obj = A[-1]
-        col = None
-        for c in range(cols):
-            if obj[c] < 0 and (col is None or (not bland and obj[c] < obj[col])):
-                col = c
-                if bland:
-                    break
-        if col is None:
-            return n
-        best, best_row = None, None
-        for r in range(rows):
-            x = A[r][col]
-            if x <= 0:
-                continue
-            ratio = A[r][-1] / x
-            if best is None or ratio < best or (
-                    bland and ratio == best and (basis[r] if basis[r] is not None else -1)
-                    < (basis[best_row] if basis[best_row] is not None else -1)):
-                best, best_row = ratio, r
-        if best_row is None:
-            raise ValueError("failed to pivot: the problem is unbounded")
-        _pivot(A, best_row, col)
-        basis[best_row] = col
-        n += 1
-        streak = streak + 1 if best == 0 else 0
-        if streak > rows:
-            bland = True
-        if n > max_iter:
-            raise ValueError("simplex did not converge")
+simplex = _lp.tableau_simplex
+_pivot = _lp.pivot
 
 
 # ---------------------------------------------------------------------------- cycles (cycle.js)

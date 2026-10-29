@@ -34,6 +34,14 @@ A message without that header was typed in the dashboard. Answer it in the chat 
 - Read sizes and connection points from prototypes in `data_lua` (`prototypes.entity[n].tile_width/tile_height`, `collision_box`, `fluidbox_prototypes`) instead of guessing; modded entities differ from vanilla.
 - Directions in Factorio 2.0: `defines.direction.north/east/south/west` = 0/4/8/12.
 
+## The kc library (Python, in `factorio_compute`: `import kc`)
+
+General building blocks, not solutions for particular tasks: compose them.
+- Read the world with the mod's Lua helpers in `data_lua`: `kc.scan(surface, area)` (entities, ghosts, water/cliffs with sizes), `kc.proto({names})` (sizes, fluid ports per direction, pole supply/reach, drill areas, underground reach, crafting speed...), `kc.resources(surface, center, radius)`, `kc.best(type, key)` (best researched/carried entity of a type). Turn them into Python objects with `kc.world`: `grid_from_scan(scan)` -> `kc.Grid`, `specs_from_proto(proto)`, `pole_spec`, `drill_spec`, `belt_spec`, `pipe_ports`, `ore_tiles`.
+- `kc.geo`: tiles, `snap` (odd sizes on x.5, even on integers), `footprint`, directions, `rotate`/`mirror`, `spiral`. `kc.Grid`: `free`, `can_place`, `place`, `first_fit`.
+- `kc.search`: `bfs`, `dijkstra`, `astar`, `grid_path`, `reachable`, `components`. `kc.steiner`: `join` (one network joining many tiles), `mst`, `join_nodes`. `kc.cover`: `greedy` set cover, `area_overlaps` (supply/effect squares). `kc.wires`: `can_link` (shorter reach wins), `components`, `chain`/`join_groups` (fewest relay poles). `kc.lp`: exact linear programs on fractions (`solve`). `kc.bp`: blueprint strings (`decode`, `encode`, `to_ghosts`, `transform`).
+- Before placing anything, `kc.checks.all(plan, specs, grid=..., grid_poles=..., connect=(tiles, terminals))` must be `[]`: overlaps, taken tiles, unpowered electric entities, unwired poles, cut networks. Fix and recheck; then place the plan with `kc.place_ghosts`.
+
 ## Skills (code you can import in `factorio_compute`)
 
 - `import belts`: belt from A to B around obstacles, with undergrounds. `belts.route(start, goal, blocked, belt=, underground=, max_underground=, start_dir=, goal_dir=, undergrounds=)` returns `entities` in flow order (underground halves carry `type`); `belts.check(...)` must be `[]`; place `entities` unchanged with `kc.place_ghosts`. Read the tier from prototypes (`related_underground_belt`, `max_underground_distance`); never write belts by hand.

@@ -1,4 +1,4 @@
-"""Blueprint strings for factorio_compute (`import blueprints`).
+"""kc.bp: blueprint strings. Codec, contents, transforms, ghosts, validation. Pure Python, no game.
 
 Codec: a blueprint string is the version byte "0" + base64(zlib(JSON)). `decode` also takes the
 raw JSON that 2.0 imports directly. `encode` writes compact JSON at zlib level 9, as the game does.
@@ -6,19 +6,55 @@ raw JSON that 2.0 imports directly. `encode` writes compact JSON at zlib level 9
 Placing: `to_ghosts` turns a blueprint into kc.place_ghosts items the way `build_blueprint` does.
 Each entity is mirrored (x -> -x, direction d -> 16 - d; vertical: y -> -y, d -> 8 - d) and then
 rotated clockwise in 90-degree steps ((x, y) -> (-y, x), d -> d + 4); entities that cannot turn
-(prototype supports_direction == false: poles, chests, lamps) keep their direction. The bounding box of the
-transformed entities (footprints from `sizes`, w/h swapped for east/west) is then centred on
-`anchor`: an odd width puts the centre on a tile centre (floor + 0.5), an even width on the
-nearest tile corner (round). That is the game's own cursor rule, checked in the 2.1 stand by
-tests/integration/test_blueprints_game.py. Blueprints made by 1.x store 8-way directions; they
-are doubled to the 2.0 16-way values, as the game does on import.
+(prototype supports_direction == false: poles, chests, lamps) keep their direction. The bounding
+box of the transformed entities (footprints from `sizes`, w/h swapped for east/west) is then
+centred on `anchor` with kc.geo.snap: an odd width puts the centre on a tile centre, an even width
+on the nearest tile corner. That is the game's own cursor rule, checked in the 2.1 stand by
+tests/integration/test_kc_bp_game.py. Blueprints made by 1.x store 8-way directions; they are
+doubled to the 2.0 16-way values, as the game does on import.
 
-Origin: decode/encode/version/type/label/book listing are ported from pierre-dejoue/factorio-blueprints
-(MIT, commit 045b59e2), factorio_game/exchange_string/blueprints.py and blueprints.py. The field
-names, the 2.0 wire format ([entity1, connector1, entity2, connector2]) and the list of known entity
-keys come from redruin1/factorio-blueprint-schemas (MIT, commit 682630ff), schemas/2.0.0. Everything
-else (summary, transforms, to_ghosts, from_entities, check) is written for factorycrew (MIT).
-See ../SOURCE.md.
+Typical use inside factorio_compute:
+  bp = kc.bp.decode(s); kc.bp.summary(bp)            # what the player pasted
+  kc.bp.book_entries(book)                            # pick one entry's `item` from a book
+  kc.bp.check(bp, known=names_in_save) == []          # or understand every line
+  items = kc.bp.to_ghosts(bp, anchor, 4, False, sizes, fixed)   # sizes/fixed read from prototypes
+  kc.bp.collisions(items, grid, sizes) == []          # target area free, then kc.place_ghosts
+  kc.bp.encode(kc.bp.from_entities(any_planner_items, label="..."))   # save a layout as a string
+Read `sizes` ({name: [tile_width, tile_height]}) and `fixed` (names with not supports_direction)
+from prototypes; never assume vanilla values for modded names. place_ghosts places only name,
+position, direction and type: the settings in `extra` and the wires (`wires(bp)`, matched through
+extra.entity_number) are not applied by it.
+
+Not covered: curved/diagonal rails under a mirror (refused), snap-to-grid and absolute snapping
+(centred like a free print; check() says so), tiles (listed in summary, not placed), parameter
+substitution.
+
+Origin and licenses (full texts in LICENSE-blueprints.txt next to this file):
+- pierre-dejoue/factorio-blueprints, https://github.com/pierre-dejoue/factorio-blueprints,
+  commit 045b59e218c819e82d42a781ac627247a8328ed9, MIT, Copyright (c) 2019 Pierre DEJOUE.
+  Ported from factorio_game/exchange_string/blueprints.py: parse_exchange_string* -> decode,
+  generate_exchange_string* -> encode, decode_game_version -> version_string, the type and label
+  readers -> kind and summary; from blueprints.py: print_blueprint_book_contents -> book_entries.
+  Changes: decode also takes raw JSON and ignores whitespace; encode uses zlib level 9 and keeps
+  key order (no sort_keys) and wraps a bare body; version_number added (inverse of
+  version_string); asserts became ValueError; the Type enum became plain strings (Python 3.9);
+  book_entries returns a list with each entry's path through nested books instead of printing.
+  Example strings vendored from that commit (tests/examples/blueprints/, MIT):
+  tests/data/blueprints/red-circuits-block.txt (2.0.11.3), blueprint-book.txt,
+  decon-planner.txt, upgrade-planner.txt.
+- redruin1/factorio-blueprint-schemas, https://github.com/redruin1/factorio-blueprint-schemas,
+  commit 682630ffe26aa0a248d44643a72ffa2625de6187, MIT, Copyright (c) 2025 redruin1.
+  From schemas/2.0.0: ENTITY_KEYS (union of `properties` over entity.json and the 99
+  entity/*.json, extracted mechanically, plus the hyphenated result-inventory/priority-list seen in
+  their 2.0.47 example), the blueprint/book/planner key lists, the wires format
+  [entity1, connector1, entity2, connector2] and the 16-way direction values. Example strings
+  vendored from test/examples/ (MIT): tests/data/blueprints/accumulators-2.0.txt,
+  scattershot-2.0.txt, circuit-connections-2.1.txt. No schema files are vendored; check() is a
+  hand-written structural check, not a JSON Schema validator.
+- Written for factorycrew (MIT): transform, bounding_box, to_ghosts, from_entities, wires,
+  summary (counts, size, recipes, quality), check, sized, collisions. Mirror semantics follow the
+  game's F/G flip: direction becomes 16-d or 8-d, splitter priorities swap sides, machines toggle
+  `mirror`. Moved here from skills/blueprints/lib/blueprints.py.
 """
 from __future__ import annotations
 
@@ -27,10 +63,12 @@ import json
 import math
 import zlib
 
+from . import geo
+
 TYPES = ("blueprint", "blueprint_book", "deconstruction_planner", "upgrade_planner")
 ITEMS = {"blueprint": "blueprint", "blueprint_book": "blueprint-book",
          "deconstruction_planner": "deconstruction-planner", "upgrade_planner": "upgrade-planner"}
-NAMES = {0: "north", 4: "east", 8: "south", 12: "west"}
+NAMES = geo.NAMES
 DEFAULT_VERSION = (2, 0, 77, 0)
 
 # 2.0 entity keys, the union of `properties` over schemas/2.0.0/entity.json and entity/*.json
@@ -170,22 +208,15 @@ def book_entries(book, depth=8):
     return out
 
 
-# ── geometry ──
+# ── geometry (on kc.geo) ──
 
-def _xy(p):
-    if isinstance(p, dict):
-        if "position" in p:
-            p = p["position"]
-        return float(p["x"]), float(p["y"])
-    return float(p[0]), float(p[1])
+def _pos(it):
+    return geo.xy(it if "x" in it else it["position"])
 
 
 def _dir(d):
-    if d is None:
-        return 0
-    if isinstance(d, str):
-        return {v: k for k, v in NAMES.items()}[d.lower()]
-    return int(d) % 16
+    d = geo.dir_of(d)
+    return 0 if d is None else d
 
 
 def _mirror_mode(m):
@@ -199,19 +230,10 @@ def _mirror_mode(m):
 
 
 def _size(name, d, sizes):
-    w, h = (sizes or {}).get(name) or VANILLA_SIZES.get(name) or (1, 1)
-    if isinstance(w, dict):  # {"tile_width": .., "tile_height": ..} straight from prototypes
-        w, h = w["tile_width"], w["tile_height"]
-    if d in (4, 12):
-        w, h = h, w
+    s = (sizes or {}).get(name) or VANILLA_SIZES.get(name) or (1, 1)
+    w, h = (s["tile_width"], s["tile_height"]) if isinstance(s, dict) else s  # prototype-shaped dict ok
+    w, h = geo.oriented_size(w, h, d)
     return float(w), float(h)
-
-
-def _snap_center(v, span):
-    """Where the centre of a box `span` tiles wide lands for cursor coordinate v."""
-    if int(round(span)) % 2:
-        return math.floor(v) + 0.5
-    return math.floor(v + 0.5)
 
 
 def _flip_priority(p):
@@ -240,25 +262,23 @@ def transform(bp, direction=0, mirror=False, mirror_flag=MIRROR_FLAG, fixed=None
             raise ValueError(f"mirroring curved/diagonal rails is not supported: {bad}")
     out = []
     for e in body.get("entities", []) or []:
-        x, y = _xy(e["position"])
+        x, y = geo.xy(e["position"])
         d = (_dir(e.get("direction", 0)) * scale) % 16
         extra = {k: v for k, v in e.items() if k not in CORE}
         extra["entity_number"] = e.get("entity_number")
         turn = e["name"] not in fixed
-        if mm == "h":
-            x, d = -x, ((16 - d) % 16 if turn else d)
-        elif mm == "v":
-            y, d = -y, ((8 - d) % 16 if turn else d)
         if mm:
+            x, y = (-x, y) if mm == "h" else (x, -y)
+            if turn:
+                d = geo.mirror_dir(d, horizontal=(mm == "h"))
             for k in ("input_priority", "output_priority"):
                 if k in extra:
                     extra[k] = _flip_priority(extra[k])
             if "mirror" in e or e["name"] in (mirror_flag or ()):
                 extra["mirror"] = not e.get("mirror", False)
-        for _ in range(rot // 4):
-            x, y = -y, x
+        x, y = geo.rotate((x, y), rot // 4)
         if turn:
-            d = (d + rot) % 16
+            d = geo.rotate_dir(d, rot // 4)
         it = {"entity_number": e.get("entity_number"), "name": e["name"], "x": x, "y": y, "direction": d}
         if "type" in e:
             it["type"] = e["type"]
@@ -268,13 +288,14 @@ def transform(bp, direction=0, mirror=False, mirror_flag=MIRROR_FLAG, fixed=None
 
 
 def bounding_box(items, sizes=None):
-    """Tile-aligned box [[x0, y0], [x1, y1]] covering every entity's footprint."""
+    """Tile-aligned box [[x0, y0], [x1, y1]] covering every entity's footprint (items or
+    blueprint entities; footprints from `sizes`, then VANILLA_SIZES, else 1x1)."""
     if not items:
         return [[0.0, 0.0], [0.0, 0.0]]
     x0 = y0 = math.inf
     x1 = y1 = -math.inf
     for it in items:
-        x, y = _xy(it if "x" in it else it["position"])
+        x, y = _pos(it)
         w, h = _size(it["name"], _dir(it.get("direction", 0)), sizes)
         x0, x1 = min(x0, x - w / 2), max(x1, x + w / 2)
         y0, y1 = min(y0, y - h / 2), max(y1, y + h / 2)
@@ -296,9 +317,8 @@ def to_ghosts(bp, anchor, direction=0, mirror=False, sizes=None, fixed=None, mir
     blueprints are centred like free ones (check() says so)."""
     items = transform(bp, direction, mirror, mirror_flag, fixed)
     (x0, y0), (x1, y1) = bounding_box(items, sizes)
-    ax, ay = _xy(anchor)
-    dx = _snap_center(ax, x1 - x0) - (x0 + x1) / 2
-    dy = _snap_center(ay, y1 - y0) - (y0 + y1) / 2
+    cx, cy = geo.snap(anchor, int(round(x1 - x0)), int(round(y1 - y0)))  # the game's cursor rule
+    dx, dy = cx - (x0 + x1) / 2, cy - (y0 + y1) / 2
     if any(("rail" in it["name"] and "signal" not in it["name"]) for it in items):
         dx, dy = 2 * math.floor(dx / 2 + 0.5), 2 * math.floor(dy / 2 + 0.5)  # rails sit on a 2x2 grid
     out = []
@@ -321,10 +341,11 @@ def wires(bp):
 def from_entities(items, label="", wires=None, tiles=None, version=DEFAULT_VERSION, relative=True, icons=None):
     """kc.place_ghosts-style items -> {"blueprint": {...}} (2.0). Items: {name, x, y, direction?,
     type?, extra?} or blueprint entities with `position`; `extra` keys are copied into the entity.
-    relative: shift positions by a whole number of tiles so the box starts near (0, 0) (keeps the
-    x.5 / integer alignment). wires: 2.0 wires list over the 1-based item order."""
+    relative: shift positions by a whole, even number of tiles so the box starts near (0, 0)
+    (keeps the x.5 / integer alignment and the rail grid). wires: 2.0 wires list over the 1-based
+    item order."""
     ents = []
-    pts = [_xy(it if "x" in it else it["position"]) for it in items]
+    pts = [_pos(it) for it in items]
     sx = math.floor(min(p[0] for p in pts)) if (relative and pts) else 0
     sy = math.floor(min(p[1] for p in pts)) if (relative and pts) else 0
     if sx % 2 or sy % 2:  # an even shift keeps rails on their 2x2 grid
@@ -347,8 +368,30 @@ def from_entities(items, label="", wires=None, tiles=None, version=DEFAULT_VERSI
     if wires:
         body["wires"] = [list(w) for w in wires]
     if tiles:
-        body["tiles"] = [{"name": t["name"], "position": {"x": _xy(t)[0] - sx, "y": _xy(t)[1] - sy}} for t in tiles]
+        body["tiles"] = [{"name": t["name"], "position": {"x": _pos(t)[0] - sx, "y": _pos(t)[1] - sy}} for t in tiles]
     return {"blueprint": body}
+
+
+def sized(items, sizes=None):
+    """Copies of ghost items with unrotated footprint `w`, `h` added (from `sizes`, then
+    VANILLA_SIZES, else 1x1), the shape kc.grid.Grid.place / can_place take."""
+    out = []
+    for it in items:
+        w, h = _size(it["name"], 0, sizes)
+        x, y = _pos(it)
+        out.append(dict(it, x=x, y=y, w=int(w), h=int(h)))
+    return out
+
+
+def collisions(items, grid, sizes=None):
+    """Indices of ghost items whose footprint is not free in `grid` (a kc.grid.Grid of what is
+    already there) or overlaps an earlier item of the same list. [] = the print fits."""
+    g = grid.copy()
+    bad = []
+    for i, it in enumerate(sized(items, sizes)):
+        if g.place(it) is None:
+            bad.append(i)
+    return bad
 
 
 # ── summary / check ──
@@ -414,8 +457,8 @@ def _check_entity(e, i, where, nums, problems):
         nums.add(n)
     if "position" in e:
         try:
-            _xy(e["position"])
-        except (KeyError, TypeError, ValueError):
+            geo.xy(e["position"])
+        except (KeyError, TypeError, ValueError, IndexError):
             problems.append(f"{where} entity #{i} has a bad position {e['position']!r}")
     d = e.get("direction", 0)
     if not isinstance(d, int) or not 0 <= d <= 15:

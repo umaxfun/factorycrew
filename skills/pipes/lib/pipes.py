@@ -8,6 +8,9 @@ front from every terminal in parallel, level by level; the first time two fronts
 shortest path between their two terminals becomes pipe, the two terminals merge into one whose
 front restarts from all of its pipe, and the growth goes on until one terminal is left.
 
+The join itself lives in kc.steiner.join (shared by every skill); join() here is a thin wrapper
+that turns `blocked` + `margin` into its passable tiles.
+
 compress(): straight runs of pipe become pipe-to-ground pairs (OilOutpostPlanner's
 ReplacePipes): a pipe can be buried only if no pipe or pipe-to-ground sits beside it across
 the run, so side connections stay; runs longer than the reach become a chain of pairs. Added
@@ -29,6 +32,14 @@ Coppermine) at commit 72015903b0ed492c28b6b5fa7cae575873c9c9f5, layout.lua; see 
 from __future__ import annotations
 
 import math
+
+try:
+    from kc import steiner as _steiner
+except ImportError:  # run from the repo without mcp/ on sys.path (the Level 2 game tests)
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[3] / "mcp"))
+    from kc import steiner as _steiner
 
 STEP = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
 NAMES = {0: "north", 4: "east", 8: "south", 12: "west"}
@@ -85,30 +96,6 @@ def footprint(x, y=None, w=3, h=3):
     return {(math.floor(x0 + 1e-9) + i + 0.5, math.floor(y0 + 1e-9) + j + 0.5) for i in range(w) for j in range(h)}
 
 
-def _options(t):
-    if isinstance(t, dict) and "options" in t:
-        out = []
-        for o in t["options"]:
-            o = _tile(o)
-            if o not in out:
-                out.append(o)
-        return out
-    return [_tile(t)]
-
-
-def _flood(origin, ok):
-    seen, todo = {origin}, [origin]
-    while todo:
-        nxt = []
-        for p in todo:
-            for n in _nb(p):
-                if n not in seen and ok(n):
-                    seen.add(n)
-                    nxt.append(n)
-        todo = nxt
-    return seen
-
-
 def join(terminals, blocked=(), *, margin=4, budget=400_000):
     """One connected network of tiles joining every terminal, around `blocked` tiles.
 
@@ -119,140 +106,10 @@ def join(terminals, blocked=(), *, margin=4, budget=400_000):
     "pipes": n} or {"ok": False, "reason": ..., "unreachable": [terminal indices]}.
     """
     blocked = {_tile(b) for b in blocked}
-    targets = [_options(t) for t in terminals]
-    if not targets:
-        return {"ok": False, "reason": "no terminals", "unreachable": []}
-    pts = [p for opts in targets for p in opts]
-    x0, x1 = min(p[0] for p in pts) - margin, max(p[0] for p in pts) + margin
-    y0, y1 = min(p[1] for p in pts) - margin, max(p[1] for p in pts) + margin
-
-    def free(t):
-        return t not in blocked and x0 <= t[0] <= x1 and y0 <= t[1] <= y1
-
-    # keep only options that are free and in the largest region holding options
-    live = [[(i, o) for i, o in enumerate(opts) if free(o)] for opts in targets]
-    bad = [k for k, opts in enumerate(live) if not opts]
-    if bad:
-        return {"ok": False, "reason": "every tile of these terminals is blocked or out of bounds", "unreachable": bad}
-    remaining = sorted({o for opts in live for _, o in opts})
-    best = None
-    while remaining:
-        region = _flood(remaining[0], free)
-        inside = [o for o in remaining if o in region]
-        if best is None or len(inside) > best[0]:
-            best = (len(inside), region)
-        remaining = [o for o in remaining if o not in region]
-    reach = best[1]
-    live = [[(i, o) for i, o in opts if o in reach] for opts in live]
-    bad = [k for k, opts in enumerate(live) if not opts]
-    if bad:
-        return {"ok": False, "reason": "these terminals cannot reach the others", "unreachable": bad}
-
-    choice = [None] * len(targets)
-    if len(targets) == 1:
-        choice[0] = live[0][0][0]
-        return {"ok": True, "tiles": [list(live[0][0][1])], "choice": choice, "pipes": 1}
-
-    # claim[tile] = (target, previous tile on the way back to the target or None, option or None)
-    claim, hood, hidx, paths = {}, {}, {}, set()
-
-    def clear(t):
-        for pos, _ in hood.pop(t, []):
-            claim.pop(pos, None)
-        hidx.pop(t, None)
-
-    for t, opts in enumerate(live):
-        hood[t], hidx[t] = [], 0
-        for i, o in opts:
-            if o in claim:
-                # two terminals share a starting tile: both take it, and they are one terminal now
-                choice[t] = i
-                clear(t)
-                other, _, oi = claim[o]
-                if oi is not None:
-                    choice[other] = oi
-                    clear(other)
-                    claim[o] = (other, None, None)
-                    hood[other], hidx[other] = [(o, 1)], 0
-                    paths.add(o)
-                break
-            claim[o] = (t, None, i)
-            hood[t].append((o, 1))
-
-    expanded = 0
-
-    def find_merge():
-        nonlocal expanded
-        level = 1
-        while True:
-            for t in sorted(hood):
-                h, idx = hood[t], hidx[t]
-                while True:
-                    if idx >= len(h):
-                        return None
-                    pos, dist = h[idx]
-                    if dist > level:
-                        break
-                    expanded += 1
-                    if expanded > budget:
-                        return "budget"
-                    for c in _nb(pos):
-                        if c not in reach:
-                            continue
-                        cl = claim.get(c)
-                        if cl is None:
-                            claim[c] = (t, pos, None)
-                            h.append((c, level + 1))
-                        elif cl[0] != t:
-                            return (t, cl[0], pos, c)
-                    idx += 1
-                hidx[t] = idx
-            level += 1
-
-    while len(hood) > 1:
-        m = find_merge()
-        if m is None or m == "budget":
-            why = "search budget spent" if m == "budget" else "a terminal's front ran out of room"
-            return {"ok": False, "reason": why, "unreachable": []}
-        t1, t2, p1, p2 = m
-        path, chosen = [], {}
-        for pos in (p1, p2):
-            while True:
-                path.append(pos)
-                tgt, prev, oi = claim[pos]
-                if prev is not None:
-                    pos = prev
-                    continue
-                if oi is not None:
-                    choice[tgt] = oi
-                    chosen[tgt] = oi
-                break
-        old = []
-        for t in (t1, t2):
-            for pos, dist in hood[t]:
-                if dist > 1:
-                    break
-                oi = claim[pos][2]
-                if oi is None or oi == chosen.get(t):
-                    old.append((pos, 1))
-        clear(t1)
-        clear(t2)
-        hood[t1], hidx[t1] = old, 0
-        for pos, _ in old:
-            claim[pos] = (t1, None, None)
-        for pos in path:
-            paths.add(pos)
-            if pos not in claim:
-                old.append((pos, 1))
-                claim[pos] = (t1, None, None)
-    for t, opts in enumerate(live):
-        if choice[t] is None:  # the last terminal standing, never merged into another
-            for i, o in opts:
-                if o in paths:
-                    choice[t] = i
-                    break
-    tiles = sorted(paths)
-    return {"ok": True, "tiles": [list(p) for p in tiles], "choice": choice, "pipes": len(tiles)}
+    r = _steiner.join(terminals, lambda t: t not in blocked, margin=margin, budget=budget)
+    if not r["ok"]:
+        return {"ok": False, "reason": r["reason"], "unreachable": r["unreachable"]}
+    return {"ok": True, "tiles": r["tiles"], "choice": r["choice"], "pipes": r["size"]}
 
 
 def _ports(ports):

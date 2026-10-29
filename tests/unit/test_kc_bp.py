@@ -1,4 +1,4 @@
-"""Blueprint strings (skills/blueprints/lib/blueprints.py): pure Python, no game."""
+"""kc.bp: blueprint strings (codec, contents, transforms, ghosts, check). Pure Python, no game."""
 from __future__ import annotations
 
 import base64
@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "skills" / "blueprints" / "lib"))
-import blueprints  # noqa: E402
+sys.path.insert(0, str(ROOT / "mcp"))
+import kc  # noqa: E402
+from kc import bp as blueprints  # noqa: E402
+from kc.grid import Grid  # noqa: E402
 
-EX = ROOT / "skills" / "blueprints" / "examples"
+EX = ROOT / "tests" / "data" / "blueprints"
 N, E, S, W = 0, 4, 8, 12
 
 
@@ -252,3 +254,45 @@ def test_deterministic():
     d = blueprints.decode(ex("red-circuits-block.txt"))
     assert blueprints.encode(d) == blueprints.encode(blueprints.decode(ex("red-circuits-block.txt")))
     assert blueprints.to_ghosts(d, (3.3, 4.4), E, True) == blueprints.to_ghosts(d, (3.3, 4.4), E, True)
+
+
+def test_package_surface_and_geo_conventions():
+    assert kc.bp is blueprints
+    bp = blueprints.from_entities(PAIR)
+    # words, 16-way numbers and kc.geo direction names all work as the build direction
+    assert norm(blueprints.to_ghosts(bp, (0, 0), "e")) == norm(blueprints.to_ghosts(bp, (0, 0), 4))
+    assert norm(blueprints.to_ghosts(bp, (0, 0), 20)) == norm(blueprints.to_ghosts(bp, (0, 0), kc.E))
+    with pytest.raises(ValueError):
+        blueprints.to_ghosts(bp, (0, 0), "northeast")  # 2: not a quarter turn
+    # anchors in every kc point form
+    want = norm(blueprints.to_ghosts(bp, (3.2, 4.7)))
+    for a in ([3.2, 4.7], {"x": 3.2, "y": 4.7}, {"position": {"x": 3.2, "y": 4.7}}):
+        assert norm(blueprints.to_ghosts(bp, a)) == want
+    # every ghost of a real print sits where kc.geo.snap puts an entity of its size
+    d = blueprints.decode(ex("red-circuits-block.txt"))
+    for anchor in ((0.3, 0.6), (5.0, -2.0)):
+        for g in blueprints.to_ghosts(d, anchor, kc.S):
+            w, h = blueprints.VANILLA_SIZES.get(g["name"], (1, 1))
+            assert kc.snap(g, w, h, g["direction"]) == (g["x"], g["y"]), g
+    # outputs are plain JSON
+    assert json.loads(json.dumps(blueprints.to_ghosts(d, (0, 0)))) == blueprints.to_ghosts(d, (0, 0))
+
+
+def test_sized_and_collisions_with_grid():
+    items = [{"name": "assembling-machine-1", "x": 1.5, "y": 1.5},
+             {"name": "splitter", "x": 4.5, "y": 1.0, "direction": E}]
+    g = blueprints.to_ghosts(blueprints.from_entities(items), (10.5, 10.5))
+    s = blueprints.sized(g)
+    assert [(x["w"], x["h"]) for x in s] == [(3, 3), (2, 1)] and "w" not in g[0]
+    assert blueprints.collisions(g, Grid()) == []
+    asm = g[0]
+    assert blueprints.collisions(g, Grid(blocked=[(asm["x"] + 1, asm["y"] - 1)])) == [0]
+    # the turned splitter covers 1x2 tiles: block the lower one
+    sp = g[1]
+    assert blueprints.collisions(g, Grid(blocked=[(sp["x"], sp["y"] + 0.5)])) == [1]
+    assert blueprints.collisions(g, Grid(blocked=[(sp["x"] + 1, sp["y"] + 0.5)])) == []
+    # overlapping items inside one list are caught too; the grid itself is not changed
+    grid = Grid()
+    assert blueprints.collisions(g + [dict(g[0])], grid) == [2] and grid.blocked_tiles() == set()
+    # sizes from prototypes win over the vanilla table (a modded 5x5 named like a vanilla 3x3)
+    assert blueprints.sized(g[:1], {"assembling-machine-1": {"tile_width": 5, "tile_height": 5}})[0]["w"] == 5

@@ -15,6 +15,7 @@ cp "$ROOT/app/app.json" "$OUT/"
 cp "$ROOT/app/backend/server.py" "$OUT/backend/"
 cp "$ROOT/bridge/factorio_bridge.py" "$OUT/bridge/"
 cp "$ROOT/mcp/factorio_mcp.py" "$ROOT/mcp/kc_compute.py" "$OUT/mcp/"
+rsync -a --exclude __pycache__ "$ROOT/mcp/kc/" "$OUT/mcp/kc/"  # primitive library, package `kc`
 cp "$ROOT/dispatcher/factorio_dispatch.py" "$OUT/dispatcher/"
 cp "$ROOT/tools/kira-256.png" "$OUT/assets/icon.png"
 rsync -a --exclude tests --exclude '.*' "$ROOT/mod/kc-companion/" "$OUT/mod/kc-companion/"
