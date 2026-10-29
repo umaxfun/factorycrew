@@ -68,6 +68,16 @@ Level 3 starts the factorycrew gateway if needed, installs the agent and dispatc
 ./scripts/test-app-e2e.sh     # app e2e on the real 2.0.77 client, no Docker
 ```
 
+### Releases and updates
+
+`scripts/release.sh patch|minor|major|X.Y.Z|current [--push]` bumps the version in `app/app.json`, commits and tags `vX.Y.Z` on `main`, builds, and commits the build to the `release` branch as `apps/factorycrew/`. That branch is a Kiro Crew app registry (it synthesizes its index from `apps/*/app.json`). Without `--push` nothing leaves the machine.
+
+Players (Kiro Crew 0.11 or newer): Apps → Discover → Sources (gear) → add the repository URL with branch `release`, install **Factorio Companion** and trust it in the dialog. An app installed from a local directory stays local-only: to switch it to the repository, uninstall it (data is kept) and install from the store. A newer version on `release` arrives through the app's Update action (a `git pull` of the branch); the store caches each app's `app.json` for up to 24 h, so the Update badge can lag a day behind a release.
+
+The mod rides along: its version is the app's, and on every start the app backend replaces the `kc-companion` folder it put in Factorio's mods folder when the version differs (a folder it did not put there is left alone). Nothing comes from the Factorio mod portal. Restart Factorio after an update; the app's status page (sidebar → Factorio) shows the mod version in the mods folder.
+
+Verified on the dev gateway with the `release` branch served over smart HTTP on loopback: added as a source, listed with `subdirectory: apps/factorycrew`, installed after the trust dialog, then `Update` took it from 0.3.2 to 0.3.3 and the status page reported 0.3.3.
+
 The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod against the app's bridge on the dev ports 34298-34300, and asks through the window's own handlers: 7 chests marked, follow-up from context, the trash button, a Russian question answered in Russian, and the turns used the app's own MCP server. ~50 s, 4 agent turns.
 
 ## UI loop (screenshots of the real window)

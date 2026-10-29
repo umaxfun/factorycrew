@@ -108,3 +108,37 @@ def test_mcp_probe_starts_the_real_server(monkeypatch):
     st._mcp_cache.update(at=0.0, result=None)
     m = st.probe_mcp()
     assert "factorio_query" in m["tools"] and "factorio_reply" in m["tools"], m
+
+
+# ── the mod follows the app: an app update replaces the mod it installed, never someone else's ──
+
+sys.path.insert(0, str(ROOT / "bridge"))  # the built app has bridge/ beside backend/; the repo at its root
+import server  # noqa: E402  (app/backend/server.py, on sys.path above)
+
+
+def _app_with_mod(tmp_path, version):
+    app = tmp_path / f"app-{version}"
+    (app / "mod" / "kc-companion").mkdir(parents=True)
+    (app / "mod" / "kc-companion" / "info.json").write_text(json.dumps({"name": "kc-companion", "version": version}))
+    return app
+
+
+def test_app_update_replaces_the_mod_it_installed(tmp_path, monkeypatch):
+    mods = tmp_path / "mods"
+    mods.mkdir()
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.3.2"))
+    assert "installed" in server.install_mod(mods)
+    assert "already installed" in server.install_mod(mods)
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.3.3"))
+    assert "0.3.3 installed" in server.install_mod(mods)
+    assert json.loads((mods / "kc-companion" / "info.json").read_text())["version"] == "0.3.3"
+    assert (mods / "kc-companion" / server.MANAGED_MARK).read_text() == "0.3.3"
+
+
+def test_a_mod_folder_the_app_did_not_put_there_is_left_alone(tmp_path, monkeypatch):
+    mods = tmp_path / "mods"
+    (mods / "kc-companion").mkdir(parents=True)
+    (mods / "kc-companion" / "info.json").write_text(json.dumps({"version": "9.9.9"}))
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.3.3"))
+    assert "not managed by the app" in server.install_mod(mods)
+    assert json.loads((mods / "kc-companion" / "info.json").read_text())["version"] == "9.9.9"
