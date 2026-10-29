@@ -293,3 +293,26 @@ def test_mcp_map_reads_live_status_in_batches(at, monkeypatch):
     assert v["ok"] and len(v["rows"]) == 5 and "stuck" in v["rows"][0], v
     assert len(queries) == -(-sum(len(b["machines"]) for b in at.blocks) // m.STATUS_BATCH)
     assert max(len(q) for q in queries) < 60000
+
+
+def test_robot_mall_is_its_own_zone_fed_by_robots(at):
+    v = at.zone_view(at.zone_at(226, -25.5))
+    assert v["feed"] == {"robots": v["blocks"]} and v["blocks"] >= 35, v["feed"]
+    assert "nullius-hard-glass" in v["from_network_but_nothing_puts_it_in"]
+
+
+def test_belt_mall_is_topped_up_by_robots(at):
+    v = at.zone_view(at.zone_at(214, -5))
+    assert v["feed"].get("belts", 0) > v["feed"].get("topped", 0) > 0, v["feed"]
+    assert {"nullius-graphite", "iron-chest", "nullius-steel-plate", "nullius-steel-rod"} <= set(v["robots_top_up"])
+
+
+def test_network_hands_out_what_nothing_puts_in(at):
+    (row,) = at.map_view(kind="network")["rows"]
+    assert "hard-glass" in row.split("nothing puts them in:")[1]
+
+
+def test_no_network_edge_for_what_a_block_gets_by_belt(at):
+    for (a, b), items in at.edges.items():
+        if a[0] == "N" and b[0] == "B":
+            assert not set(items) & at.phys_in[b[1]], (a, b, items)

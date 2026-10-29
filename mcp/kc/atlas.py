@@ -708,6 +708,16 @@ class Atlas:
     def machines_of(self, blocks):
         return [m for bi in blocks for m in self.blocks[bi]["machines"]]
 
+    def network_inputs(self):
+        """network id -> items machines put into it explicitly"""
+        if not hasattr(self, "_net_in"):
+            out = collections.defaultdict(set)
+            for (a, b), items in self.edges.items():
+                if b[0] == "N":
+                    out[b[1]].update(items)
+            self._net_in = out
+        return self._net_in
+
     # ── map: the whole base, one line per zone (or stop / train / network) ──
 
     def _near(self, box, near):
@@ -944,6 +954,16 @@ class Atlas:
                 "inputs": {it: list(v.values()) for it, v in sorted(inputs.items())
                            if it in used and (item is None or it == item)},
                 "no_source": sorted(it for it in used - made if it not in inputs)}
+        # what the zone takes from a logistic network that no machine puts into that network: it lives
+        # on what is stored there (or what the player drops in) and stops when that runs out
+        put = self.network_inputs()
+        gaps = sorted({it for it, srcs in view["inputs"].items() for s in srcs
+                       if s["from"].startswith("N") and it not in put.get(int(s["from"][1:]), set())})
+        if gaps:
+            view["from_network_but_nothing_puts_it_in"] = gaps
+        robots = sorted({it for it, srcs in view["inputs"].items() for s in srcs if s["from"].startswith("N")})
+        if robots and view["feed"].get("topped"):
+            view["robots_top_up"] = robots
         if status is not None:
             st = collections.Counter(status.get(m["id"], "?") for b in blocks for m in self.blocks[b]["machines"])
             view["status"] = dict(st.most_common())

@@ -134,3 +134,17 @@ def test_where_is_glass_made(kira):
     # the zones that make glass on the fixture: around (103..185, 38..140), (-51..-6, 78..105), (103..113, 37..61)
     assert re.search(r"\(?-?\d+,\s*-?\d+\)?", text), "no coordinates in the reply"
     assert len(kira.kc_tags()[0]) > before, "nothing marked"
+
+
+def test_what_the_robot_mall_lacks(kira):
+    """docs/atlas.md task 4: a click in the robot mall; Kira names the machines waiting for ingredients
+    and the items nobody puts into the logistic network (hard-glass on the fixture)."""
+    tab = f"Atlas robots {STAMP}"
+    kira.open_tab(tab)
+    assert lua('return remote.call("kc", "point", {226, -25.5})')
+    text, _, t_all = kira.ask_and_wait(tab, "what does the robot mall @1 lack?", timeout=LONG)
+    print(f"\nreply ({t_all:.0f}s): {text}")
+    log = transcript(tab)
+    assert "factorio_atlas" in log
+    assert re.search(r"hard[- ]glass", text, re.I), "the item nothing puts into the network is missing"
+    assert re.search(r"\b\d+\b", text) and re.search(r"wait|ingredient|short|lack", text, re.I)
