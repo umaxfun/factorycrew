@@ -531,6 +531,167 @@ class Atlas:
     def sources(self, node, item):
         return {self.name(a): sorted(ks) for a, ks in self.inbound[node].get(item, {}).items()}
 
+    # ── belt lanes: how much of an item a belt can bring ──
+
+    def _source_items(self, n, seen=None):
+        """items a node can put on a belt; a plain chest passes on what fills it"""
+        if n[0] == "C":
+            seen = seen or set()
+            if n in seen:
+                return set()
+            seen.add(n)
+            out = set()
+            for (a, b) in self.raw:
+                if b == n:
+                    m = self._source_items(a, seen)
+                    if m is None:
+                        return None
+                    out |= m
+            return out
+        if n[0] == "N":
+            return None
+        return self.makes(n)
+
+    def _lanes(self):
+        """item lanes on every belt piece, propagated downstream from where items enter.
+
+        Factorio rules used: an inserter drops on the lane far from it (from along the belt: the
+        right lane); a belt entering another belt from the side, where that belt also has an input
+        from behind or from the other side, puts both its lanes onto the near lane only (side-load);
+        otherwise lanes keep their side. state: piece -> item -> [lanes set, slowest belt speed,
+        where the item was narrowed to fewer lanes]."""
+        if hasattr(self, "_lane_state"):
+            return self._lane_state
+        state = collections.defaultdict(dict)
+        work = []
+        item_kind = self.kind
+
+        def left_of(d):
+            dx, dy = DIRV.get(d, (0, -1))
+            return (dy, -dx)
+
+        def side(of, at, d):
+            lx, ly = left_of(d)
+            v = (of[0] - at["x"]) * lx + (of[1] - at["y"]) * ly
+            return "L" if v > 0.05 else "R" if v < -0.05 else None
+
+        def add(pid, item, lanes, speed, narrowed):
+            cur = state[pid].get(item)
+            if cur is None:
+                state[pid][item] = [set(lanes), speed, narrowed]
+                work.append(pid)
+                return
+            changed = False
+            if not set(lanes) <= cur[0]:
+                cur[0] |= set(lanes); changed = True
+            if speed < cur[1]:
+                cur[1] = speed; changed = True
+            if narrowed and not cur[2]:
+                cur[2] = narrowed; changed = True
+            if changed:
+                work.append(pid)
+
+        for e in self.ents:
+            if e["type"] != "inserter" or "drop" not in e:
+                continue
+            pk, dr = self.ends(e)
+            belts = [d for d in dr if d["type"] in BELT]
+            if not belts:
+                continue
+            items = set()
+            for p in pk:
+                n = self.node_of(p)
+                if n is None:
+                    continue
+                m = self._source_items(n)
+                if m:
+                    items |= {i for i in m if item_kind.get(i, "item") == "item"}
+            for b in belts:
+                sd = side((e["x"], e["y"]), b, b["dir"])
+                lane = {"L": "R", "R": "L"}.get(sd, "R")  # the far lane
+                for it in items:
+                    add(b["id"], it, {lane}, self.belt_speed.get(b["name"], 0), None)
+        while work:
+            u = work.pop()
+            ue = self.ents[u]
+            for v in self.down.get(u, ()):
+                ve = self.ents[v]
+                speed_v = self.belt_speed.get(ve["name"], 0)
+                sideload_lane = None
+                if ve["type"] == "transport-belt" and ue["dir"] != ve["dir"] and (ue["dir"] - ve["dir"]) % 8 == 4:
+                    ups = [self.ents[w] for w in self.up.get(v, ())]
+                    behind = any(w["dir"] == ve["dir"] for w in ups)
+                    sides = {side((w["x"], w["y"]), ve, ve["dir"]) for w in ups if w["dir"] != ve["dir"]}
+                    if behind or len(sides) > 1:
+                        sideload_lane = side((ue["x"], ue["y"]), ve, ve["dir"])
+                for it, (lanes, speed, narrowed) in list(state[u].items()):
+                    if sideload_lane:
+                        add(v, it, {sideload_lane}, min(speed, speed_v), narrowed or [ve["x"], ve["y"]])
+                    else:
+                        add(v, it, lanes, min(speed, speed_v), narrowed)
+        self._lane_state = state
+        return state
+
+    def belt_supply(self, bi):
+        """for each ingredient a block takes from belts: lanes it has there, what that can carry per
+        second, which other items share those lanes, and where it was squeezed onto one lane"""
+        state = self._lanes()
+        ids = {m["id"] for m in self.blocks[bi]["machines"]}
+        picks = collections.defaultdict(set)
+        for e in self.ents:
+            if e["type"] != "inserter" or "pick" not in e:
+                continue
+            pk, dr = self.ends(e)
+            if any(d["id"] in ids for d in dr):
+                for p in pk:
+                    if p["type"] in BELT:
+                        picks[p["id"]].add(e["id"])
+        out = {}
+        for it in self.blocks[bi]["ing"]:
+            if self.kind.get(it) == "fluid":
+                continue
+            lanes, speeds, narrowed, shared = set(), [], None, set()
+            belts = set()
+            for pid in picks:
+                st = state.get(pid, {}).get(it)
+                if not st:
+                    continue
+                lanes |= {(pid, l) for l in st[0]}
+                speeds.append(st[1])
+                narrowed = narrowed or st[2]
+                belts.add(self.ents[pid]["name"])
+                for other, ost in state[pid].items():
+                    if other != it and ost[0] & st[0]:
+                        shared.add(other)
+            if not speeds:
+                continue
+            # distinct physical belts the block picks from: lanes per belt, at the slowest speed seen
+            per_belt = collections.Counter(pid for pid, _ in lanes)
+            trunks = self._trunks(set(per_belt))
+            lane_count = sum(max(len({l for p, l in lanes if p in t}), 0) for t in trunks)
+            sp = min(speeds)
+            out[it] = {"lanes": lane_count, "belts": len(trunks), "per_s": round(lane_count * sp * 480 / 2, 2),
+                       "belt": sorted(belts), "shared_with": sorted(shared),
+                       "one_lane_from": narrowed}
+        return out
+
+    def _trunks(self, pieces):
+        """group belt pieces into lines connected through the belt graph: columns split off one trunk
+        are one line, and a line carries at most two lanes of an item whatever it splits into"""
+        left, groups = set(pieces), []
+        while left:
+            start = left.pop()
+            seen, st = {start}, [start]
+            while st and len(seen) < 20000:
+                x = st.pop()
+                for y in list(self.down.get(x, ())) + list(self.up.get(x, ())):
+                    if y not in seen:
+                        seen.add(y)
+                        st.append(y)
+            groups.append(seen & pieces)
+            left -= seen
+        return groups
+
     # ── views: what factorio_atlas returns ──
 
     def _src(self, a, kinds):
@@ -565,6 +726,14 @@ class Atlas:
             view["make_per_s"] = {n: round(a * crafts, 3) for n, a, _ in r["pro"]}
         view["inputs"] = {it: [self._src(a, ks) for a, ks in self.inbound[node].get(it, {}).items()]
                           for it in sorted(b["ing"])}
+        supply = self.belt_supply(bi)
+        if supply:
+            need = view.get("need_per_s", {})
+            for it, s in supply.items():
+                if it in need:
+                    s["need_per_s"] = need[it]
+                    s["enough"] = s["per_s"] >= need[it] - 1e-6
+            view["belt_supply"] = supply
         view["no_source"] = sorted(it for it in b["ing"] if not self.inbound[node].get(it))
         view["outputs"] = {it: [self._src(c, ks) for c, ks in self.outbound[node].get(it, {}).items()]
                            for it in sorted(b["pro"]) if self.outbound[node].get(it)}

@@ -157,3 +157,33 @@ def test_dump_matches_a_reference_read_of_the_same_save(at):
                                if protos[e[0]]["type"] not in skip)
     got = collections.Counter((e["name"], e["x"], e["y"], e["dir"]) for e in at.ents)
     assert want == got
+
+
+def test_belt_lanes_limit_the_tetrachloride_block(at):
+    """Graphite and rutile are side-loaded from both sides onto one express belt at (-337.5, -105.5):
+    each gets one lane, 22.5/s, while the block needs 44.8 graphite and 25.6 rutile."""
+    v = at.block_view(at.block_at(-357.5, -122.5))
+    s = v["belt_supply"]
+    g, r = s["nullius-graphite"], s["nullius-rutile"]
+    assert (g["lanes"], g["per_s"], g["one_lane_from"]) == (1, 22.5, [-337.5, -105.5])
+    assert (r["lanes"], r["per_s"], r["one_lane_from"]) == (1, 22.5, [-337.5, -105.5])
+    assert g["need_per_s"] == 44.8 and not g["enough"]
+    assert r["need_per_s"] == 25.6 and not r["enough"]
+
+
+def test_lanes_on_a_synthetic_belt():
+    """An inserter north of an east-going belt drops on the far lane (right); a belt coming down from
+    the north onto a belt that also has an input from behind side-loads onto the near lane (left)."""
+    names = ("N|1|transport-belt|transport-belt|1|1|bs=0.03125\nN|2|inserter|inserter|1|1\n"
+             "N|3|assembling-machine-1|assembling-machine|3|3")
+    rows = [f"E|1|{2 * x + 1}|1|4" for x in range(7)]              # main belt, east, y = 0.5
+    rows += [f"E|1|7|{2 * y + 1}|8" for y in (-3, -2, -1)]          # side belt, south, x = 3.5
+    rows += ["E|3|1|-5|0|r=a|sp=1", "E|2|1|-1|0|p=1,-3|d=1,1"]       # A at (0.5, -2.5) -> main belt
+    rows += ["E|3|7|-11|0|r=b|sp=1", "E|2|7|-7|0|p=7,-9|d=7,-5"]     # B at (3.5, -5.5) -> side belt
+    recipes = "R|a|1||x:1:item\nR|b|1||y:1:item"
+    text = "H|1|t|0|1\n" + names + "\n" + "\n".join(rows) + "\n" + recipes + f"\nZ|{len(rows)}|1|1"
+    a = A.Atlas(text)
+    st = a._lanes()
+    end = [e for e in a.ents if e["type"] == "transport-belt" and e["x"] == 6.5][0]
+    assert st[end["id"]]["x"][0] == {"R"}
+    assert st[end["id"]]["y"][0] == {"L"} and st[end["id"]]["y"][2] == [3.5, 0.5]
