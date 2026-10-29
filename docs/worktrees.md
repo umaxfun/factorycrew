@@ -45,7 +45,7 @@ The scripts enforce part of this. In a linked worktree, `kc.sh` and `tools/ui_de
 - a Lua query makes the round trip and the tick advances, so the game is not paused or sitting in a menu;
 - the running game loaded this checkout's mod (a hash `tools/ui_dev.py` writes when it starts the game, against the checkout now), so an edit without `ui restart` shows up;
 - the gateway on your port has your `KIROCREW_HOME`;
-- Kira's agent file runs this checkout's MCP server with your bridge, and every Kira MCP process running in your gateway dials your bridge (`--bridge` in its command line). The env block of an agent spec does not reach the MCP process, which once sent a worktree's replies to the player's bridge;
+- Kira's agent file runs this checkout's MCP server with your bridge, and every Kira MCP process running in your gateway dials your bridge (`--bridge` in its command line), and none of them started before the last change of `mcp/factorio_mcp.py`: kiro-cli starts one MCP server per chat session and it keeps the code it started with, so after an edit old tabs run old code until `stand.sh kc stop` and `up`. The env block of an agent spec does not reach the MCP process, which once sent a worktree's replies to the player's bridge;
 - the installed dispatcher is this checkout's, and its cron polls your bridge.
 
 Run it after `up`, after every restart, and before reporting a result from the stand. A green test against some other bridge or gateway proves nothing about your change.

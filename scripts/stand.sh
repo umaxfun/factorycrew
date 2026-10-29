@@ -157,14 +157,21 @@ check() {
     ok "Kira's MCP: this checkout, this bridge"
   else bad "Kira's agent ($agent) does not point at this checkout and :$FC_UI_HTTP_PORT: scripts/stand.sh kc install"; fi
   # what the RUNNING MCP servers dial (the file can be right while a live process is not)
-  local mcp n=0 wrong=0
+  local mcp n=0 wrong=0 old=0 edited
+  # kiro-cli starts one MCP server per chat session and it keeps the code it started with, so an
+  # edit of mcp/factorio_mcp.py reaches only new tabs. A server started before the file's last
+  # change runs older code. (Its kc/ and skill code is copied fresh on every compute call.)
+  edited="$(stat -f %m "$ROOT/mcp/factorio_mcp.py")"
   for mcp in $(pgrep -f "mcp/factorio_mcp.py" || true); do
     ps eww -o command= -p "$mcp" | grep -qF "KIROCREW_HOME=$FC_KC_HOME " || continue
     n=$((n + 1))
     ps -o command= -p "$mcp" | grep -qF -- "--bridge http://127.0.0.1:$FC_UI_HTTP_PORT" || wrong=$((wrong + 1))
+    started="$(ps -o lstart= -p "$mcp" | python3 -c 'import sys, time; print(int(time.mktime(time.strptime(" ".join(sys.stdin.read().split()), "%a %b %d %H:%M:%S %Y"))))' 2>/dev/null || echo 0)"
+    [ "$started" -ge "$edited" ] || old=$((old + 1))
   done
   if [ "$wrong" -gt 0 ]; then bad "$wrong of $n running Kira MCP servers dial another bridge: scripts/stand.sh kc stop, then up"
-  elif [ "$n" -gt 0 ]; then ok "running Kira MCP servers ($n) dial this bridge"
+  elif [ "$old" -gt 0 ]; then bad "$old of $n running Kira MCP servers started before the last change of mcp/factorio_mcp.py and run older code (their tabs keep it; new tabs get the new code): scripts/stand.sh kc stop, then up"
+  elif [ "$n" -gt 0 ]; then ok "running Kira MCP servers ($n) dial this bridge and run this checkout's code"
   else ok "no Kira session running yet (MCP checked on the first question)"; fi
   if cmp -s "$ROOT/dispatcher/factorio_dispatch.py" "$FC_KC_HOME/crons/factorio_dispatch.py"; then ok "dispatcher is this checkout's"
   else bad "installed dispatcher differs: scripts/stand.sh kc install"; fi
