@@ -291,7 +291,7 @@ local function refresh_panels(player, frame)
       local shown = not (p.hidden and p.hidden[player.index])
       local head, cut = utf8_head(p.title, TAB_CHARS + 4)
       local b = flow.add{ type = "button", caption = cut and (head .. "…") or p.title, toggled = shown,
-                          tooltip = (shown and "Hide " or "Show ") .. p.title .. (p.error and ("\n[color=red]" .. p.error .. "[/color]") or ""),
+                          tooltip = (shown and "Hide " or "Show ") .. p.title .. (p.description and ("\n" .. p.description) or "") .. (p.error and ("\n[color=red]" .. p.error .. "[/color]") or ""),
                           tags = { kc_panel = name, kc_panel_toggle = true } }
       b.style.minimal_width = 0
       b.style.horizontal_align = "center"

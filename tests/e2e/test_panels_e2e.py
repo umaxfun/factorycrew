@@ -8,7 +8,9 @@ after Kira's turn ended, which only a self-refreshing panel can show. Real model
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,6 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "integration"))
 sys.path.insert(0, str(ROOT / "tests" / "e2e"))
+sys.path.insert(0, str(ROOT / "mcp"))
 from conftest import lua_str, wait_until  # noqa: E402
 from panel_scenarios import (LOGI_SETUP, REQUESTER_CONTENTS, REQUESTS, SCIENCE, SCIENCE_SETUP,  # noqa: E402
                              add_robots, rows_about)
@@ -31,6 +34,12 @@ def kira():
     assert http("/health")["game_online"], "stand is not up: run scripts/test-e2e.sh"
     p = Player()
     p.lua(f'remote.call("kc", "set_run_name", {lua_str(time.strftime("e2e panels %m-%d %H:%M"))}) return true')
+    # the e2e gateway keeps its artifacts between runs: start from an empty panel library, so
+    # "my science panel" means the one this run made (the e2e home belongs to this worktree's slot)
+    listed = artifact("list", "--tag", "factorio-panel")
+    for slug in set(re.findall(r"factorio-panel-[a-z0-9-]+", listed.stdout)):
+        artifact("delete", slug)
+    assert "factorio-panel-" not in artifact("list", "--tag", "factorio-panel").stdout
     yield p
     p.rcon.close()
 
@@ -68,6 +77,22 @@ def ask(kira, tab, text):
         test_e2e.ANSWER_TIMEOUT = old
 
 
+def artifact(*argv):
+    """The e2e gateway's artifacts (the store the player sees in the dashboard)."""
+    env = dict(os.environ, KIROCREW_HOME=str(KC_HOME))
+    if os.environ.get("FC_KC_PORT"):
+        env["KIROCREW_PORT"] = os.environ["FC_KC_PORT"]
+    return subprocess.run(["kirocrew", "artifact", *argv], capture_output=True, text=True, timeout=60, env=env)
+
+
+def saved_panel(name):
+    import factorio_mcp  # noqa: E402  (same slug rule as the tool)
+    slug = factorio_mcp.artifact_slug(name)
+    shown = artifact("show", slug)
+    assert shown.returncode == 0, f"panel {name} not saved as artifact {slug}: {shown.stderr or shown.stdout}"
+    return slug, shown.stdout
+
+
 def option_like(options, *patterns):
     for o in options:
         if any(re.search(p, o, re.I) for p in patterns):
@@ -93,6 +118,13 @@ def test_science_panel_with_a_period_filter(kira):
     minute = option_like(options, r"^1\s*m|one_minute|^(last\s+)?(1\s+)?min")
     assert key and hour and minute, f"no minute/hour period in the panel's inputs: {p['inputs']}"
     assert "factorio_panel" in transcript(tab)
+    slug, md = saved_panel(p["name"])
+    print(f"artifact {slug}:\n{md[:800]}")
+    assert "automation-science-pack" in md and "120" in md, "the snapshot in the artifact shows the planted numbers"
+    assert "kc-panel" in md and "get_flow_count" in md, "the artifact keeps the panel code"
+    desc = (p.get("description") or "").strip()
+    assert len(desc) >= 15, f"the panel needs a description the player understands: {desc!r}"
+    assert desc in md, "the artifact carries the description"
 
     # after the turn: more packs are made; the panel shows them by itself
     kira.lua(SCIENCE_SETUP)
@@ -121,6 +153,7 @@ def test_logistics_panel_shows_what_is_missing_live(kira):
     print(f"\nlogistics panel reply ({t:.0f}s): {text}")
     p = new_panel(kira, before)
     assert not p.get("error"), p
+    assert len((p.get("description") or "").strip()) >= 15, f"no description: {p.get('description')!r}"
 
     def blocks_of(view, item):
         return {i for i, b in enumerate(view) if rows_about([b], item)}
@@ -128,7 +161,9 @@ def test_logistics_panel_shows_what_is_missing_live(kira):
     print("view:", json.dumps(view, ensure_ascii=False)[:1500])
     iron, copper, steel = (blocks_of(view, k) for k in ("iron-plate", "copper-plate", "steel-plate"))
     assert iron and copper and steel, "every requested item that is missing must be on the panel"
-    assert not (iron & copper) and copper & steel, "iron (in the network, not delivered) is listed apart from copper/steel (none in the network)"
+    # copper and steel may also count as "not delivered"; the "none in the network" list must
+    # hold them and not the iron, which storage has
+    assert (copper & steel) - iron, "a separate list of items the network has none of (copper, steel, not iron)"
     assert any(40 in nums for _, nums in rows_about(view, "copper-plate")), "copper short by 40"
     assert any(20 in nums for _, nums in rows_about(view, "steel-plate")), "steel short by 20"
     assert "factorio_panel" in transcript(tab)
@@ -147,3 +182,19 @@ def test_logistics_panel_shows_what_is_missing_live(kira):
         wait_until(iron_gone, timeout=60, step=1, what="the panel dropping the delivered iron")
     except AssertionError:
         raise AssertionError(f"iron delivered but the panel still lists it (or lost copper/steel): {seen.get('p')}")
+
+
+def test_restores_a_saved_panel_from_the_artifacts(kira):
+    saved = [p for p in panels(kira) if "science" in (p["name"] + p["title"]).lower()]
+    assert saved, "runs after test_science_panel_with_a_period_filter"
+    name, lua = saved[0]["name"], current(kira, saved[0]["name"])["lua"]
+    saved_panel(name)
+    assert kira.lua(f'return remote.call("kc", "panel_remove", {lua_str(name)})')["ok"]
+    assert not [p for p in panels(kira) if p["name"] == name]
+    tab = time.strftime("Restore %H:%M:%S")
+    text, _, t = ask(kira, tab, "Bring back my saved science panel.")
+    print(f"\nrestore reply ({t:.0f}s): {text}")
+    back = [p for p in panels(kira) if p["name"] == name]
+    assert back and not back[0].get("error"), f"panel {name} not restored: {[p['name'] for p in panels(kira)]}"
+    assert back[0]["lua"] == lua, "restored from the artifact, not rewritten"
+    assert "restore" in transcript(tab)

@@ -29,7 +29,7 @@ describe("panels", function()
   end)
 
   it("runs the body once on create and draws a table with icons, numbers and bars", function()
-    local r = panels.set{ name = "t1", title = "Test panel", every = 3, lua = [[
+    local r = panels.set{ name = "t1", title = "Test panel", every = 3, description = "What the test panel is about.", lua = [[
       return {
         "hello [color=green]world[/color]",
         {title = "Items", columns = {"", "item", "per min", "fill"},
@@ -43,6 +43,7 @@ describe("panels", function()
     assert(p.every == 3 and p.refreshes == 1 and p.error == nil)
     if not player then return end
     local s = shown("t1")
+    assert(s:find("What the test panel is about.", 1, true) and panels.list()[1].description == "What the test panel is about.", s)
     assert(s:find("Test panel", 1, true) and s:find("1235", 1, true) and s:find("12.3k", 1, true), s)
     assert(s:find("3 of 4", 1, true) and s:find("30 / 120", 1, true), s)
   end)
@@ -112,6 +113,26 @@ describe("panels", function()
     due("clock")
     panels.tick()
     assert(p.refreshes == n + 1)
+  end)
+
+  it("scrolls by default and refreshes in place, so the scroll position stays", function()
+    panels.set{ name = "long", every = 1, lua = [[
+      state.n = (state.n or 0) + 1
+      local rows = {}
+      for i = 1, 60 + state.n do rows[i] = {{item = "iron-plate"}, i * state.n} end
+      return {"refresh " .. state.n, {columns = {"", "n"}, rows = rows}}]] }
+    if not player then return end
+    local body = frame("long").kc_panel_inner.kc_panel_body
+    assert(body.type == "scroll-pane" and body.vertical_scroll_policy == "auto-and-reserve-space")
+    local t1, l1 = body.children[2], body.children[1]
+    assert(t1.type == "table" and #t1.children == 2 + 61 * 2, #t1.children)
+    local first_cell = t1.children[3]
+    due("long")
+    panels.tick()
+    local t2 = body.children[2]
+    assert(t2.index == t1.index and body.children[1].index == l1.index, "refresh rebuilt the view instead of updating it")
+    assert(t2.children[3].index == first_cell.index and #t2.children == 2 + 62 * 2, #t2.children)
+    assert(body.children[1].caption == "refresh 2" and t2.children[4].caption == "2" and t2.children[6].caption == "4", t2.children[4].caption)
   end)
 
   it("hides on close, shows again from the toggle, and removes the window", function()

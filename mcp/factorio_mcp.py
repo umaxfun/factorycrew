@@ -140,7 +140,7 @@ TOOLS = [
     {
         "name": "factorio_panel",
         "description": (
-            "Create or replace a LIVE PANEL in the game: a small window the mod refreshes by itself every "
+            "Create or replace a LIVE PANEL in the game (always give `title` and a `description` the player understands): a small window the mod refreshes by itself every "
             "`every` seconds (default 2) by running your Lua body, with no further turns from you. Use it when "
             "the player asks to SHOW/WATCH/KEEP an eye on something over time (a dashboard, 'show me live', "
             "'a panel with...'). `lua` has the factorio_query environment plus `input` (current values of "
@@ -154,13 +154,17 @@ TOOLS = [
             "query before replying. It runs inside a game tick on every refresh: keep it cheap (filtered "
             "finds, no full-map scans; larger `every` for heavier bodies); errors show on the panel and "
             "5 in a row pause it. Same `name` replaces the panel; `remove: true` deletes it. "
-            "`kc.panels()` in factorio_query lists panels with their last error."
+            "`kc.panels()` in factorio_query lists panels with their last error. "
+            "Every panel that works is also SAVED as a Kiro Crew artifact (`saved` in the answer; the "
+            "player sees it in the dashboard, a change is a new version). `restore: '<name>'` brings a saved "
+            "panel back into this game; `factorio_saved_panels` lists them."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "id, short; the same name replaces"},
                 "title": {"type": "string"},
+                "description": {"type": "string", "description": "1-2 sentences for the player: what the panel shows and how the numbers are counted"},
                 "lua": {"type": "string"},
                 "every": {"type": "integer", "description": "seconds between refreshes, 1-600"},
                 "inputs": {
@@ -177,9 +181,14 @@ TOOLS = [
                 },
                 "chat": {"type": "string", "description": "the tab that asked"},
                 "remove": {"type": "boolean"},
+                "restore": {"type": "string", "description": "name of a saved panel to bring back (no lua needed)"},
             },
-            "required": ["name"],
         },
+    },
+    {
+        "name": "factorio_saved_panels",
+        "description": "Panels saved as Kiro Crew artifacts, from any save: [{name, slug}]. Bring one back with factorio_panel(restore=name).",
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "factorio_progress",
@@ -372,22 +381,198 @@ def panel_lua(args: dict) -> str:
     if args.get("remove"):
         body = json.dumps({"name": str(args.get("name", ""))}, ensure_ascii=False)
         return f"return kc.panel_remove(helpers.json_to_table({lua_long_string(body)}).name)"
-    spec = {k: args[k] for k in ("name", "title", "lua", "every", "inputs", "chat") if args.get(k) is not None}
+    spec = {k: args[k] for k in ("name", "title", "description", "lua", "every", "inputs", "chat") if args.get(k) is not None}
     return f"return kc.panel(helpers.json_to_table({lua_long_string(json.dumps(spec, ensure_ascii=False))}))"
 
 
 def panel(args: dict) -> dict:
+    if args.get("restore"):
+        got = library_get(str(args["restore"]))
+        if not got.get("ok"):
+            return got
+        args = {**got["spec"], "chat": args.get("chat") or got["spec"].get("chat")}
     if not isinstance(args.get("name"), str) or not args["name"].strip():
         return {"ok": False, "error": "bad_request", "message": "name is required"}
     if not args.get("remove") and not (isinstance(args.get("lua"), str) and args["lua"].strip()):
-        return {"ok": False, "error": "bad_request", "message": "lua is required (or remove: true)"}
+        return {"ok": False, "error": "bad_request", "message": "lua is required (or remove: true, or restore: <saved name>)"}
     q = bridge_post("/query", {"lua": panel_lua(args), "_agent": True})
     if not q.get("ok"):
         return q  # the game or bridge refused the query itself
     res = q.get("data") if isinstance(q.get("data"), dict) else {"ok": False, "error": "unexpected", "data": q.get("data")}
     res.setdefault("ok", False)
     res["ms"] = q.get("ms")
+    if res["ok"] and not args.get("remove"):
+        # a working panel goes to the Kiro Crew artifacts: the player sees it in the dashboard,
+        # and any save can get it back with restore
+        res["saved"] = library_save(args, res)
     return res
+
+
+# ── saved panels: Kiro Crew artifacts (kirocrew artifact ...), one per panel name ──
+
+ARTIFACT_TAG = "factorio-panel"
+ARTIFACT_PREFIX = "factorio-panel-"
+SPEC_FENCE = "```json kc-panel"
+
+
+def _kirocrew() -> str | None:
+    """The CLI, when this server runs under a Kiro Crew gateway (its env names the home and port)."""
+    if not os.environ.get("KIROCREW_HOME") or os.environ.get("FC_NO_ARTIFACTS"):
+        return None
+    import shutil
+    return shutil.which("kirocrew") or next(
+        (p for p in [os.path.expanduser("~/.local/bin/kirocrew")] if os.access(p, os.X_OK)), None)
+
+
+def _kc(*argv: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
+    exe = _kirocrew()
+    if not exe:
+        return None
+    try:
+        return subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
+                              stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def artifact_slug(name: str) -> str:
+    import re
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "panel"
+    return ARTIFACT_PREFIX + s[:60]
+
+
+def _plain(v) -> str:
+    """A view cell as markdown text: rich-text tags dropped, [item=x] kept as x."""
+    import re
+    if isinstance(v, bool):
+        return str(v).lower()
+    if isinstance(v, (int, float)):
+        a = abs(v)
+        if a >= 1e6:
+            return f"{v / 1e6:.1f}M"
+        if a >= 1e4:
+            return f"{v / 1e3:.1f}k"
+        return str(int(v)) if v == int(v) else f"{v:.2f}".rstrip("0").rstrip(".")
+    if isinstance(v, dict):
+        if "bar" in v:
+            return v.get("caption") or (_plain(v["bar"]) + (f" / {_plain(v['max'])}" if v.get("max") is not None else ""))
+        name = v.get("item") or v.get("fluid") or v.get("signal") or v.get("sprite")
+        text = v.get("text")
+        return " ".join(x for x in [str(name) if name else "", _plain(text) if text is not None else ""] if x)
+    s = re.sub(r"\[(?:item|fluid|virtual-signal|entity|recipe)=([\w-]+)[^\]]*\]", r"\1", str(v if v is not None else ""))
+    s = re.sub(r"\[/?(?:color|font)[^\]]*\]", "", s)
+    return s.replace("|", "\\|").replace("\n", " ")
+
+
+def view_markdown(view) -> str:
+    out = []
+    for b in view if isinstance(view, list) else []:
+        if isinstance(b, dict) and "rows" in b:
+            rows = b["rows"] if isinstance(b["rows"], list) else []
+            if b.get("title"):
+                out.append(f"**{_plain(b['title'])}**\n")
+            cols = max([len(b.get("columns") or [])] + [len(r) if isinstance(r, list) else 1 for r in rows])
+            if not rows:
+                out.append(f"_{_plain(b.get('empty') or 'nothing')}_\n")
+                continue
+            head = [_plain(c) for c in (b.get("columns") or [])] + [""] * cols
+            out.append("| " + " | ".join(head[:cols]) + " |")
+            out.append("|" + "---|" * cols)
+            for r in rows:
+                cells = [_plain(c) for c in (r if isinstance(r, list) else [r])] + [""] * cols
+                out.append("| " + " | ".join(cells[:cols]) + " |")
+            if b.get("rows_total"):
+                out.append(f"\n_{b['rows_total']} rows in all; the first {len(rows)} shown_")
+            out.append("")
+        else:
+            out.append(_plain(b) + "\n")
+    return "\n".join(out)
+
+
+def panel_markdown(spec: dict, res: dict) -> str:
+    inputs = spec.get("inputs") or []
+    filters = "; ".join(f"{i.get('label') or i['key']}: {', '.join(i['options'])}" for i in inputs) or "none"
+    chosen = ", ".join(f"{k} = {v}" for k, v in (res.get("input") or {}).items() if v) if res.get("input") else ""
+    saved = {k: spec[k] for k in ("name", "title", "description", "lua", "every", "inputs") if spec.get(k) is not None}
+    return "\n".join([
+        f"# {spec.get('title') or spec['name']}",
+        "",
+        *([spec["description"], ""] if spec.get("description") else []),
+        f"Live Factorio panel `{spec['name']}`, run \"{res.get('run_name') or '?'}\", saved "
+        f"{time.strftime('%Y-%m-%d %H:%M')}. Refreshes every {res.get('every') or spec.get('every') or 2} s in the game. "
+        f"Filters: {filters}.",
+        "",
+        f"To bring it back in any save, ask Kira: \"restore the panel {spec['name']}\".",
+        "",
+        f"## Snapshot when saved{(' (' + chosen + ')') if chosen else ''}",
+        "",
+        view_markdown(res.get("view")),
+        "## Panel code",
+        "",
+        SPEC_FENCE,
+        json.dumps(saved, ensure_ascii=False, indent=2),
+        "```",
+        "",
+    ])
+
+
+def library_save(spec: dict, res: dict) -> dict:
+    if not _kirocrew():
+        return {"ok": False, "reason": "not running under Kiro Crew"}
+    slug = artifact_slug(spec["name"])
+    title = spec.get("title") or spec["name"]
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write(panel_markdown(spec, res))
+        path = f.name
+    try:
+        desc = spec.get("description") or f"Factorio live panel '{spec['name']}', run {res.get('run_name') or '?'}"
+        # update first: a panel changed later becomes a new version of the same artifact
+        p = _kc("update", slug, "--content-file", path, "--name", f"Factorio panel: {title}", "--description", desc)
+        if p is None or p.returncode != 0:
+            p = _kc("save", "--slug", slug, "--name", f"Factorio panel: {title}", "--kind", "markdown",
+                    "--content-file", path, "--description", desc, "--tags", ARTIFACT_TAG)
+        if p is None or p.returncode != 0:
+            return {"ok": False, "slug": slug, "reason": ((p.stderr or p.stdout).strip()[-300:] if p else "kirocrew failed")}
+        return {"ok": True, "slug": slug}
+    finally:
+        os.unlink(path)
+
+
+def library_list() -> dict:
+    """Saved panels: [{slug, name}] from the artifacts tagged factorio-panel."""
+    p = _kc("list", "--tag", ARTIFACT_TAG)
+    if p is None:
+        return {"ok": False, "error": "no_library", "message": "not running under Kiro Crew"}
+    if p.returncode != 0:
+        return {"ok": False, "error": "kirocrew_failed", "message": (p.stderr or p.stdout).strip()[-300:]}
+    import re
+    found = []
+    for line in p.stdout.splitlines():
+        m = re.search(r"(factorio-panel-[a-z0-9-]+)", line)
+        if m and m.group(1) not in [x["slug"] for x in found]:
+            found.append({"slug": m.group(1), "name": m.group(1)[len(ARTIFACT_PREFIX):], "line": line.strip()})
+    return {"ok": True, "panels": found}
+
+
+def library_get(name: str) -> dict:
+    slug = name if name.startswith(ARTIFACT_PREFIX) else artifact_slug(name)
+    p = _kc("show", slug)
+    if p is None:
+        return {"ok": False, "error": "no_library", "message": "not running under Kiro Crew"}
+    if p.returncode != 0:
+        listed = library_list()
+        return {"ok": False, "error": "not_saved", "message": f"no saved panel {slug}",
+                "saved": [x["name"] for x in listed.get("panels", [])]}
+    text = p.stdout
+    start = text.find(SPEC_FENCE)
+    end = text.find("\n```", start + len(SPEC_FENCE)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return {"ok": False, "error": "bad_artifact", "message": f"{slug} has no panel code block"}
+    try:
+        spec = json.loads(text[start + len(SPEC_FENCE):end])
+    except ValueError as e:
+        return {"ok": False, "error": "bad_artifact", "message": f"{slug}: {e}"}
+    return {"ok": True, "slug": slug, "spec": spec}
 
 
 def call_tool(name: str, args: dict) -> dict:
@@ -395,6 +580,8 @@ def call_tool(name: str, args: dict) -> dict:
         return compute(args or {})
     if name == "factorio_panel":
         return panel(args or {})
+    if name == "factorio_saved_panels":
+        return library_list()
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

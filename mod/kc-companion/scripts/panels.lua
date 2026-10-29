@@ -98,7 +98,7 @@ function M.fmt(n)
   return string.format("%.2f", n)
 end
 
-local function label(parent, caption, color, bold)
+local function plain_label(parent, caption, color, bold)
   local l = parent.add{ type = "label", caption = caption }
   l.style.single_line = false
   l.style.maximal_width = 420
@@ -107,6 +107,38 @@ local function label(parent, caption, color, bold)
     local c = COLORS[color]
     l.style.font_color = { r = c[1], g = c[2], b = c[3] }
   end
+  return l
+end
+
+-- A refresh updates the elements in place: the i-th child is reused when it is the same kind,
+-- otherwise it and everything after it are replaced. Clearing and rebuilding the scroll pane
+-- would throw the player's scroll position back to the top on every refresh.
+local function slot(parent, i, kind, spec)
+  local c = parent.children[i]
+  if c and c.valid and c.tags.kc_k == kind then return c, false end
+  local kids = parent.children
+  for j = #kids, i, -1 do kids[j].destroy() end
+  spec.tags = { kc_k = kind }
+  return parent.add(spec), true
+end
+
+local function cut_after(parent, n)
+  local kids = parent.children
+  for j = #kids, n + 1, -1 do kids[j].destroy() end
+end
+
+local function label(parent, i, caption, color, bold)
+  local l, new = slot(parent, i, "l:" .. (COLORS[color] and color or "") .. (bold and ":b" or ""), { type = "label" })
+  if new then
+    l.style.single_line = false
+    l.style.maximal_width = 420
+    if bold then l.style.font = "default-bold" end
+    if COLORS[color] then
+      local c = COLORS[color]
+      l.style.font_color = { r = c[1], g = c[2], b = c[3] }
+    end
+  end
+  l.caption = caption
   return l
 end
 
@@ -122,69 +154,98 @@ local function sprite_of(cell)
   return path, proto and proto.localised_name or name
 end
 
-local function bar(parent, value, max, caption, color)
-  local f = parent.add{ type = "flow", direction = "horizontal" }
-  f.style.vertical_align = "center"
-  local pb = f.add{ type = "progressbar", value = math.max(0, math.min(1, (max and max > 0) and value / max or 0)) }
-  pb.style.width = 110
-  if color and COLORS[color] then
-    local c = COLORS[color]
-    pb.style.color = { r = c[1], g = c[2], b = c[3] }
+local function bar(parent, i, value, max, caption, color)
+  local f, new = slot(parent, i, "bar:" .. (COLORS[color] and color or ""), { type = "flow", direction = "horizontal" })
+  if new then f.style.vertical_align = "center" end
+  local pb, pnew = slot(f, 1, "pb", { type = "progressbar" })
+  if pnew then
+    pb.style.width = 110
+    if COLORS[color] then
+      local c = COLORS[color]
+      pb.style.color = { r = c[1], g = c[2], b = c[3] }
+    end
   end
-  label(f, caption or (M.fmt(value) .. (max and (" / " .. M.fmt(max)) or "")))
+  pb.value = math.max(0, math.min(1, (max and max > 0) and value / max or 0))
+  label(f, 2, caption or (M.fmt(value) .. (max and (" / " .. M.fmt(max)) or "")))
+  cut_after(f, 2)
 end
 
-local function cell(parent, v)
+local function cell(parent, i, v)
   if type(v) == "number" then
-    label(parent, M.fmt(v))
+    label(parent, i, M.fmt(v))
   elseif type(v) ~= "table" then
-    label(parent, tostring(v == nil and "" or v))
+    label(parent, i, tostring(v == nil and "" or v))
   elseif v.bar then
-    bar(parent, tonumber(v.bar) or 0, tonumber(v.max), v.caption, v.color)
+    bar(parent, i, tonumber(v.bar) or 0, tonumber(v.max), v.caption, v.color)
   elseif v.item or v.fluid or v.signal or v.sprite then
     local path, tip = sprite_of(v)
-    local f = parent.add{ type = "flow", direction = "horizontal" }
-    f.style.vertical_align = "center"
-    if helpers.is_valid_sprite_path(path) then
-      local s = f.add{ type = "sprite", sprite = path, tooltip = tip }
-      s.style.width, s.style.height, s.style.stretch_image_to_widget_size = 24, 24, true
+    local f, new = slot(parent, i, "icon", { type = "flow", direction = "horizontal" })
+    if new then f.style.vertical_align = "center" end
+    local j, valid = 1, helpers.is_valid_sprite_path(path)
+    if valid then
+      local sp, snew = slot(f, j, "s", { type = "sprite" })
+      if snew then sp.style.width, sp.style.height, sp.style.stretch_image_to_widget_size = 24, 24, true end
+      sp.sprite, sp.tooltip = path, tip
+      j = j + 1
     end
     local text = v.text or (v.label and tip) or nil
-    if text then label(f, text, v.color) end
-    if not helpers.is_valid_sprite_path(path) and not text then label(f, tostring(v.item or v.fluid or v.signal or v.sprite)) end
+    if text == nil and not valid then text = tostring(v.item or v.fluid or v.signal or v.sprite) end
+    if text ~= nil then
+      label(f, j, type(text) == "number" and M.fmt(text) or text, v.color)
+      j = j + 1
+    end
+    cut_after(f, j - 1)
   else
-    label(parent, v.text ~= nil and (type(v.text) == "number" and M.fmt(v.text) or tostring(v.text)) or "", v.color, v.bold)
+    label(parent, i, v.text ~= nil and (type(v.text) == "number" and M.fmt(v.text) or tostring(v.text)) or "", v.color, v.bold)
   end
 end
 
-local function draw_block(body, b)
+--- Draw one block at child index i of body; returns the next free index.
+local function draw_block(body, i, b)
   if type(b) == "string" or type(b) == "number" then
-    label(body, tostring(b))
+    label(body, i, tostring(b))
+    return i + 1
   elseif type(b) ~= "table" then
-    return
+    return i
   elseif b.rows then
-    if b.title then label(body, b.title, nil, true) end
+    if b.title then
+      label(body, i, b.title, nil, true)
+      i = i + 1
+    end
+    local rows = type(b.rows) == "table" and b.rows or {}
     local cols = b.columns and #b.columns or 0
-    for _, r in ipairs(b.rows) do if type(r) == "table" and #r > cols then cols = #r end end
-    if cols == 0 then
-      label(body, b.empty or "(nothing)", "gray")
-      return
+    for _, r in ipairs(rows) do if type(r) == "table" and #r > cols then cols = #r end end
+    if cols == 0 or #rows == 0 then
+      label(body, i, b.empty or "(nothing)", "gray")
+      return i + 1
     end
-    local t = body.add{ type = "table", column_count = cols, draw_horizontal_line_after_headers = b.columns ~= nil }
-    t.style.horizontal_spacing, t.style.vertical_spacing = 12, 2
+    local t, new = slot(body, i, "t:" .. cols .. (b.columns and ":h" or ""),
+      { type = "table", column_count = cols, draw_horizontal_line_after_headers = b.columns ~= nil })
+    if new then t.style.horizontal_spacing, t.style.vertical_spacing = 12, 2 end
+    local k = 1
     if b.columns then
-      for i = 1, cols do label(t, tostring(b.columns[i] or ""), nil, true) end
+      for c = 1, cols do label(t, k, tostring(b.columns[c] or ""), nil, true) k = k + 1 end
     end
-    for i, r in ipairs(b.rows) do
-      if i > M.MAX_ROWS then break end
-      for c = 1, cols do cell(t, type(r) == "table" and r[c] or (c == 1 and r or "")) end
+    for n, r in ipairs(rows) do
+      if n > M.MAX_ROWS then break end
+      for c = 1, cols do
+        cell(t, k, type(r) == "table" and r[c] or (c == 1 and r or ""))
+        k = k + 1
+      end
     end
-    if #b.rows == 0 then label(body, b.empty or "(nothing)", "gray") end
-    if #b.rows > M.MAX_ROWS then label(body, "… " .. (#b.rows - M.MAX_ROWS) .. " more rows", "gray") end
+    cut_after(t, k - 1)
+    i = i + 1
+    if #rows > M.MAX_ROWS then
+      label(body, i, "… " .. (#rows - M.MAX_ROWS) .. " more rows", "gray")
+      i = i + 1
+    end
+    return i
   elseif b.bar then
-    bar(body, tonumber(b.bar) or 0, tonumber(b.max), b.caption, b.color)
+    bar(body, i, tonumber(b.bar) or 0, tonumber(b.max), b.caption, b.color)
+    return i + 1
   else
-    cell(body, b)
+    cell(body, i, b)
+    return i + 1
   end
 end
 
@@ -193,7 +254,7 @@ local function root_name(name) return PREFIX .. name end
 local function draw_inputs(row, p)
   row.clear()
   for _, inp in ipairs(p.inputs or {}) do
-    if inp.label then label(row, inp.label) end
+    if inp.label then plain_label(row, inp.label) end
     local items, sel = {}, 1
     for i, o in ipairs(inp.options or {}) do
       items[i] = tostring(o)
@@ -211,7 +272,7 @@ local function build(player, p, index)
                                       tags = { kc_panel = p.name } }
   local bar_ = frame.add{ type = "flow", direction = "horizontal" }
   bar_.style.vertical_align = "center"
-  bar_.add{ type = "label", caption = p.title, style = "frame_title", ignored_by_interaction = true }
+  bar_.add{ type = "label", caption = p.title, style = "frame_title", tooltip = p.description }
   local grip = bar_.add{ type = "empty-widget", ignored_by_interaction = true }
   grip.style.horizontally_stretchable, grip.style.minimal_width = true, 8
   bar_.add{ type = "sprite-button", sprite = "utility/close", style = "frame_action_button",
@@ -219,10 +280,16 @@ local function build(player, p, index)
   local inner = frame.add{ type = "frame", name = "kc_panel_inner", direction = "vertical",
                            style = "inside_shallow_frame_with_padding" }
   inner.style.minimal_width = 220
+  if p.description then
+    -- what the panel is about, in the player's words: a quiet line above the view
+    local d = plain_label(inner, p.description, "gray")
+    d.style.maximal_width = 400
+  end
   local inputs = inner.add{ type = "flow", name = "kc_panel_inputs", direction = "horizontal" }
   inputs.style.vertical_align = "center"
+  -- always a scroll pane: a long view scrolls inside the panel instead of growing off the screen
   local pane = inner.add{ type = "scroll-pane", name = "kc_panel_body", direction = "vertical",
-                          horizontal_scroll_policy = "never" }
+                          horizontal_scroll_policy = "never", vertical_scroll_policy = "auto-and-reserve-space" }
   pane.style.maximal_height = 360
   inner.add{ type = "label", name = "kc_panel_footer" }
   draw_inputs(inputs, p)
@@ -259,9 +326,13 @@ local function draw(player, p, index)
   end
   local inner = frame.kc_panel_inner
   local body = inner.kc_panel_body
-  body.clear()
-  if p.error then label(body, "data failed: " .. p.error, "red") end
-  for _, b in ipairs(p.view or {}) do draw_block(body, b) end
+  local i = 1
+  if p.error then
+    label(body, i, "data failed: " .. p.error, "red")
+    i = i + 1
+  end
+  for _, b in ipairs(p.view or {}) do i = draw_block(body, i, b) end
+  cut_after(body, i - 1)
   inner.kc_panel_footer.caption = footer_caption(p)
 end
 
@@ -291,7 +362,7 @@ local function preview(view)
   return out
 end
 
---- Create or replace a panel and run it once. spec: {name, title?, lua, every?, inputs?, chat?}.
+--- Create or replace a panel and run it once. spec: {name, title?, description?, lua, every?, inputs?, chat?}.
 --- inputs: {{key, label?, options = {...}, default?}}; the body reads input.<key> (a string).
 --- Returns {ok, name, view (preview) | error}. A panel whose first run fails is still kept,
 --- so Kira can fix it with the same name; it shows the error to the player meanwhile.
@@ -321,6 +392,7 @@ function M.set(spec)
   every = math.max(M.MIN_EVERY, math.min(M.MAX_EVERY, every))
   local p = {
     name = name, title = trim(spec.title) ~= "" and trim(spec.title) or name, lua = spec.lua,
+    description = trim(spec.description) ~= "" and trim(spec.description) or nil,
     every = every, inputs = inputs, input = input, state = (old and old.state) or {},
     chat = spec.chat, hidden = {}, created_tick = game.tick, errors = 0, refreshes = 0,
   }
@@ -333,7 +405,8 @@ function M.set(spec)
   M.draw_all(name)
   gui.refresh_all()
   if ok then
-    return { ok = true, name = name, every = every, input = input, view = preview(p.view) }
+    return { ok = true, name = name, every = every, input = input, view = preview(p.view),
+             run_name = storage.kc.run_name }
   end
   return { ok = false, name = name, error = err,
            message = "the panel is kept and shows this error; fix the body and call again with the same name" }
@@ -363,7 +436,7 @@ function M.list(with_view)
     local p = panels[name]
     if p then
       out[#out + 1] = {
-        name = name, title = p.title, every = p.every, input = p.input, inputs = p.inputs,
+        name = name, title = p.title, description = p.description, every = p.every, input = p.input, inputs = p.inputs,
         error = p.error, paused = p.paused or false, refreshes = p.refreshes, last_tick = p.last_tick,
         lua = with_view and p.lua or nil, view = with_view and p.view or nil, chat = p.chat,
       }
