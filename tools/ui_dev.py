@@ -143,8 +143,11 @@ def deploy():
     if os.environ.get("FC_UI_MODS"):
         deploy_fixture(mods)
     else:
-        for f in mods.glob("*.zip"):  # a fixture run before left a player's mods here
-            f.unlink()
+        # a fixture run before left a player's mods and their settings here; with those settings the
+        # plain dev save never came online (stuck after loading the map)
+        for f in list(mods.glob("*.zip")) + [mods / "mod-settings.dat"]:
+            if f.exists():
+                f.unlink()
         (mods / "mod-list.json").write_text(json.dumps({"mods": [
             {"name": "base", "enabled": True}, {"name": "kc-companion", "enabled": True},
             {"name": "space-age", "enabled": False}, {"name": "quality", "enabled": False},
@@ -155,7 +158,9 @@ def deploy():
     if os.environ.get("FC_UI_SAVE"):
         save_path().parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["cp", os.environ["FC_UI_SAVE"], str(save_path())], check=True)
-    if not SAVE.exists():
+    # the plain dev save is created only with the plain mod set: one created while a player's mods were
+    # deployed (FC_UI_MODS) was a modded map that the plain client then hung on
+    if not SAVE.exists() and not os.environ.get("FC_UI_MODS"):
         SAVE.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([str(BIN), "-c", str(cfg), "--create", str(SAVE)], check=True,
                        stdout=open(DEV / "create.log", "w"), stderr=subprocess.STDOUT, timeout=180)
