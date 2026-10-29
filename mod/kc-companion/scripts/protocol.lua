@@ -2,6 +2,7 @@
 -- Pure functions over storage/game so FactorioTest can exercise them without UDP.
 
 local helpers_lib = require("scripts.helpers") -- `kc` in the query environment
+local atlas = require("scripts.atlas")
 
 local M = {}
 
@@ -36,6 +37,7 @@ function M.init_storage()
   kc.pointers = kc.pointers or {} -- player_index -> {pointer, ...} (scripts/pointers.lua)
   kc.panels = kc.panels or {} -- name -> live panel (scripts/panels.lua)
   kc.panel_order = kc.panel_order or {}
+  kc.atlas_version = kc.atlas_version or 0 -- bumped when something is built, removed or reconfigured
 end
 
 local function next_id(prefix)
@@ -389,6 +391,8 @@ function M.heartbeat(kind)
     run_name = storage.kc.run_name,
     tick = game.tick,
     tabs = storage.kc.tab_order,
+    atlas_version = storage.kc.atlas_version,
+    atlas_dirty = atlas.dirty_count("nauvis"),
   }
 end
 
@@ -418,6 +422,11 @@ function M.handle(msg)
     r.type = "result"
     r.id = msg.id
     return { r }
+  elseif t == "atlas" then
+    -- runs over the next ticks (control.lua steps it); parts and the result go out from there
+    local err = atlas.start(msg)
+    if err then return { { type = "result", id = msg.id, ok = false, error = "atlas_" .. err:gsub(" ", "_") } } end
+    return {}
   elseif t == "mark" then
     return { result(msg, M.mark(msg.chat, msg.marks)) }
   elseif t == "unmark" then

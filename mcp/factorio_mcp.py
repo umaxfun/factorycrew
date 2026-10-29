@@ -209,6 +209,35 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}, "all_runs": {"type": "boolean"}}},
     },
     {
+        "name": "factorio_atlas",
+        "description": (
+            "Atlas of the player's base. level=map: the whole base, one line per zone (where, machines, how fed, main recipes, how many stand and why), filtered by `item` (makes or uses), `status` (stuck = anything but working/full output, or a status name like low_power; sorted by count), `feed`, `near` {x, y, r}, `min_machines` (default 3); `kind=station|train|network` lists stops, trains (schedules) or logistic networks instead. Other levels: which machines form a block (one recipe standing together), "
+            "which blocks form a zone, and where every ingredient comes from (another zone by belt/"
+            "inserter/chest/pipe, a train stop, or a logistic network by robots). "
+            "level=zone: a zone's blocks with live statuses, its inputs with their sources, what has no "
+            "source; level=block: one block with rates per second at full speed (need/make), every input's "
+            "source and every output's consumer, plus `belt_supply` (lanes an input has on its belts, what they "
+            "carry per second, where it was squeezed onto one lane, need vs enough); level=trace with `item` and "
+            "`dir` (up: to where it is made, down: to where it is used): the item's way through blocks, train "
+            "stops and the trains between them (live state, cargo, capacity), with rates at full speed and live "
+            "statuses at the end, `made_per_s_at_sources` vs `needed_per_s`. Target: `id` (Z12, B480), `at` {x, y} (a click, a pointer), "
+            "or `box` {x0, y0, x1, y1} (a drag pointer: the zone around it, the covered blocks marked "
+            "selected). `item` keeps only what makes or uses that item. The structure is read from the game "
+            "once and cached (a big base takes seconds, the game never freezes); `refresh` re-reads it after "
+            "building. Statuses are always live."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "level": {"type": "string", "enum": ["map", "zone", "block", "trace"]}, "kind": {"type": "string", "enum": ["zone", "station", "train", "network"]}, "status": {"type": "string"}, "feed": {"type": "string", "enum": ["belts", "robots", "topped"]}, "near": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "r": {"type": "number"}}}, "min_machines": {"type": "integer"}, "dir": {"type": "string", "enum": ["up", "down"]},
+                "id": {"type": "string"}, "at": POS,
+                "box": {"type": "object", "properties": {k: {"type": "number"} for k in ("x0", "y0", "x1", "y1")}},
+                "item": {"type": "string"}, "limit": {"type": "integer"},
+                "refresh": {"type": "boolean"}, "surface": {"type": "string"},
+            },
+        },
+    },
+    {
         "name": "factorio_progress",
         "description": (
             "Show the player what you are doing during a long turn, e.g. 'planning the layout', "
@@ -474,12 +503,39 @@ def current_run_id():
     return h.get("run_id") if isinstance(h, dict) else None
 
 
-def bridge_get_health() -> dict:
+# ── factorio_atlas: the base as blocks and zones, structure cached here, state read live ──
+
+ATLAS_CACHE: dict[str, dict] = {}  # requested surface ("" = the player's) -> {"atlas", "run_id"}
+STATUS_BATCH = 2000  # machines per status query: positions grouped by name, statuses back as numbers
+STATUS_LIMIT = 20000
+STATUS_LUA = '''
+local P = %s
+local names = {}
+for k, v in pairs(defines.entity_status) do names[v] = k end
+local out, codes = {}, {}
+for name, xy in pairs(P) do
+  local list = {}
+  for i = 1, #xy, 2 do
+    local e = surface.find_entity(name, {xy[i], xy[i + 1]})
+    local s = e and e.status
+    list[#list + 1] = s or -1
+    if s then codes[tostring(s)] = names[s] end
+  end
+  out[name] = list
+end
+return {s = out, names = codes}
+'''
+
+
+def bridge_health() -> dict:
     try:
         with urllib.request.urlopen(BRIDGE + "/health", timeout=5) as r:
             return json.loads(r.read())
     except (urllib.error.URLError, OSError, ValueError):
         return {}
+
+
+bridge_get_health = bridge_health  # the panels' name for it
 
 
 def _plain(v) -> str:
@@ -646,6 +702,230 @@ def library_get(name: str) -> dict:
     return {"ok": True, "slug": slug, "spec": spec}
 
 
+def _atlas(args: dict) -> tuple[object, dict | None]:
+    """The cached atlas for the requested surface, re-read on refresh or when another save runs."""
+    from kc import atlas as kc_atlas
+    key = args.get("surface") or ""
+    health = bridge_health()
+    run_id = health.get("run_id")
+    c = ATLAS_CACHE.get(key)
+    if c is not None and c["run_id"] != run_id:
+        c = None
+    # the bridge keeps the structure and re-reads only the chunks that changed; it answers
+    # "unchanged" when what we hold is current
+    t0 = time.monotonic()
+    body = {"surface": args.get("surface"), "_agent": True, "refresh": bool(args.get("refresh"))}
+    if c is not None:
+        body["have_version"] = c["version"]
+    r = bridge_post("/atlas", body, timeout=330)
+    if not r.get("ok"):
+        return None, {"ok": False, "error": r.get("error") or "atlas_failed", "message": r.get("message"),
+                      "detail": {k: v for k, v in r.items() if k != "text"}}
+    if not r.get("unchanged") or c is None:
+        if "text" not in r:
+            return None, {"ok": False, "error": "atlas_failed", "message": "the bridge sent no structure"}
+        try:
+            a = kc_atlas.Atlas(r["text"])
+        except ValueError as e:
+            return None, {"ok": False, "error": "atlas_bad_dump", "message": str(e)}
+        c = {"atlas": a, "run_id": run_id, "version": r.get("version")}
+        ATLAS_CACHE[key] = c
+    c.update(read_s=round(time.monotonic() - t0, 2), how=r.get("how"), chunks_read=r.get("chunks_read"))
+    c["tick_now"] = health.get("tick")
+    return c, None
+
+
+def _live_status(atlas, machines: list) -> dict:
+    """machine entity id -> live status name, read in batches (a whole base is a few queries)"""
+    out = {}
+    machines = machines[:STATUS_LIMIT]
+    for k in range(0, len(machines), STATUS_BATCH):
+        batch = machines[k:k + STATUS_BATCH]
+        by_name: dict[str, list] = {}
+        for m in batch:
+            by_name.setdefault(m["name"], []).append(m)
+        lua_tab = "{" + ",".join("[%s]={%s}" % (json.dumps(n), ",".join(f"{m['x']},{m['y']}" for m in ms))
+                                 for n, ms in by_name.items()) + "}"
+        q = bridge_post("/query", {"lua": STATUS_LUA % lua_tab, "surface": atlas.surface, "_agent": True})
+        if not q.get("ok") or not isinstance(q.get("data"), dict):
+            continue
+        codes = q["data"].get("names") or {}
+        got = q["data"].get("s") or {}
+        for n, ms in by_name.items():
+            vals = got.get(n) or []
+            if isinstance(vals, dict):
+                vals = []
+            for m, v in zip(ms, vals):
+                out[m["id"]] = "gone" if v == -1 else codes.get(str(v), "?")
+    return out
+
+
+def atlas_tool(args: dict) -> dict:
+    c, err = _atlas(args)
+    if err:
+        return err
+    a = c["atlas"]
+    level = args.get("level") or "zone"
+    asked = args.get("item")
+    if asked:
+        item, candidates = a.resolve_item(asked)
+        if item is None:
+            return {"ok": False, "error": "unknown_item", "message": f"no item {asked!r} in this base",
+                    "candidates": candidates}
+        args = dict(args, item=item)
+    resolved = {"item": args["item"]} if asked and args["item"] != asked else {}
+    limit = max(1, min(int(args.get("limit") or 40), 200))
+    tid, at, box = args.get("id"), args.get("at"), args.get("box")
+    if level == "map":
+        kind = args.get("kind") or "zone"
+        status = args.get("status")
+        live = None
+        if kind == "zone" and (status or args.get("live", True)):
+            live = _live_status(a, [m for b in a.blocks for m in b["machines"]])
+        near = args.get("near") if isinstance(args.get("near"), dict) else None
+        view = a.map_view(kind=kind, item=args.get("item"), status=status, feed=args.get("feed"), near=near,
+                          min_machines=int(args.get("min_machines") or (3 if kind == "zone" else 1)),
+                          limit=limit if args.get("limit") else 60, live=live)
+        view.update(ok=True, surface=a.surface)
+        if resolved:
+            view["resolved_item"] = resolved["item"]
+        if c.get("tick_now") is not None and a.tick is not None:
+            view["structure_age_s"] = max(0, round((c["tick_now"] - a.tick) / 60))
+        return view
+    selected = None
+    bi = zi = None
+    if isinstance(tid, str) and tid[:1] in "ZB" and tid[1:].isdigit():
+        n = int(tid[1:])
+        if tid[0] == "Z" and n < len(a.zones):
+            zi = n
+        elif tid[0] == "B" and n < len(a.blocks):
+            bi = n
+    elif isinstance(box, dict) and all(k in box for k in ("x0", "y0", "x1", "y1")):
+        x0, x1 = sorted((box["x0"], box["x1"]))
+        y0, y1 = sorted((box["y0"], box["y1"]))
+        selected = a.blocks_in_box(x0, y0, x1, y1)
+        if selected:
+            bi = selected[0]
+    elif isinstance(at, dict) and "x" in at and "y" in at:
+        bi = a.block_at(at["x"], at["y"])
+    if bi is None and zi is None:
+        return {"ok": False, "error": "not_found",
+                "message": "no machine block at that id/place (a click must be on or next to a machine)"}
+    if level == "trace":
+        if bi is None or not args.get("item"):
+            return {"ok": False, "error": "bad_request",
+                    "message": "level=trace needs a block (id B<n>, at or box) and an item"}
+        view = trace_view(a, bi, args["item"], args.get("dir") or "up")
+    elif level == "block":
+        if bi is None:
+            return {"ok": False, "error": "bad_request", "message": "level=block needs a block: id B<n>, at or box"}
+        view = a.block_view(bi, _live_status(a, a.blocks[bi]["machines"]))
+        if selected:
+            view["selected_blocks"] = [f"B{b}" for b in selected]
+    else:
+        zi = a.zone_of[bi] if zi is None else zi
+        view = a.zone_view(zi, _live_status(a, a.machines_of(a.zones[zi]["blocks"])), item=args.get("item"),
+                           selected=set(selected) if selected else None)
+        rows = view["block_list"]
+        if len(rows) > limit:
+            view["block_list"], view["more_blocks"] = rows[:limit], len(rows) - limit
+        if selected:
+            others = sorted({a.zone_of[b] for b in selected} - {zi})
+            if others:
+                view["box_also_covers_zones"] = [f"Z{z}" for z in others]
+    view["ok"] = True
+    view["surface"] = a.surface
+    if resolved:
+        view["resolved_item"] = resolved["item"]
+    if c.get("tick_now") is not None and a.tick is not None:
+        view["structure_age_s"] = max(0, round((c["tick_now"] - a.tick) / 60))
+    return view
+
+
+TRAINS_LUA = '''
+local want, item = %s, %s
+local names = {}
+for k, v in pairs(defines.train_state) do names[v] = k end
+local stack = item and prototypes.item[item] and prototypes.item[item].stack_size
+local out = {}
+for _, tr in pairs(game.train_manager.get_trains{surface = surface}) do
+  if want[tr.id] then
+    local items = {}
+    for _, x in pairs(tr.get_contents()) do items[x.name] = (items[x.name] or 0) + x.count end
+    local slots = 0
+    for _, w in pairs(tr.cargo_wagons) do slots = slots + #w.get_inventory(defines.inventory.cargo_wagon) end
+    local st = tr.station
+    local fs = tr.front_stock
+    out[tostring(tr.id)] = {state = names[tr.state], cargo = items, at_stop = st and st.backer_name or nil,
+      at = fs and {fs.position.x, fs.position.y} or nil, capacity = stack and slots * stack or nil}
+  end
+end
+return out
+'''
+
+
+def _walk_trace(hop, blocks: set, trains: set):
+    if hop.get("node", "").startswith("B"):
+        blocks.add(int(hop["node"][1:]))
+    for t in hop.get("trains", []):
+        trains.add(t["train"])
+        for h in t.get("next", []):
+            _walk_trace(h, blocks, trains)
+    for h in hop.get("next", []):
+        _walk_trace(h, blocks, trains)
+
+
+def _fill_trace(hop, a, status, live_trains):
+    if hop.get("node", "").startswith("B") and not hop.get("seen"):
+        b = a.blocks[int(hop["node"][1:])]
+        st = {}
+        for m in b["machines"]:
+            s = status.get(m["id"], "?")
+            st[s] = st.get(s, 0) + 1
+        hop["status"] = dict(sorted(st.items(), key=lambda kv: -kv[1]))
+    for t in hop.get("trains", []):
+        t["live"] = live_trains.get(str(t["train"]))
+        for h in t.get("next", []):
+            _fill_trace(h, a, status, live_trains)
+    for h in hop.get("next", []):
+        _fill_trace(h, a, status, live_trains)
+
+
+def _leaf_rate(hop, key, seen):
+    """sum of make/need per second over the hops that end the way (the producers or consumers)"""
+    total = 0.0
+    kids = list(hop.get("next", [])) + [h for t in hop.get("trains", []) for h in t.get("next", [])]
+    if not kids and key in hop and hop["node"] not in seen:
+        seen.add(hop["node"])
+        return hop[key]
+    for h in kids:
+        total += _leaf_rate(h, key, seen)
+    return total
+
+
+def trace_view(a, bi, item, direction):
+    tree = a.trace(("B", bi), item, "down" if direction == "down" else "up")
+    blocks, trains = set(), set()
+    _walk_trace(tree, blocks, trains)
+    status = _live_status(a, a.machines_of(sorted(blocks)))
+    live = {}
+    if trains:
+        want = "{" + ",".join(f"[{t}]=true" for t in sorted(trains)) + "}"
+        q = bridge_post("/query", {"lua": TRAINS_LUA % (want, json.dumps(item)), "surface": a.surface, "_agent": True})
+        if q.get("ok") and isinstance(q.get("data"), dict):
+            live = q["data"]
+    _fill_trace(tree, a, status, live)
+    key = "make_per_s" if direction != "down" else "need_per_s"
+    view = {"trace": item, "dir": "down" if direction == "down" else "up", "from": f"B{bi}", "way": tree}
+    if direction != "down":
+        view["needed_per_s"] = tree.get("need_per_s")
+        view["made_per_s_at_sources"] = round(_leaf_rate(tree, key, set()), 3)
+    else:
+        view["made_per_s"] = tree.get("make_per_s")
+        view["needed_per_s_at_consumers"] = round(_leaf_rate(tree, key, set()), 3)
+    return view
+
+
 def call_tool(name: str, args: dict) -> dict:
     if name == "factorio_compute":
         return compute(args or {})
@@ -653,6 +933,8 @@ def call_tool(name: str, args: dict) -> dict:
         return panel(args or {})
     if name == "factorio_saved_panels":
         return library_list((args or {}).get("query"), bool((args or {}).get("all_runs")))
+    if name == "factorio_atlas":
+        return atlas_tool(args or {})
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

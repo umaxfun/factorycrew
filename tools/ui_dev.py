@@ -114,6 +114,29 @@ def bridge_digest():
     return hashlib.sha256((ROOT / "bridge" / "factorio_bridge.py").read_bytes()).hexdigest()
 
 
+def deploy_fixture(mods):
+    """FC_UI_MODS: play a player's mod set (docs/atlas.md, Fixture): their zips, mod list and
+    settings, with this checkout's kc-companion in place of theirs. FC_UI_SAVE: load that save
+    (copied in; the original is never written)."""
+    src = Path(os.environ["FC_UI_MODS"])
+    for f in mods.glob("*.zip"):
+        f.unlink()
+    for f in list(src.glob("*.zip")) + [src / "mod-settings.dat"]:
+        if f.exists():
+            subprocess.run(["cp", "-c", str(f), str(mods / f.name)], check=False, capture_output=True)
+            if not (mods / f.name).exists():
+                subprocess.run(["cp", str(f), str(mods / f.name)], check=True)
+    ml = json.loads((src / "mod-list.json").read_text())
+    ml["mods"] = [m for m in ml["mods"] if m["name"] != "kc-companion"] + [{"name": "kc-companion", "enabled": True}]
+    (mods / "mod-list.json").write_text(json.dumps(ml, indent=1))
+
+
+def save_path():
+    if os.environ.get("FC_UI_SAVE"):
+        return DATA / "saves" / ("fixture-" + Path(os.environ["FC_UI_SAVE"]).name)
+    return SAVE
+
+
 def deploy():
     mods = DATA / "mods"
     mods.mkdir(parents=True, exist_ok=True)
@@ -124,14 +147,27 @@ def deploy():
     proto = mods / "kc-companion" / "scripts" / "protocol.lua"
     text = proto.read_text(encoding="utf-8").replace("M.BRIDGE_PORT = 34199", f"M.BRIDGE_PORT = {UDP_BRIDGE}")
     proto.write_text(text, encoding="utf-8")
-    (mods / "mod-list.json").write_text(json.dumps({"mods": [
-        {"name": "base", "enabled": True}, {"name": "kc-companion", "enabled": True},
-        {"name": "space-age", "enabled": False}, {"name": "quality", "enabled": False},
-        {"name": "elevated-rails", "enabled": False}]}))
+    if os.environ.get("FC_UI_MODS"):
+        deploy_fixture(mods)
+    else:
+        # a fixture run before left a player's mods and their settings here; with those settings the
+        # plain dev save never came online (stuck after loading the map)
+        for f in list(mods.glob("*.zip")) + [mods / "mod-settings.dat"]:
+            if f.exists():
+                f.unlink()
+        (mods / "mod-list.json").write_text(json.dumps({"mods": [
+            {"name": "base", "enabled": True}, {"name": "kc-companion", "enabled": True},
+            {"name": "space-age", "enabled": False}, {"name": "quality", "enabled": False},
+            {"name": "elevated-rails", "enabled": False}]}))
     cfg = DATA / "config.ini"
     if not cfg.exists():
         cfg.write_text(f"[path]\nread-data=__PATH__executable__/../data\nwrite-data={DATA}\n")
-    if not SAVE.exists():
+    if os.environ.get("FC_UI_SAVE"):
+        save_path().parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["cp", os.environ["FC_UI_SAVE"], str(save_path())], check=True)
+    # the plain dev save is created only with the plain mod set: one created while a player's mods were
+    # deployed (FC_UI_MODS) was a modded map that the plain client then hung on
+    if not SAVE.exists() and not os.environ.get("FC_UI_MODS"):
         SAVE.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([str(BIN), "-c", str(cfg), "--create", str(SAVE)], check=True,
                        stdout=open(DEV / "create.log", "w"), stderr=subprocess.STDOUT, timeout=180)
@@ -158,11 +194,12 @@ def start():
     if not alive("game"):
         # The Steam build relaunches itself through Steam unless it is told its app id.
         env = dict(os.environ, SteamAppId="427520", SteamGameId="427520")
-        spawn("game", [str(BIN), "-c", str(DATA / "config.ini"), "--load-game", str(SAVE),
+        spawn("game", [str(BIN), "-c", str(DATA / "config.ini"), "--load-game", str(save_path()),
                        "--enable-lua-udp", str(UDP_GAME)], env)
         # what this game process loaded; scripts/stand.sh check compares it with the checkout
         (DEV / "game-mod.sha").write_text(mod_digest())
-    deadline = time.time() + 120
+    wait = float(os.environ.get("FC_UI_START_TIMEOUT") or (600 if os.environ.get("FC_UI_SAVE") else 120))
+    deadline = time.time() + wait
     while time.time() < deadline:
         if online():
             # the freeplay intro cutscene would sit on top of every screenshot
@@ -173,7 +210,7 @@ def start():
         if not alive("game"):
             raise SystemExit(f"game exited, see {DEV / 'game.log'}")
         time.sleep(1)
-    raise SystemExit(f"game not online after 120 s, see {DEV / 'game.log'}")
+    raise SystemExit(f"game not online after {wait:.0f} s, see {DEV / 'game.log'}")
 
 
 def stop():

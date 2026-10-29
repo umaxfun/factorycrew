@@ -50,6 +50,24 @@ def lua(body):
     return r.get("data")
 
 
+def mid_turn_text(tab):
+    """What Kira wrote between tool calls in this tab's last turn, by the chat transcript: assistant
+    lines before her factorio_reply."""
+    st = json.loads((KC_HOME / "factorio" / "dispatch-state.json").read_text())
+    slots = [v for k, v in st["slots"].items() if k.endswith(f"\t{tab}")]
+    assert slots, f"no chat for tab {tab}"
+    rows = [json.loads(l) for l in (KC_HOME / "sessions" / f"dashboard_{slots[-1]}.jsonl").read_text(
+        encoding="utf-8").splitlines() if l.strip()]
+    start = max(i for i, r in enumerate(rows) if r.get("role") == "user")
+    out = []
+    for r in rows[start + 1:]:
+        if r.get("role") == "tool" and str(r.get("content", "")).endswith("factorio_reply"):
+            break
+        if r.get("role") == "assistant" and isinstance(r.get("content"), str) and r["content"].strip():
+            out.append(" ".join(r["content"].split()))
+    return out
+
+
 def cyrillic(text):
     return any("\u0400" <= ch <= "\u04ff" for ch in text)
 
@@ -176,10 +194,17 @@ def test_long_build_shows_progress(player):
     # the dev save's run is named "Ран 1": the header must not pull the answer into Russian
     assert not cyrillic(kira[-1]["text"]), kira[-1]["text"]
     assert seen["steps"] >= 2 and seen["activity"], seen
-    # Kira's own words between tool calls reached the tab WHILE she worked, not only at the end
+    # the turn reached the tab WHILE she worked: the tools she ran, and every line she wrote between
+    # them. Whether she writes such a line at all is the model's choice (on 2026-10-29 four runs, on
+    # this branch and the commit before it, had none: only tool calls and factorio_progress), so the
+    # check is that what the transcript holds reached the window, not that she narrated.
     trace = seen.get("trace") or {}
-    print(f"trace lines seen live: {len(trace)}; e.g. {list(trace)[:3]}")
-    assert any(k == "text" for k in trace.values()) and any(k == "tool" for k in trace.values()), trace
+    said = mid_turn_text(tab)
+    print(f"trace lines seen live: {len(trace)}; e.g. {list(trace)[:3]}; text in the transcript mid-turn: {len(said)}")
+    assert any(k == "tool" for k in trace.values()), trace
+    shown = [t for t, k in trace.items() if k == "text"]
+    for s in said:
+        assert any(t.rstrip("…")[:60] == s[:60] for t in shown), (s, shown)
     assert t["feed"][-2]["from"] == "trace_summary", t["feed"][-2:]
     ghosts = lua(f'return #game.surfaces[1].find_entities_filtered{{name = "entity-ghost", ghost_name = "small-lamp", '
                  f'position = {{{me["x"]}, {me["y"]}}}, radius = 96}}')
