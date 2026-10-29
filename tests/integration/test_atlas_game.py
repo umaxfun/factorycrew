@@ -47,3 +47,27 @@ def test_atlas_finds_the_blocks_and_the_direct_feed(stack, mcp):
     assert b["no_source"] == ["iron-plate"], b
     far = mcp.tool("factorio_atlas", at={"x": X0 + 50.5, "y": Y0 + 1.5})
     assert far["ok"] and far["zone"] != z["zone"] and far["machines"] == 1, far
+
+
+def test_atlas_reads_again_after_something_is_built(stack, mcp):
+    from conftest import wait_until
+    z = mcp.tool("factorio_atlas", at={"x": X0 + 1.5, "y": Y0 + 1.5})
+    assert z["ok"], z
+    before = {b["recipe"]: b["machines"] for b in z["block_list"]}
+    import json, urllib.request
+    from conftest import HTTP
+
+    def version():
+        with urllib.request.urlopen(HTTP + "/health", timeout=5) as r:
+            return json.loads(r.read()).get("atlas_version")
+    start = version()
+    assert mcp.tool("factorio_query", lua=f"""
+local e = game.surfaces[1].create_entity{{name = "assembling-machine-1", position = {{{X0} + 1.5, {Y0} + 7.5}},
+  force = "player", raise_built = true}}
+e.set_recipe("iron-gear-wheel")
+return true""")["ok"]
+    wait_until(lambda: version() != start, timeout=20, step=0.5, what="atlas_version bumped by the build")
+    z2 = mcp.tool("factorio_atlas", at={"x": X0 + 1.5, "y": Y0 + 1.5})
+    assert z2["ok"], z2
+    after = {b["recipe"]: b["machines"] for b in z2["block_list"]}
+    assert after["iron-gear-wheel"] == before["iron-gear-wheel"] + 1, (before, after)

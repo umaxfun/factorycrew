@@ -380,8 +380,10 @@ def _atlas(args: dict) -> tuple[object, dict | None]:
     key = args.get("surface") or ""
     health = bridge_health()
     run_id = health.get("run_id")
+    version = health.get("atlas_version")
     c = ATLAS_CACHE.get(key)
-    if args.get("refresh") or c is None or c["run_id"] != run_id:
+    # another save, or something built/removed/reconfigured since the dump (the mod counts those events)
+    if args.get("refresh") or c is None or c["run_id"] != run_id or c.get("version") != version:
         t0 = time.monotonic()
         r = bridge_post("/atlas", {"surface": args.get("surface"), "_agent": True}, timeout=330)
         if not r.get("ok"):
@@ -391,7 +393,7 @@ def _atlas(args: dict) -> tuple[object, dict | None]:
             a = kc_atlas.Atlas(r["text"])
         except ValueError as e:
             return None, {"ok": False, "error": "atlas_bad_dump", "message": str(e)}
-        c = {"atlas": a, "run_id": run_id, "read_s": round(time.monotonic() - t0, 2), "dump": r.get("data")}
+        c = {"atlas": a, "run_id": run_id, "version": version, "read_s": round(time.monotonic() - t0, 2), "dump": r.get("data")}
         ATLAS_CACHE[key] = c
     c["tick_now"] = health.get("tick")
     return c, None

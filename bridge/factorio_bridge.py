@@ -57,6 +57,7 @@ class GameState:
     run_name: str | None = None
     tick: int | None = None
     tabs: list = field(default_factory=list)
+    atlas_version: int | None = None
 
 
 # ── framing ──────────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ class Bridge(asyncio.DatagramProtocol):
             g.last_seen = time.monotonic()
             g.run_id, g.run_name, g.tick = msg.get("run_id"), msg.get("run_name"), msg.get("tick")
             g.tabs = msg.get("tabs") or []
+            g.atlas_version = msg.get("atlas_version")
             self.send_game({"type": "pong", "id": msg.get("id")})
             self.flush_outbox()
         elif t == "ask":
@@ -358,7 +360,7 @@ class Bridge(asyncio.DatagramProtocol):
         g = self.game
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
-            "tick": g.tick, "tabs": g.tabs,
+            "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version,
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),
             "dispatcher_seen_s": ago(self.dispatcher_seen), "agent_seen_s": ago(self.agent_seen),

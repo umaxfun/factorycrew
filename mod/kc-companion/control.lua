@@ -51,6 +51,21 @@ script.on_nth_tick(60, function()
   gui.tick()
 end)
 
+-- the base changed: the atlas's cached structure is stale (the MCP server compares atlas_version)
+local function changed(e)
+  -- closing the inventory or a biter killing a tree changes nothing the atlas knows
+  local ent = e.entity or e.created_entity
+  if e.name == defines.events.on_gui_closed and not ent then return end
+  if ent and ent.valid and ent.force and ent.force.name ~= "player" then return end
+  storage.kc.atlas_version = (storage.kc.atlas_version or 0) + 1
+end
+for _, ev in pairs({ "on_built_entity", "on_robot_built_entity", "script_raised_built", "script_raised_revive",
+                     "on_space_platform_built_entity", "on_player_mined_entity", "on_robot_mined_entity",
+                     "on_entity_died", "script_raised_destroy", "on_player_rotated_entity", "on_player_flipped_entity",
+                     "on_entity_settings_pasted", "on_gui_closed" }) do
+  if defines.events[ev] then script.on_event(defines.events[ev], changed) end
+end
+
 -- the atlas dump, a few chunks per tick (scripts/atlas.lua)
 script.on_event(defines.events.on_tick, function()
   if not atlas.running() then return end

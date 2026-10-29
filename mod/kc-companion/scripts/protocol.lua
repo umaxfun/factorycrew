@@ -35,6 +35,7 @@ function M.init_storage()
   kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
   kc.seq = kc.seq or 0
   kc.pointers = kc.pointers or {} -- player_index -> {pointer, ...} (scripts/pointers.lua)
+  kc.atlas_version = kc.atlas_version or 0 -- bumped when something is built, removed or reconfigured
 end
 
 local function next_id(prefix)
@@ -356,6 +357,7 @@ function M.heartbeat(kind)
     run_name = storage.kc.run_name,
     tick = game.tick,
     tabs = storage.kc.tab_order,
+    atlas_version = storage.kc.atlas_version,
   }
 end
 
