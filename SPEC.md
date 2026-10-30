@@ -37,7 +37,7 @@ Automated tests on the three levels below: mod logic, mod + bridge + MCP integra
 
 ## Not in v1
 
-The agent changing the world: setting a filter, moving or deleting an entity. That is the next version, with an "apply" button in the game.
+An "apply" button in the game. Kira builds with ghosts only, and changes existing entities (filters, recipes, removal) only after the player says yes in the chat (agent rules, "Changing existing things (consent first)").
 
 Multiplayer. v1 is single player only.
 
@@ -47,11 +47,11 @@ Attaching existing Kiro Crew chats. Factorio chats are created by the dispatcher
 
 ## What runs where
 
-Everything is on one Mac. The game runs under the `gamer` account; the bridge, MCP server, dispatcher and Kiro Crew run under `umaxfun`. Loopback (127.0.0.1) is shared by all accounts of one Mac, so UDP between the game and the bridge needs no network. While the player is in `gamer`, the `umaxfun` processes keep running in the background through fast user switching. `umaxfun` must not log out, only switch.
+Everything is on one machine and talks over loopback (127.0.0.1). For a player, the Kiro Crew app (`app/`, README "Kiro Crew app") runs the bridge from its backend, the dispatcher as its cron and Kira as its agent, and copies the mod into Factorio's mods folder; the game starts with `--enable-lua-udp 34200`.
 
-Kiro Crew for Factorio is a separate gateway, not the main one: `scripts/kc.sh`, port 5477, data in `~/.kirocrew-factorio`. It does not touch the main gateway (5476, `~/.kiro/crew`, `~/.kiro/agents`): it has its own `KIROCREW_HOME` and its own kiro-cli home `KIRO_HOME=$KIROCREW_HOME/kiro`. Kiro Crew treats that layout as the instance's private agent directory (`isolated_agents_dir`), the same way its isolated pods work. So the agent template, dispatcher, cron and `agent.session_control` live in this gateway, and `scripts/kc.sh install` puts them there. The gateway starts with a clean environment: otherwise the launching session's variables (its `TMPDIR`, scratch) leak in and the cron sandbox refuses to run the script. This instance does not need the embedding model (`KIROCREW_SKIP_MODEL_DOWNLOAD=1`); memory search falls back to keywords.
+For development, Kiro Crew for Factorio is a separate gateway, not the main one: `scripts/kc.sh`, port 5477, data in `~/.kirocrew-factorio`. It does not touch the main gateway (5476, `~/.kiro/crew`, `~/.kiro/agents`): it has its own `KIROCREW_HOME` and its own kiro-cli home `KIRO_HOME=$KIROCREW_HOME/kiro`. Kiro Crew treats that layout as the instance's private agent directory (`isolated_agents_dir`), the same way its isolated pods work. So the agent template, dispatcher, cron and `agent.session_control` live in this gateway, and `scripts/kc.sh install` puts them there. The gateway starts with a clean environment: otherwise the launching session's variables (its `TMPDIR`, scratch) leak in and the cron sandbox refuses to run the script. This instance does not need the embedding model (`KIROCREW_SKIP_MODEL_DOWNLOAD=1`); memory search falls back to keywords.
 
-`/Users/gamer/Library` is closed to `umaxfun` (`drwx------`). So the mod lives in the shared folder `/Users/Shared/kc-companion/`, and the game's mods folder under `gamer` has a symlink to it. Mod changes are made in `/Users/Shared`; in the game, restarting is enough (a reload of the save for `control.lua`, a full restart for graphics and prototypes).
+Each git worktree brings up its own copy of the whole stack (game client, bridge, gateway, Kira) on its own ports with `scripts/stand.sh` (docs/worktrees.md). After a mod change the game needs a reload of the save for `control.lua` and a full restart for graphics and prototypes (`stand.sh ui restart`).
 
 ## How it works
 
@@ -67,7 +67,7 @@ Four components.
 
 **Mod `kc-companion`** (Lua, Factorio 2.x). Owns the window with tabs, query execution, marks, and UDP send and receive. It calls `helpers.recv_udp()` in `on_nth_tick(10)` and gets the data in `on_udp_packet_received`. It runs queries through `load(text, name, "t", env)`: Factorio allows text chunks and forbids only binary ones.
 
-**Bridge** (Python, asyncio, a separate background process under `umaxfun`). Listens to UDP from the game and serves an HTTP API on 127.0.0.1 for the dispatcher and the MCP server. Matches requests to results by `id`, chunks large messages and reassembles them. Holds two queues: `reply` while the game is unreachable, and `ask` until the dispatcher picks the question up (for example between dispatcher restarts).
+**Bridge** (Python, asyncio, a separate background process; for a player the app backend runs it). Listens to UDP from the game and serves an HTTP API on 127.0.0.1 for the dispatcher and the MCP server. Matches requests to results by `id`, chunks large messages and reassembles them. Holds two queues: `reply` while the game is unreachable, and `ask` until the dispatcher picks the question up (for example between dispatcher restarts).
 
 **MCP server `factorio`** (stdio, Python). Gives the agent its tools and talks to the bridge over HTTP.
 
@@ -129,7 +129,7 @@ A paused game does not receive packets, because no ticks run. That is fine: the 
 
 `factorio_list_marks(chat?)`. The live marks with positions and text. For questions like "what did you mark" and "remove the ones on Nauvis".
 
-`factorio_compute(python, data_lua?, timeout?)`. Python 3 (stdlib) for anything heavier than a lookup: clustering, layouts, pipe routing, pole grids, ratios. `data_lua` runs first in the game and its return value is `data`; the code sets `result`. It runs off the game tick, so the game does not freeze. Helpers as `kc` (`mcp/kc_compute.py`): `connect` (one connected pipe/belt network joining all outputs around blocked tiles), `astar`, `footprint`, `unreached` (connectivity), `unwired` (copper-wire links by the shorter reach), `tile`. Sandbox: macOS seatbelt without network, writes or reading the home dir; under Kiro Crew the MCP server already runs inside the gateway's sandbox and macOS refuses a nested one, so there the code runs under the outer sandbox only (`sandboxed: false` in the result). Pattern: read with `data_lua`, compute, then place with one `factorio_query` calling `kc.place_ghosts`.
+`factorio_compute(python, data_lua?, timeout?)`. Python 3 (stdlib) for anything heavier than a lookup: clustering, layouts, pipe routing, pole grids, ratios. `data_lua` runs first in the game and its return value is `data`; the code sets `result`. It runs off the game tick, so the game does not freeze. Helpers as `kc`, the primitive library in `mcp/kc/` (docs/areas/kc-library.md; `mcp/kc_compute.py` is its old name, kept as an alias): `connect` (one connected pipe/belt network joining all outputs around blocked tiles), `astar`, `footprint`, `unreached` (connectivity), `unwired` (copper-wire links by the shorter reach), `tile`. Sandbox: macOS seatbelt without network, writes or reading the home dir; under Kiro Crew the MCP server already runs inside the gateway's sandbox and macOS refuses a nested one, so there the code runs under the outer sandbox only (`sandboxed: false` in the result). Pattern: read with `data_lua`, compute, then place with one `factorio_query` calling `kc.place_ghosts`.
 
 Mod helpers in the query environment (`kc`, `mod/kc-companion/scripts/helpers.lua`, tested at level 1): `kc.place_ghosts(surface, items)`, the only way the agent places ghosts. It checks each item like the player's ghost cursor (`build_check_type.manual_ghost`), refuses overlaps with entities, other ghosts and bad ground, snaps positions to the entity grid, and reports `unpowered` electric ghosts with a hint to power them in the same turn, plus what each placed inserter picks from and drops into (`inserters`, `inserter_hint`; a backwards inserter is the usual silent failure). A plain `create_entity{name="entity-ghost"}` silently replaces ghosts it lands on; that once put a substation over a pumpjack. Also `kc.poles()`, `kc.nearest_pole()` (with the grid's `sources` and `production_w`), `kc.grid_power(pole)`, `kc.unpowered()`, `kc.inserter_ends()`.
 
@@ -166,7 +166,7 @@ On "remove", "clear", "enough marks" (in any language) call `factorio_unmark`.
 
 If the save has several surfaces (Space Age), say which surfaces were searched.
 
-Building is done with ghosts only (build plans the player's robots or hands complete), near the player by default, on free ground (`can_place_entity`), with a mark at the center. Existing entities are never removed, rotated or reconfigured, and no real entities or items are created. This is an agent rule, not a sandbox.
+Building is done with ghosts only (build plans the player's robots or hands complete), near the player by default, on free ground (`can_place_entity`), with a mark at the center. Existing entities are removed, rotated or reconfigured only after the player's consent for that exact change (removal goes out as deconstruction orders), and no real entities or items are created. This is an agent rule, not a sandbox (agent/factorio-companion.md, "Changing existing things (consent first)").
 
 ## In-game window
 
@@ -225,13 +225,11 @@ The `factorio-dispatch` script-cron in the factorycrew gateway. `scripts/test-e2
 
 The `factorio-companion` agent template: `scripts/kc.sh install`. Nothing goes into the shared `~/.kiro/agents/`.
 
-Under the `gamer` account:
-- the Steam launch option `--enable-lua-udp 34200`;
-- the symlink `~/Library/Application Support/factorio/mods/kc-companion` → `/Users/Shared/kc-companion`, and the mod enabled.
+In the game: the Steam launch option `--enable-lua-udp 34200`, and the mod enabled (the Kiro Crew app copies it into the mods folder).
 
 Adding the mod to an existing save does not break the world. But with any mod, Steam achievements no longer count on that save; only the local "modded" ones remain. The code the mod runs through `load` disables nothing extra: the console `/c` does, not the mod.
 
-The bridge and the factorycrew gateway start automatically: `scripts/services.sh install` installs the launchd agents `dev.factorycrew.bridge` and `dev.factorycrew.gateway` (KeepAlive, RunAtLoad), `uninstall` removes them. `scripts/deploy-mod.sh` copies the mod to `/Users/Shared/kc-companion` for the game.
+For a player the app starts the bridge and the dispatcher with Kiro Crew. Two older developer helpers remain for a hand-made setup from the main checkout (both refuse to run from a worktree): `scripts/services.sh install` installs the launchd agents `dev.factorycrew.bridge` and `dev.factorycrew.gateway`, and `scripts/deploy-mod.sh` copies the mod to `/Users/Shared/kc-companion`.
 
 ## Tests
 
@@ -243,16 +241,17 @@ Environment for levels 1 and 2 (checked 2026-10-28 on this Mac):
 - The `factorio-test` mod on the portal needs a Factorio login and token. Instead it is built from source when the image is built and placed in the test data dir's `mods`. Factorio 2.0 needs tag `cli-v3.5.1` (mod 3.0.2): from 3.6.0 the mod requires 2.1. The CLI of the same version, `factorio-test-cli@3.5.1`, calls `npx fmtk`, so the image also has `factoriomod-debug`. No credentials needed.
 - The 2.0.77 headless server crashes on the first UDP packet the mod receives (`TickClosure.cpp:91: Trying to add invalid input action`). It is a game bug fixed in 2.1: [forums.factorio.com, t=134790](https://forums.factorio.com/viewtopic.php?t=134790). The client is not affected: UDP works in the real 2.0.77 game (checked with the UI loop below). So level 1 runs on 2.0.77 (it needs no UDP) and level 2 on headless 2.1.23. The test copy of the mod declares the `factorio_version` it runs on.
 
-**Level 1, mod logic, on every change.** [FactorioTest](https://github.com/GlassBricks/FactorioTest), headless 2.0.77 in Docker under `umaxfun`, `./scripts/test-mod.sh`, ~10 seconds including container start. Covers: `query` and its result shape, query errors, the 64 KB cap, chunking of large messages (including without breaking UTF-8), `mark`/`unmark`/`list_marks` by `ids`, by chat and all at once, reasons for failed marks, manual tag deletion, other tags left alone, `run_id`, tabs, `ask`/`ack`/`reply`/`status`, a `reply` for another run ignored, the feed capped at 30. The window: a headless FactorioTest run has a LuaPlayer, so the GUI tree is really built and checked in code: the top-bar button, open and close, the default tab, the link indicator before and after `pong`, Enter sends to the selected tab, "thinking…", the answer, "Kira did not answer here", new, switch, close and reopen a tab with its feed, run rename, the marks counter, ◀ ▶ wrapping around, and the trash button touching only its own tab. How the window looks is checked with the UI loop.
+**Level 1, mod logic, on every change.** [FactorioTest](https://github.com/GlassBricks/FactorioTest), headless 2.0.77 in Docker, `./scripts/test-mod.sh` (and `./scripts/test-mod-2.1.sh` on 2.1.23), ~11 seconds including container start. Covers: `query` and its result shape, query errors, the 64 KB cap, chunking of large messages (including without breaking UTF-8), `mark`/`unmark`/`list_marks` by `ids`, by chat and all at once, reasons for failed marks, manual tag deletion, other tags left alone, `run_id`, tabs, `ask`/`ack`/`reply`/`status`, a `reply` for another run ignored, the feed capped at 30. The window: a headless FactorioTest run has a LuaPlayer, so the GUI tree is really built and checked in code: the top-bar button, open and close, the default tab, the link indicator before and after `pong`, Enter sends to the selected tab, "thinking…", the answer, "Kira did not answer here", new, switch, close and reopen a tab with its feed, run rename, the marks counter, ◀ ▶ wrapping around, and the trash button touching only its own tab. How the window looks is checked with the UI loop.
 
-**Level 2, mod + bridge + MCP integration, on every bridge or protocol change.** No Kiro Crew in this loop; the test plays the dispatcher and the agent. Headless Factorio 2.1.23, bridge, MCP server and pytest in one container: UDP is loopback only, so they share a network namespace. The test acts for the player over RCON (`remote.call("kc", "ask", …)`) and reads the mod state the same way; the code under test does not use RCON. Game speed is raised to 4 so the mod's tick timeouts pass in seconds. `./scripts/test-integration.sh`, ~20 seconds. Scenario: 20 `storage-chest`s, 7 without a filter. Through MCP the test calls `factorio_query` the way the agent would, places `factorio_mark` and checks 7 `[KC]` tags at the right coordinates. Then `factorio_unmark(all_in_chat)`: 0 `[KC]` tags, the player's tag in place, and `factorio_reply` reaches the tab. Also: an `ask` reaches the dispatcher with `ack` and `thinking`; mark and query errors; large messages both ways in Cyrillic (on purpose, to catch broken UTF-8); bridge packet size; `idle` by timeout without `reply`; the `ask` queue and a lease returning an unconfirmed question; `game_offline` and the `reply` queue while the game process is stopped (SIGSTOP), and delivery after it resumes; losing `pong` when the bridge is down, and recovery.
+**Level 2, mod + bridge + MCP integration, on every bridge or protocol change.** No Kiro Crew in this loop; the test plays the dispatcher and the agent. Headless Factorio 2.1.23, bridge, MCP server and pytest in one container: UDP is loopback only, so they share a network namespace. The test acts for the player over RCON (`remote.call("kc", "ask", …)`) and reads the mod state the same way; the code under test does not use RCON. Game speed is raised to 4 so the mod's tick timeouts pass in seconds. `./scripts/test-integration.sh`, ~65 seconds. Scenario: 20 `storage-chest`s, 7 without a filter. Through MCP the test calls `factorio_query` the way the agent would, places `factorio_mark` and checks 7 `[KC]` tags at the right coordinates. Then `factorio_unmark(all_in_chat)`: 0 `[KC]` tags, the player's tag in place, and `factorio_reply` reaches the tab. Also: an `ask` reaches the dispatcher with `ack` and `thinking`; mark and query errors; large messages both ways in Cyrillic (on purpose, to catch broken UTF-8); bridge packet size; `idle` by timeout without `reply`; the `ask` queue and a lease returning an unconfirmed question; `game_offline` and the `reply` queue while the game process is stopped (SIGSTOP), and delivery after it resumes; losing `pong` when the bridge is down, and recovery.
 
 **Level 3, e2e, before handing over.** The full cycle: a question from the game → bridge → dispatcher → Kiro Crew chat `Factorio/<test run>/<tab>` → agent `factorio-companion` with MCP → marks and answer in the game. Parts:
 - automated, `./scripts/test-e2e.sh`: a fresh headless 2.1.23 with a bridge in Docker (bridge HTTP and RCON published on the host's 127.0.0.1 only), the real dispatcher, factorycrew gateway and agent with a real model. A new stand is a new `run_id`, so every run gets its own folder `Factorio/e2e MM-DD HH:MM` and empty chats. Questions go into the mod window over RCON. Checks: the 7 unfiltered chests are found and marked (a mark within a tile of each chest, the player's tag in place) and the answer is in English; the follow-up "how many did you mark" is answered from the chat context; "remove the marks" removes them all; a new tab is a separate chat without the other tab's history; a question in Russian is answered in Russian. Measured 2026-10-28 (before the language check): a question reaches the chat in 0.2–0.3 s, an answer with a search and marks in ~20 s, the first question in a new tab in ~6–9 s;
-- the e2e takes the host bridge out of launchd for the run (the stand needs its port 34198) and puts it back afterwards;
-- by hand under `gamer` on 2.0.77: the same from the real window, and save/load.
+- the e2e runs on its worktree slot's own ports, gateway and home (docs/worktrees.md, "Tests"), so it never touches a player's bridge;
+- the app e2e, `./scripts/test-app-e2e.sh`: the built app in its own gateway with the real 2.0.77 client, questions through the window's own handlers (README, "Kiro Crew app");
+- by hand on 2.0.77: save/load in the real game.
 
-**UI loop, while working on the window.** `tools/ui_dev.py` runs a real 2.0.77 client under `umaxfun` from the player's copy `/Users/Shared/factorio.app`, with its own data dir `~/.factorycrew-dev/factorio` and a dev bridge on ports 34298/34299/34300, so it never clashes with the game under `gamer`. `start` deploys the mod, starts bridge and game and waits until the mod is online; `shot NAME [STEP ...]` drives the window over the bridge (open, click, type, reply, status) and takes `game.take_screenshot{show_gui=true}` into `~/.factorycrew-dev/factorio/script-output/kc/NAME.png`. The client renders while the console is on `gamer`.
+**UI loop, while working on the window.** `tools/ui_dev.py` runs a real 2.0.77 client from `/Users/Shared/factorio.app` (`FACTORIO_APP`), with its own data dir and a dev bridge on its own ports, so it never clashes with a game played on the same machine; in a worktree, `stand.sh ui` gives it the slot's data dir and ports. `start` deploys the mod, starts bridge and game and waits until the mod is online; `shot NAME [STEP ...]` drives the window over the bridge (open, click, type, reply, status) and takes `game.take_screenshot{show_gui=true}` into `<data dir>/script-output/kc/NAME.png`.
 
 ## v1 done criteria
 
@@ -274,7 +273,7 @@ Level 1 and 2 tests pass with the commands from the README, and the level 3 e2e 
 
 ## Decided
 
-**Where the game runs.** On this Mac under the `gamer` account, see "What runs where". No network or tunnels.
+**Where the game runs.** On the player's own machine, next to Kiro Crew; everything talks over loopback, no network or tunnels. Players install the Kiro Crew app; the earlier setup with a separate `gamer` account and a symlinked mod is retired (confirmed by Michael on 2026-10-29).
 
 **`load` in the mod runtime.** Available for text chunks (Factorio Lua API docs, Libraries). `factorio_query` takes arbitrary Lua; no fallback to primitives.
 
@@ -284,7 +283,7 @@ Level 1 and 2 tests pass with the commands from the README, and the level 3 e2e 
 
 **Save name in the Lua API.** Not there (checked in `runtime-api.json` 2.1.24). The run is a `run_id` in `storage`, the name comes from the player.
 
-**FactorioTest on headless.** Works: the CLI starts headless by default. Level 1 runs in Docker under `umaxfun`; the game under `gamer` is not needed for tests. Details in "Tests".
+**FactorioTest on headless.** Works: the CLI starts headless by default. Level 1 runs in Docker; no game client is needed for it. Details in "Tests".
 
 **Headless Factorio in Docker on Apple Silicon.** Works in the `linux/amd64` image through Rosetta. A probe mod on a 2.1.23 headless server checked the whole protocol path:
 - UDP both ways;
@@ -297,7 +296,7 @@ The same run confirmed that a query can write to the world (`game.speed = 2` wor
 
 **Marks on uncharted territory.** Placed: `add_chart_tag` returned a tag on an uncharted chunk.
 
-**Game version.** 2.0.77 under `gamer`. The mod declares `factorio_version: "2.0"`. Level 1 runs on headless 2.0.77, level 2 on 2.1.23 because of the headless 2.0 UDP bug. UDP on the 2.0.77 client works (UI loop and the player's own game).
+**Game version.** 2.0.77, the player's game. The mod declares `factorio_version: "2.0"`. Level 1 runs on headless 2.0.77, level 2 on 2.1.23 because of the headless 2.0 UDP bug. UDP on the 2.0.77 client works (UI loop and the player's own game).
 
 **Screenshots for UI work.** `game.take_screenshot{show_gui=true}` needs a real client; headless renders nothing. Solved with the UI loop above.
 
