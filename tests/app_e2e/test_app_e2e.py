@@ -169,8 +169,15 @@ def test_long_build_shows_progress(player):
     t0 = time.monotonic()
     assert player.ui("ui_confirm", "kc_input", "draw kirocrew ghost logo with colored lamps at about 1 chunk of size")
     seen, shot = {"steps": 0, "activity": set(), "secs": 0}, False
-    while time.monotonic() - t0 < 300:
+    # A healthy run took 278 s and one 300+ s with steps still coming (2026-10-29), so the cap is
+    # loose and a hang is caught by silence instead: no new step, activity or trace line for 150 s.
+    last_sig, last_move = None, time.monotonic()
+    while time.monotonic() - t0 < 480:
         t = player.tab(tab)
+        sig = (t.get("steps"), t.get("activity"), len(t.get("trace") or []), len(t["feed"]))
+        if sig != last_sig:
+            last_sig, last_move = sig, time.monotonic()
+        assert time.monotonic() - last_move < 150, f"the build turn stopped moving: {seen['steps']} steps, {sig}"
         if t.get("steps"):
             seen["steps"] = max(seen["steps"], t["steps"])
         if t.get("activity"):
@@ -190,7 +197,7 @@ def test_long_build_shows_progress(player):
     total = time.monotonic() - t0
     print(f"\nbuild reply ({total:.0f}s, max step {seen['steps']}, activity {sorted(seen['activity'])}): "
           f"{kira[-1]['text'] if kira else None}")
-    assert kira, "no reply in 300 s"
+    assert kira, f"no reply in {total:.0f} s, though the turn kept moving"
     # the dev save's run is named "Ран 1": the header must not pull the answer into Russian
     assert not cyrillic(kira[-1]["text"]), kira[-1]["text"]
     assert seen["steps"] >= 2 and seen["activity"], seen

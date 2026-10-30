@@ -77,4 +77,4 @@ The host: Docker Desktop twice left amd64 containers in "Created" during the nig
 - Michael: publish the repository on GitHub and open the two branches as PRs, checks first. Done when the `check` workflow shows four green jobs.
 - Michael: read the `(inferred)` claims in `docs/areas/` and confirm or correct them.
 - Michael: decide whether to add a linter (ruff, luacheck) to `check.sh` and CI.
-- Open findings for whoever works on them next: Kira's rules name only the `belts` skill, though all seven are importable and `app/app.json` registers only `skills/belts` ([areas/skills.md](areas/skills.md)); the two flaky app e2e tests above.
+- Fixed on branch `fix/kira-skills-and-e2e-flakes`: Kira's rules, the `factorio_compute` description and `app/app.json` name all seven skills; the dispatcher no longer forwards the previous turn's text as the answer to a quick follow-up (the consent flake); the long-build test catches a hang by silence instead of a 300 s cap.
