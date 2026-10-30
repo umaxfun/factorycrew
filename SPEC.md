@@ -156,7 +156,7 @@ Trial runs (`mod/kc-companion/scripts/trial.lua`): `kc.trial_start(surface, area
 
 Writing to the world is not technically restricted in v1, because a Lua query can call anything. Read-only is an agent rule, not a sandbox. This is a deliberate v1 risk: the game is single player, the save is yours, and every query is visible in the chat. A sandbox with a read-only proxy may come in v2 together with writes behind confirmation.
 
-## Agent rules (`agent/factorio-companion.md`)
+## Agent rules
 
 Answer in the player's language, whatever language the rules and the window use.
 

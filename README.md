@@ -1,6 +1,6 @@
 # factorycrew
 
-Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SPEC.md](SPEC.md).
+Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SPEC.md](SPEC.md). Changing the code: start with [AGENTS.md](AGENTS.md) (commands, rules, a doc per area).
 
 ## Layout
 
