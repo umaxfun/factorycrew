@@ -34,19 +34,18 @@ One MCP tool, `factorio_atlas`, with flat parameters (weak models handle it bett
 
 | parameter | levels | meaning |
 |---|---|---|
-| `level` | all | `map`, `zone`, `block`, `area`, `trace` |
-| `id` / `at` | zone, block, trace | `Z12`, `B480`, `S11`, or a point `{x, y}` (a pointer's position) |
+| `level` | all | `map`, `zone` (default), `block`, `trace` |
+| `id` / `at` / `box` | zone, block, trace | `Z12`, `B480`, `S11`, a point `{x, y}` (a pointer's position), or a box pointer's area |
 | `item` | all | keep entries that make or use this item |
 | `status` | map, zone, block | `stuck` (anything but working/full output), `low_power`, `no_ingredients`, ... |
 | `feed` | map, zone | `belts`, `robots`, `topped` |
 | `near` | map | `{x, y, r}` |
 | `kind` | map | `zone` (default), `station`, `train`, `network` |
-| `part` | zone | `inputs`, `outputs`, `missing`, `blocks` |
-| `dir`, `depth` | trace | `up` / `down`, hops |
+| `dir` | trace | `up` / `down` |
 | `min_machines`, `limit` | map, zone | size cut and row cap |
 | `refresh` | all | rebuild from a fresh dump |
 
-Data path: the full dump of a large base is several MB, and a query result is capped at 64 KB. So the mod writes the dump into the game's `script-output`, the MCP reads the file, builds the atlas in Python and caches it.
+Data path: the full dump of a large base is several MB, and a query result is capped at 64 KB. So the mod streams the dump to the bridge over UDP as `atlas_part` messages, the bridge merges and keeps it per surface (`POST /atlas`), and the MCP builds the atlas in Python and caches it. Only the fixture path (remote `kc.atlas_dump`, `scripts/atlas-fixture.sh`) writes a file into `script-output`. Code map: [docs/areas/atlas.md](areas/atlas.md).
 
 ## Reading the base without stalling the game
 
@@ -68,13 +67,13 @@ Measured inside the game on the reported save (123 939 player entities), headles
 What follows from it:
 - `table_to_json` is the only slow part. The dump is hand-built text: names as numeric ids with a name table, coordinates as integers (doubled, so half-tiles stay exact), one line per entity. That is 14 times faster for the same data.
 - The dump is spread over ticks: about 40 ms per 10 000 entities here, so a budget of 2–3 ms per tick reads the whole base in the background in 2–4 s of game time and never freezes it. UPS drops a little meanwhile; how much on this base in the live client is not measured yet.
-- In multiplayer `helpers.write_file` writes on every client unless `for_player` is given: always pass the asking player's index.
+- In multiplayer `helpers.write_file` writes on every client unless `for_player` is given. The game path does not write files (the dump goes over UDP); the fixture's remote `kc.atlas_dump` writes one without `for_player`, which is fine for its single-player headless run.
 
 Two kinds of data, kept apart:
-1. **Structure**: what stands where, recipes, directions, pickup/drop points, stop names, fluid segments, logistic network ids. It changes only when the player builds. It is cached and updated by chunk: the mod marks a chunk dirty on build (player, robot, `script_raised_built`), removal (mined by player or robot, died, `script_raised_destroy`), rotation, flip, settings paste, and closing a machine's GUI (the way a recipe usually changes). The next atlas call re-reads only dirty chunks. A full rebuild runs on save load and on mod changes (`on_configuration_changed`). Whether these events catch every way a recipe or filter can change is not verified, so a rare full background rebuild and `refresh=true` stay as a safety net.
+1. **Structure**: what stands where, recipes, directions, pickup/drop points, stop names, fluid segments, logistic network ids. It changes only when the player builds. It is cached and updated by chunk: the mod marks a chunk dirty on build (player, robot, `script_raised_built`), removal (mined by player or robot, died, `script_raised_destroy`), rotation, flip, settings paste, and closing a machine's GUI (the way a recipe usually changes). The next atlas call re-reads only dirty chunks. A full dump runs on mod changes (`on_configuration_changed`), on a new run, when nothing is cached yet, and on `refresh=true`. Loading a save marks nothing dirty, and there is no background rebuild (`bridge/factorio_bridge.py`, `Bridge.atlas`). Whether these events catch every way a recipe or filter can change is not verified, so `refresh=true` stays as the safety net.
 2. **State**: statuses, belt and chest contents, train positions and cargo, network stock. It changes every tick, is never cached, and is read live for what the question touches: milliseconds for one zone, 44 ms for every machine's status.
 
-The Python side builds the whole atlas from scratch in about 6 s, so after a build it rebuilds only the zones that touch dirty chunks; otherwise the first question after building waits.
+The Python side builds the whole atlas from scratch, and today it does so after every change from the bridge's merged text (`mcp/factorio_mcp.py`, `_atlas`; 0.8 s on the fixture). Rebuilding only the zones that touch dirty chunks is the goal of task 6 and is not done.
 
 ## What the prototype measured
 
@@ -101,7 +100,7 @@ Pitfalls the prototype hit, so the real code avoids them:
 
 ## Fixture
 
-The reported save with its mods is the main fixture. It is the player's own save, not committed (save 17 MB, mods 608 MB). Tests read it from `FC_ATLAS_SAVE` (the save zip) and `FC_ATLAS_MODS` (a mods dir with `mod-list.json`); this checkout's `kc-companion` replaces the copy in that dir. Tests that need it skip with a clear message when the variables are unset. Its structure dump is committed, gzipped (`tests/data/atlas/dump.txt.gz`, 0.4 MB, from `scripts/atlas-fixture.sh dump`), so the unit tests in `tests/unit/test_kc_atlas.py` run in any checkout; `FC_ATLAS_OUT` points them at a fresh dump instead. Small synthetic saves with planted faults (task 5) are committed and need no mods.
+The reported save with its mods is the main fixture. It is the player's own save, not committed (save 17 MB, mods 608 MB). `scripts/atlas-fixture.sh` reads it from `FC_ATLAS_SAVE` (the save zip) and `FC_ATLAS_MODS` (a mods dir with `mod-list.json`); the real-client tests (`tests/app_e2e/test_atlas.py`, through `tools/ui_dev.py`) read `FC_UI_SAVE` and `FC_UI_MODS`. Either way this checkout's `kc-companion` replaces the copy in the mods dir, and tests that need the save skip with a clear message when the variables are unset. Its structure dump is committed, gzipped (`tests/data/atlas/dump.txt.gz`, 0.4 MB, from `scripts/atlas-fixture.sh dump`), so the unit tests in `tests/unit/test_kc_atlas.py` run in any checkout; `FC_ATLAS_OUT` points them at a fresh dump instead. The planted-fault cases of task 5 are not saves: `tests/app_e2e/test_atlas_planted.py` builds them on the plain dev map, so they need no mods.
 
 ## Tasks
 

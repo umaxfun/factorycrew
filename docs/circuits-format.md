@@ -11,7 +11,7 @@ A signal is a string key `"<type>/<name>"`, with `@<quality>` appended when the 
 Types: item, fluid, virtual, entity, recipe, space-location, asteroid-chunk, quality.
 Special virtual signals keep their names: `virtual/signal-everything`, `virtual/signal-anything`,
 `virtual/signal-each`.
-A signal set is `{key: count}` with integer counts; zero counts are omitted.
+A signal set is `{key: count}` with integer counts; zero counts are omitted. When a snapshot still does not fit `max_bytes`, each network keeps its first 20 signals and gets `"signals_truncated": true`.
 
 ## Snapshot
 
@@ -20,7 +20,8 @@ A signal set is `{key: count}` with integer counts; zero counts are omitted.
   "v": 1,
   "tick": 123456,
   "game_version": "2.0.77",
-  "truncated": false,
+  "truncated": false,                 // max_entities reached, or cut to fit opts.max_bytes (48000)
+  "wires_dropped": true,              // only when "wires" was emptied to fit max_bytes
   "networks": {
     "17": {"color": "red", "signals": {"item/iron-plate": 400, "virtual/signal-A": 1}},
     "18": {"color": "green", "signals": {}}
@@ -33,7 +34,7 @@ A signal set is `{key: count}` with integer counts; zero counts are omitted.
       "kind": "decider",              // decider | arithmetic | constant | selector | other
       "status": "working",            // entity status name (defines.entity_status); "no_power" etc. means a
                                       // decider/arithmetic/selector outputs nothing
-      "connectors": {                 // connector -> network id (string) or null when not wired
+      "connectors": {                 // connector -> network id (string); the reader leaves unwired ones out, the simulator also accepts null
         "in_red": "17", "in_green": null, "out_red": "19", "out_green": null
       },
       "params": { ... },              // per kind, below
@@ -48,7 +49,7 @@ A signal set is `{key: count}` with integer counts; zero counts are omitted.
 
 Connector names: combinators have `in_red`, `in_green`, `out_red`, `out_green`; every other
 circuit entity has `red`, `green`. The reader follows wires from the entities it is given (or from
-everything in an area) until the networks are closed, then lists every entity on them.
+everything in an area, or within `radius` of a `position`) until the networks are closed, then lists every entity on them.
 
 ## Conditions
 
@@ -70,7 +71,7 @@ everything in an area) until the networks are closed, then lists every entity on
 - **arithmetic**: `{"first": key|null, "first_constant": int|null, "first_networks": {...}, "operation": "*", "second": key|null, "second_constant": int|null, "second_networks": {...}, "output": key|null}`.
   Operations: `+ - * / % ^ << >> AND OR XOR` (integer, 32-bit wrap like the game).
 - **constant**: `{"enabled": bool, "sections": [{"active": bool, "multiplier": number, "signals": {key: count}}]}`.
-- **selector**: `{"mode": "select"|"count"|"random"|"stack-size"|"rocket-capacity"|"quality-filter"|"quality-transfer", ...mode fields as the game has them}`.
+- **selector**: `{"mode": "select"|"count"|"random"|"stack-size"|"rocket-capacity"|"quality-filter"|"quality-transfer"|"quality-select"|"time", ...mode fields as the game has them}` (`quality-select` and `time` exist on 2.1).
 
 ## control (kind "other")
 

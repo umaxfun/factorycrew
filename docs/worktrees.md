@@ -83,6 +83,7 @@ A hung e2e fails fast and says where. Every wait for Kira's reply goes through `
 - the question sits in the bridge queue (no dispatcher polling);
 - no chat was opened;
 - the turn failed (an `error` row in the transcript, such as "Crew Member … is unavailable");
+- Kira's `factorio` MCP server did not start (kiro-cli's `mcp.log` in the gateway home), so the turn has no game tools;
 - the turn stopped moving (no MCP step, no transcript growth for 120 s);
 - the bridge gave up.
 
@@ -99,6 +100,6 @@ On failure, `test-e2e.sh` also prints the bridge health, the gateway status, the
 - A Factorio client the stand can start: `FACTORIO_APP` (default `/Users/Shared/factorio.app`, the macOS Steam build). The UI loop needs a real client with a window. A headless Linux server has none. There the stand's game would have to be the headless server from `docker/`, and `tools/ui_dev.py` does not do that yet.
 - `kirocrew` on `PATH`, logged in once for the user the agents run as. Each stand's gateway gets its own home, but they share that login.
 - `python3`, `lsof`, `curl`, `rsync`, and GNU `timeout` (Homebrew coreutils on macOS).
-- `uv`: the test scripts run pytest through `uv run --no-project --python 3.12 --with pytest==8.3.5`, so the Python unit tests and both e2e runs use Python 3.12 whatever `python3` is. The bridge, MCP server and dispatcher themselves are stdlib only and also run on the system `python3` (3.9 on macOS).
+- `uv`: the test scripts run pytest through `uv run --no-project --with pytest==8.3.5`; `scripts/test-unit.sh` also pins `--python 3.12`, the e2e scripts take uv's default Python. The bridge, MCP server and dispatcher themselves are stdlib only and also run on the system `python3` (3.9 on macOS).
 - Docker (Docker Desktop on macOS) for levels 1 and 2 and the e2e stand; the images are `linux/amd64` and build on first use from `docker/Dockerfile`.
 - The checkout must not live under `~/.kiro/crew` or `~/.kirocrew` (for example an agent's Kiro Crew scratch dir): the gateways run Kira's MCP server from the checkout inside Kiro Crew's sandbox, which denies those paths. `stand.sh up`, `test-e2e.sh` and `test-app-e2e.sh` refuse to start there. A sibling of the main clone, `<main clone>.worktrees/<name>`, works.

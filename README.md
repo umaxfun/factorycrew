@@ -8,7 +8,11 @@ Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SP
 |---|---|
 | `mod/kc-companion/` | Factorio 2.0 mod: in-game window (Ctrl+Shift+K), query execution, map marks, tabs, UDP to the bridge |
 | `bridge/factorio_bridge.py` | Bridge: UDP to the game, HTTP API on 127.0.0.1:34198 for the dispatcher and the MCP server |
-| `mcp/factorio_mcp.py` | MCP server `factorio` (stdio): `factorio_query`, `_mark`, `_unmark`, `_list_marks`, `_reply` |
+| `mcp/factorio_mcp.py` | MCP server `factorio` (stdio): `factorio_query`, `_mark`, `_unmark`, `_list_marks`, `_reply`, `_progress`, `_compute`, `_atlas`, `_panel`, `_saved_panels` ([docs/areas/mcp-server.md](docs/areas/mcp-server.md)) |
+| `mcp/kc/` | the `kc` primitive library Kira imports in `factorio_compute`; atlas and circuits live here too |
+| `skills/` | Python skills (belts, pipes, power, ...) importable in `factorio_compute` |
+| `app/` | the Kiro Crew app package: manifest, backend (runs the bridge), status page |
+| `tools/ui_dev.py` | the real-client UI loop and screenshots |
 | `docker/Dockerfile` | Test image: headless Factorio + FactorioTest (built from source, no portal login) + Python |
 | `dispatcher/factorio_dispatch.py` | Script-cron: asks from the bridge -> chats `Factorio/<run>/<tab>` |
 | `agent/` | Agent template `factorio-companion` and its rules |
@@ -61,7 +65,7 @@ Then three game levels (SPEC.md, "Tests"). Only level 3 and the app e2e are end 
 
 Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet the mod receives ([forum report](https://forums.factorio.com/viewtopic.php?t=134790), fixed in 2.1). Each image is built on first use (~1 min); level 1 takes ~12 s, level 2 ~65 s. Logs of the last level 2 run: `.test-data/integration/`.
 
-Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model, 5 agent turns per run, and checks that Kira answers in the player's language (one question in Russian).
+Level 3 starts the factorycrew gateway if needed, installs the agent and dispatcher, registers the cron once, and runs a fresh game stand in Docker (bridge HTTP and RCON published on 127.0.0.1 only). It uses a real model, about 10 agent turns per run (~4 min): `tests/e2e/test_e2e.py` (chests, follow-up, unmark, a separate tab, a Russian question answered in Russian) and `tests/e2e/test_panels_e2e.py` (live panels and their library).
 
 ## Kiro Crew app (the redistributable package)
 
@@ -82,7 +86,7 @@ The mod rides along: its version is the app's, and on every start the app backen
 
 Verified on the dev gateway with the `release` branch served over smart HTTP on loopback: added as a source, listed with `subdirectory: apps/factorycrew`, installed after the trust dialog, then `Update` took it from 0.3.2 to 0.3.3 and the status page reported 0.3.3.
 
-The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod against the app's bridge on the dev ports 34298-34300, and asks through the window's own handlers: 7 chests marked, follow-up from context, the trash button, a Russian question answered in Russian, and the turns used the app's own MCP server. ~50 s, 4 agent turns.
+The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod against the app's bridge on the worktree slot's ports (docs/worktrees.md), and asks through the window's own handlers. `tests/app_e2e/test_app_e2e.py`: 7 chests marked, follow-up from context, the trash button, a Russian question answered in Russian, the app's own MCP server, progress during a long build, the nearest oil cluster, consent before changing entities. `test_uncoded.py`: tasks no code was written for (lamp, trains, power, rates, belt). `test_atlas_planted.py`, `test_atlas_events.py`, `test_atlas.py` (the last needs the fixture save, `FC_UI_SAVE`/`FC_UI_MODS`): the atlas. The whole suite takes ~20 min and a few dozen agent turns; `-k <name>` runs one test.
 
 ## UI loop (screenshots of the real window)
 
