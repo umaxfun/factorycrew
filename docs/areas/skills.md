@@ -13,8 +13,8 @@ Seven pure-Python planners Kira imports inside `factorio_compute` (`import belts
 
 - Uses: the `kc` primitives in `mcp/kc/`: `pipes` takes `kc.steiner` (`skills/pipes/lib/pipes.py:36-42`), `power` takes `kc.cover`, `kc.wires`, `kc.grid.Grid` (`skills/power/lib/power.py:40-49`), `production` takes `kc.lp` (`skills/production/lib/production.py:45-52`). Beacons, belts, mining and solar use only the stdlib (same grep). `mining` imports `belts` for its check (`skills/mining/lib/mining.py:480-495`).
 - Used by: the MCP server's `factorio_compute`, which copies every `skills/*/lib/*.py` flat into the run's temp dir next to `main.py`, and `mcp/kc/*.py` into `kc/`, on every call (`mcp/factorio_mcp.py:295`, `:359-369`). `SKILLS` is `<parent of mcp/>/skills`, which is the repo root or the installed app's root (`mcp/factorio_mcp.py:295`).
-- Used by: Kira, through her rules. The rules name only `belts` (`agent/factorio-companion.md:77-79`), and the `factorio_compute` tool description says "`import belts` and the others in your rules" (`mcp/factorio_mcp.py:127`). See [Kira](kira-agent.md).
-- Used by: the app package: `scripts/build-app.sh:23` rsyncs all of `skills/` (minus `__pycache__`) into `dist/factorycrew/skills/`; `app/app.json:68-70` registers only `skills/belts` as a Kiro Crew skill.
+- Used by: Kira, through her rules, which name each skill's entry call and check (`agent/factorio-companion.md`, "Skills"), and the `factorio_compute` tool description, which lists all seven (`mcp/factorio_mcp.py`, `TOOLS`). See [Kira](kira-agent.md).
+- Used by: the app package: `scripts/build-app.sh:23` rsyncs all of `skills/` (minus `__pycache__`) into `dist/factorycrew/skills/`; `app/app.json` registers all seven as Kiro Crew skills.
 - Feeds: [Build helpers](build-helpers.md): every skill's output goes to `kc.place_ghosts` unchanged (each `SKILL.md`, last step).
 
 ## Must stay true
@@ -30,7 +30,7 @@ Seven pure-Python planners Kira imports inside `factorio_compute` (`import belts
 
 ## Easy to break
 
-- A new skill reaches Kira only if her rules name it: `factorio_compute` ships every lib, but no `SKILL.md` is loaded for her in repo mode (the agent's only resource is `agent/factorio-companion.md`, `agent/factorio-companion.json`) and the app registers only `skills/belts` (`app/app.json:68-70`). Today beacons, mining, pipes, power, production and solar are importable but not named in the rules (`grep -n 'import ' agent/factorio-companion.md`).
+- A new skill reaches Kira only if her rules, the `factorio_compute` description and `app/app.json` name it: `factorio_compute` ships every lib, but Kira has no file tools and reads no `SKILL.md` (`agent/factorio-companion.json`). `tests/unit/test_skills_listed.py` fails when one of the three misses a skill.
 - An edit to a skill reaches the stand at the next `factorio_compute` call, with no restart, because the files are copied per call (`scripts/stand.sh:161-163`, `mcp/factorio_mcp.py:359`). An installed app keeps its own copy until `scripts/app-dev.sh` rebuilds and reinstalls it (`scripts/app-dev.sh`).
 - A skill that imports another skill (`mining` -> `belts`) works in compute because the libs sit in one flat dir, and in the repo only through its own `sys.path` fallback (`skills/mining/lib/mining.py:480-495`).
 - Results over 64 KB come back as `result_too_large` (`mcp/factorio_mcp.py:410-412`); a big field or outpost needs a compact result.
