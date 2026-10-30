@@ -304,15 +304,26 @@ class Tracer:
         self.cfg = cfg
         self.watch = {}  # slot -> {"chat", "run_id", "pos", "seen"}
 
-    def start(self, slot, ask, since=None):
-        """Follow the turn `ask` started. `since`: wall-clock time before the question was sent.
-        The byte offset alone is not enough: the gateway may rewrite the file when the question
-        arrives, and reading from the old offset then met the PREVIOUS turn's last message (with
-        turn_stats): it was forwarded as this turn's answer, in English, a second after the question."""
+    @staticmethod
+    def offset(slot):
+        """The transcript's size now; take it BEFORE the question is sent (see start)."""
         p = transcript_path(slot)
-        pos = p.stat().st_size if p.exists() else 0  # only what this turn adds
+        return p.stat().st_size if p.exists() else 0
+
+    def start(self, slot, ask, since=None, pos=None):
+        """Follow the turn `ask` started. `since`: wall-clock time before the question was sent;
+        `pos`: the transcript's size before it was sent (now, when not given).
+
+        Only rows after the question's own user row count. The previous turn can still be closing
+        when the question arrives: its last message (with turn_stats) is written after `since`,
+        before this question's user row, and it was forwarded as this turn's answer 1.5 s after a
+        quick "yes" (app e2e, consent test). The byte offset alone is not enough either: the
+        gateway may rewrite the file when the question arrives, and `since` drops the old rows
+        met again that way."""
+        if pos is None:
+            pos = self.offset(slot)
         self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
-                            "seen": time.monotonic(), "last_text": "", "since": since}
+                            "seen": time.monotonic(), "last_text": "", "since": since, "asked": False}
 
     def forward(self, w):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
@@ -352,6 +363,10 @@ class Tracer:
                     continue
                 if older_than(row, w.get("since")):
                     continue  # an earlier turn's row, met again after the file was rewritten
+                if not w["asked"]:
+                    # the previous turn's closing rows, until this question's user row appears
+                    w["asked"] = row.get("role") == "user"
+                    continue
                 if turn_ended(row):
                     # the turn's last message carries turn_stats; no factorio_reply came before it
                     content = row.get("content")
@@ -467,6 +482,7 @@ def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
         since = time.time() - 1  # rows of this turn are written after this; a second of clock slack
+        pos = Tracer.offset(slot)  # before sending: the question's own user row comes after it
         try:
             ctx.send_to_session(slot, render(ask))
         except Exception as exc:  # noqa: BLE001
@@ -480,9 +496,10 @@ def handle(ctx, cfg, st, ask, tracer=None):
             st["slots"].pop(k, None)
             st["gen"][k] = st["gen"].get(k, 0) + 1
             slot = open_chat(ctx, cfg, st, ask)
+            pos = Tracer.offset(slot)
             ctx.send_to_session(slot, render(ask))
         if tracer is not None:
-            tracer.start(slot, ask, since)
+            tracer.start(slot, ask, since, pos)
     except Exception as exc:  # noqa: BLE001 - every failure is retried, then reported
         n = st["attempts"].get(ask["id"], 0) + 1
         st["attempts"][ask["id"]] = n

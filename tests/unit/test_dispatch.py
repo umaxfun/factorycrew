@@ -107,14 +107,59 @@ def test_an_earlier_turn_met_again_after_a_rewrite_is_not_forwarded(tmp_path, mo
     t.poll()
     assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
     with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "user", "content": "[Factorio ...]\nсделай панельку", "ts": "2027-01-15T07:59:50+00:00"}) + "\n")
         f.write(json.dumps({"role": "assistant", "content": "Готово.", "ts": "2027-01-15T08:00:00+00:00",
                             "meta": {"turn_stats": {"credits": 1}}}) + "\n")
     t.poll()
     assert ("/reply", {"chat": "панелька", "text": "Готово.", "fallback": True, "ask_id": "ask-2"}) in posted
 
 
+def _quick_follow_up(tmp_path, monkeypatch, second_turn):
+    """Turn 1 answered with factorio_reply; the player asked again before the gateway wrote turn
+    1's closing row. File order, as in a real transcript (app e2e, consent test, 2026-10-29):
+    turn 1's rows, [the dispatcher sends question 2], turn 1's closing row, question 2's user row,
+    turn 2's rows."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    (tmp_path / "sessions").mkdir()
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {})
+    path = d.transcript_path("s1")
+    with open(path, "w", encoding="utf-8") as f:
+        for r in [{"role": "user", "content": "[Factorio ...]\nremove the last 3 chests", "ts": "2026-10-29T23:33:30+00:00"},
+                  {"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_reply", "ts": "2026-10-29T23:34:05+00:00"}]:
+            f.write(json.dumps(r) + "\n")
+    t = d.Tracer({})
+    pos = t.offset("s1")  # taken before the question is sent
+    t.start("s1", {"chat": "Consent", "run_id": "r", "id": "ask-2"}, since=1_793_316_846, pos=pos)  # 23:34:06
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "assistant", "content": "I found 1 row of 20 chests. Say yes first.",
+                            "ts": "2026-10-29T23:34:07.85+00:00", "meta": {"turn_stats": {"credits": 0.1}}}) + "\n")
+        f.write(json.dumps({"role": "user", "content": "[Factorio ...]\nyes", "ts": "2026-10-29T23:34:07.86+00:00"}) + "\n")
+        for r in second_turn:
+            f.write(json.dumps(r) + "\n")
+    t.poll()
+    return [b for p, b in posted if p == "/reply"]
+
+
+def test_a_quick_follow_up_does_not_get_the_previous_turns_text(tmp_path, monkeypatch):
+    # The window showed turn 1's chat text 1.5 s after "yes", before Kira had acted on it.
+    replies = _quick_follow_up(tmp_path, monkeypatch, [
+        {"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_reply", "ts": "2026-10-29T23:34:13+00:00"},
+        {"role": "assistant", "content": "I marked the 3 chests.", "ts": "2026-10-29T23:34:15+00:00",
+         "meta": {"turn_stats": {"credits": 0.1}}}])
+    assert replies == []
+
+
+def test_a_quick_follow_up_that_skips_factorio_reply_forwards_its_own_text(tmp_path, monkeypatch):
+    replies = _quick_follow_up(tmp_path, monkeypatch, [
+        {"role": "assistant", "content": "Marked them.", "ts": "2026-10-29T23:34:15+00:00",
+         "meta": {"turn_stats": {"credits": 0.1}}}])
+    assert replies == [{"chat": "Consent", "text": "Marked them.", "fallback": True, "ask_id": "ask-2"}]
+
+
 def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypatch):
     posted, _ = _turn(tmp_path, monkeypatch, [
+        {"role": "user", "content": "[Factorio ...]\nwhy is the furnace idle?"},
         {"role": "assistant", "content": "The furnace needs coal."},
         {"role": "assistant", "content": "", "meta": {"turn_stats": {"credits": 0.2}}},
     ])
@@ -122,7 +167,8 @@ def test_forwards_earlier_text_when_the_last_message_is_empty(tmp_path, monkeypa
 
 
 def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):
-    posted, t = _turn(tmp_path, monkeypatch, [{"role": "assistant", "content": "Checking the belts."}])
+    posted, t = _turn(tmp_path, monkeypatch, [{"role": "user", "content": "[Factorio ...]\ncheck my belts"},
+                                              {"role": "assistant", "content": "Checking the belts."}])
     assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
 
 
