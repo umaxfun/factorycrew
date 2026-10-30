@@ -3,7 +3,8 @@
 
 The game is the player's copy at /Users/Shared/factorio.app (2.0.77, Steam build) with its
 own data dir ~/.factorycrew-dev/factorio, and a dev bridge on its own ports, so it never
-clashes with the game the player runs under `gamer` (34199/34200/34198).
+clashes with a game the player runs on the same machine (34199/34200/34198). In a worktree,
+call it through `scripts/stand.sh ui`, which gives it the slot's data dir and ports.
 
   tools/ui_dev.py start                 # deploy the mod, start bridge + game, wait until online
   tools/ui_dev.py stop

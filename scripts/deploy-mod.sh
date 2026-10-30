@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Copy the mod to /Users/Shared/kc-companion, where the `gamer` account's mods dir links to it.
+# Copy the mod to /Users/Shared/kc-companion, for a hand-made setup whose mods dir links to it
+# (the retired second-account setup; players get the mod from the Kiro Crew app).
 # After a deploy, reload the save in the game (or restart Factorio if data.lua changed).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

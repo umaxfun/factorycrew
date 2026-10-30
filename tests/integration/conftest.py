@@ -1,4 +1,4 @@
-"""Level 2 harness: headless Factorio 2.0.77 + bridge + MCP server, all inside one container.
+"""Level 2 harness: headless Factorio 2.1.23 + bridge + MCP server, all inside one container.
 
 UDP between the mod and the bridge is loopback-only, so everything shares the container's
 network namespace. Test-only RCON is used to act as the player (remote.call("kc", "ask", ...))

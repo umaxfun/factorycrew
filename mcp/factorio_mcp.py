@@ -2,7 +2,8 @@
 """MCP server `factorio` (stdio): agent tools that talk to the bridge over HTTP on 127.0.0.1.
 
 Stdlib only, newline-delimited JSON-RPC 2.0 as in the MCP stdio transport.
-Bridge URL: env FACTORIO_BRIDGE_URL, default http://127.0.0.1:34198.
+Bridge URL: --bridge, else env FACTORIO_BRIDGE_URL, else the app's data/config.json, else
+http://127.0.0.1:34198 (`_bridge_url`).
 """
 from __future__ import annotations
 

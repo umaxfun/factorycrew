@@ -1,7 +1,7 @@
 """Factorio dispatcher: a script-cron of the factorycrew Kiro Crew gateway.
 
 Takes questions the game sent to the bridge and puts each one into its chat
-`Factorio/<run>/<tab>` (SPEC.md, "Dispatcher"). One wake runs a long-poll loop for
+`Factorio/<run>/<tab>` (SPEC.md, "How it works"; docs/areas/dispatcher.md). One wake runs a long-poll loop for
 almost the whole script timeout (Kiro Crew caps it at 3600 s), then returns; the
 cron fires it again within `every` seconds. Questions that arrive in between wait
 in the bridge's queue.
@@ -383,7 +383,7 @@ class Tracer:
 # library_save): slug factorio-panel-<run>-<name>, tags factorio-panel and factorio-run-<run>,
 # the panel code in a fenced `json kc-panel` block. The window asks for the run's list, opens one
 # or deletes one; this wake answers through the bridge. The same names are used on both sides
-# (tests/unit/test_dispatch.py checks that they agree).
+# (tests/unit/test_panel_tool.py::test_dispatcher_and_mcp_agree_on_names checks that they agree).
 
 ARTIFACT_PREFIX = "factorio-panel-"
 SPEC_FENCE = "```json kc-panel"
