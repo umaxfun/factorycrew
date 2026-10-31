@@ -93,6 +93,21 @@ local function one(e) return {count = e.get_output_inventory().get_item_count("e
 return {tick = game.tick, a = one(t.a), b = one(t.b)}
 """
 
+# At the start of the measured window: inputs back to full and the output emptied. A machine stops
+# when its output holds too much, and 200 copper cable is only 66 crafts; B (beaconed) reached that
+# before the window ended when the time between the build and the first sample was longer (CI,
+# 2026-10-31: B stopped at 66, 2.5 short of the plan; a planted 4 s pause made it 0).
+REFILL = """
+local s = game.surfaces[1]
+for _, x in pairs({X0 + 5.5, X0 + 35.5}) do
+  local e = s.find_entity("assembling-machine-2", {x, Y0 + 0.5})
+  e.get_output_inventory().clear()
+  e.insert{name = "iron-plate", count = 100}
+  e.insert{name = "copper-cable", count = 200}
+end
+return true
+"""
+
 
 def lua_list(names):
     return "{" + ", ".join(json.dumps(n) for n in names) + "}"
@@ -143,12 +158,13 @@ def test_planned_rates_and_effects_match_the_game(stack, mcp):
 
     first = sample()
     wait_until(lambda: sample()["tick"] >= first["tick"] + 120, timeout=30, step=0.2, what="warm-up")
+    assert mcp.tool("factorio_query", lua=REFILL.replace("X0", str(X0)).replace("Y0", str(Y0)))["data"] is True
     s0 = sample()
     # the game reports the same bonuses the planner applied
     assert abs(s0["a"]["speed"] - (float(Fraction(ea["effects"]["speed"])) - 1)) < 1e-6, (s0, ea["effects"])
     assert abs(s0["a"]["productivity"] - float(Fraction(ea["effects"]["productivity"]))) < 1e-6, (s0, ea["effects"])
     assert abs(s0["b"]["speed"] - (float(Fraction(eb["effects"]["speed"])) - 1)) < 1e-6, (s0, eb["effects"])
-    span = 900
+    span = 600  # 10 s of game time: B needs ~39 of the 66 crafts its refilled cable allows
     wait_until(lambda: sample()["tick"] >= s0["tick"] + span, timeout=60, step=0.2, what="crafting window")
     s1 = sample()
     secs = (s1["tick"] - s0["tick"]) / 60
@@ -156,5 +172,9 @@ def test_planned_rates_and_effects_match_the_game(stack, mcp):
     print(f"game over {secs:.2f}s: A {made_a} (planned {float(rate_a) * secs:.1f}), "
           f"B {made_b} (planned {float(rate_b) * secs:.1f})")
     print("status", s1["a"].get("status"), s1["b"].get("status"), s1["a"].get("why"))
+    # a machine that ran dry or filled up crafts less than planned, for a reason the planner has
+    # nothing to do with: say so instead of failing on the rate
+    for m in ("a", "b"):
+        assert s1[m]["status"] not in ("item_ingredient_shortage", "full_output") and s1[m]["why"]["input"], (m, s1[m])
     assert abs(made_a - float(rate_a) * secs) <= 2, (made_a, float(rate_a) * secs, s1)
     assert abs(made_b - float(rate_b) * secs) <= 2, (made_b, float(rate_b) * secs, s1)
