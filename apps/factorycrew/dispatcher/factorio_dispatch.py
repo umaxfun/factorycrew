@@ -302,6 +302,31 @@ def turn_ended(row):
     return row.get("role") == "assistant" and bool((row.get("meta") or {}).get("turn_stats"))
 
 
+# A turn Kiro Crew gives up on (credits spent, model refused, turn limit, kiro-cli logged out)
+# writes one `error` row and no turn_stats, so without this the window said "thinking" until the
+# bridge's 20-minute backstop. Not every error row ends the turn: "⟳ … retrying" notices
+# (meta.kind transient_retry, or the ⟳ mark) come before a retry, and an approval that timed out
+# is declined and the turn "carried on from the denial" (Kiro Crew 2026-10-31 wording).
+USAGE_LIMIT = re.compile(r"UsageLimitReached|usage limit|limit for overages|out of credits", re.I)
+USAGE_LIMIT_TEXT = ("Kiro has no credits left (usage limit reached), so Kira cannot answer now. "
+                    "Questions work again when the limit resets, or after you add credits or upgrade "
+                    "the plan of your Kiro account.")
+
+
+def turn_failed(row):
+    """The text to show in the tab when `row` is the error that ended the turn, else None."""
+    if row.get("role") != "error":
+        return None
+    content = row.get("content")
+    text = " ".join(content.split()) if isinstance(content, str) else ""
+    if (row.get("meta") or {}).get("kind") == "transient_retry" or text.startswith("⟳") or "carried on" in text:
+        return None
+    if USAGE_LIMIT.search(text):
+        return USAGE_LIMIT_TEXT
+    text = text.lstrip("❌⏱️ ").strip() or "unknown error"
+    return "Kiro Crew could not finish this turn: " + (text if len(text) <= 300 else text[:299] + "…")
+
+
 class Tracer:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -379,6 +404,14 @@ class Tracer:
                     # the previous turn's closing rows, until this question's user row appears
                     w["asked"] = row.get("role") == "user"
                     continue
+                failure = turn_failed(row)
+                if failure:
+                    # the turn died in Kiro Crew: its half-written text is no answer, the error is
+                    print(f"turn for [{w['chat']}] failed in Kiro Crew: {str(row.get('content'))[:160]}")
+                    w["last_text"] = failure
+                    self.ended(w)
+                    done = True
+                    break
                 if turn_ended(row):
                     # the turn's last message carries turn_stats; no factorio_reply came before it
                     content = row.get("content")
