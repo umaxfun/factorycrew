@@ -76,6 +76,7 @@ def load_state(path: Path) -> dict:
     s.setdefault("slots", {})  # "<run_id>\t<tab>" -> slot key
     s.setdefault("attempts", {})  # ask id -> failures
     s.setdefault("gen", {})  # "<run_id>\t<tab>" -> slot key generation (bumped on not_creator)
+    s.setdefault("panels_backfilled", [])  # runs whose unsaved in-game panels were saved once
     return s
 
 
@@ -522,6 +523,63 @@ def library(cfg, ask):
     return res
 
 
+# ── panels already in the game but not saved (made while installs saved none) ──
+
+PANEL_NAMES_LUA = ("local out = {} for _, p in ipairs(remote.call('kc', 'panels', false)) do "
+                   "if not p.error then out[#out + 1] = p.name end end return out")
+PANEL_LUA = "for _, p in ipairs(remote.call('kc', 'panels')) do if p.name == %s then return p end end"
+
+
+def _mcp_module():
+    """The MCP server's code beside this script: one place builds and saves a panel's artifact."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "mcp" / "factorio_mcp.py"
+    spec = importlib.util.spec_from_file_location("factorio_mcp_for_dispatch", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def save_unsaved_panels(cfg, run_id, run_name, m=None):
+    """Save every working panel of the loaded run that has no artifact yet. Returns the saved slugs."""
+    m = m or _mcp_module()
+    q = bridge(cfg, "POST", "/query", {"lua": PANEL_NAMES_LUA}, timeout=20)
+    names = q.get("data") if q.get("ok") else None
+    if not names:
+        return []
+    have = {p["slug"] for p in library_list(run_id)}
+    saved = []
+    for name in names:
+        if m.artifact_slug(name, run_id) in have:
+            continue
+        r = bridge(cfg, "POST", "/query", {"lua": PANEL_LUA % m.lua_long_string(name)}, timeout=20)
+        p = r.get("data") if r.get("ok") else None
+        if not isinstance(p, dict):
+            continue
+        spec = {k: p[k] for k in ("name", "title", "description", "lua", "every", "inputs", "actions")
+                if p.get(k) not in (None, {}, [])}
+        res = {"run_id": run_id, "run_name": run_name, "every": p.get("every"), "input": p.get("input"),
+               "view": p.get("view")}
+        out = m.library_save(spec, res)
+        if out.get("ok"):
+            saved.append(out["slug"])
+        else:
+            print(f"panel {name}: not saved: {out.get('reason')}")
+    return saved
+
+
+def panel_sync(cfg, run_id, run_name, done):
+    """Once per run (dispatcher state `panels_backfilled`); `done` gets the run_id on success."""
+    try:
+        saved = save_unsaved_panels(cfg, run_id, run_name)
+    except (LibraryError, urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"saving the game's panels: {exc}")  # tried again on the next wake
+        return
+    if saved:
+        print(f"saved {len(saved)} panels made before they were saved: {', '.join(saved)}")
+    done.append(run_id)
+
+
 def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
@@ -619,6 +677,8 @@ def run(ctx):
     parent = os.getppid()
     stamp = source_stamp()
     tracer = Tracer(cfg)
+    synced = set()  # runs whose unsaved panels this wake started saving
+    synced_ok = []  # runs whose saving finished (appended by the thread)
     while time.monotonic() < deadline:
         tracer.poll()
         if os.getppid() != parent:
@@ -631,6 +691,21 @@ def run(ctx):
             # keeps serving for up to run_seconds (it once sent a stale chat header).
             print("dispatcher script updated, exiting so the next wake runs the new code")
             return
+        # once per wake and loaded run: panels in the game that have no artifact get one
+        # (each CLI call takes ~2 s, so off the loop like the library)
+        try:
+            h = bridge(cfg, "GET", "/health", timeout=5)
+        except (urllib.error.URLError, OSError, ValueError):
+            h = {}
+        while synced_ok:  # finished in the thread: never again for that run, so a panel the
+            run_id = synced_ok.pop()  # player deletes from the library stays deleted
+            st.setdefault("panels_backfilled", []).append(run_id)
+            save_state(path, st)
+        if h.get("game_online") and h.get("run_id") and h["run_id"] not in synced \
+                and h["run_id"] not in st.get("panels_backfilled", []):
+            synced.add(h["run_id"])
+            threading.Thread(target=panel_sync, args=(cfg, h["run_id"], h.get("run_name"), synced_ok),
+                             daemon=True).start()
         # while a turn is being traced, come back every second instead of every poll_wait
         wait = max(0, min(1 if tracer.watch else cfg["poll_wait"], int(deadline - time.monotonic()) - 1))
         try:

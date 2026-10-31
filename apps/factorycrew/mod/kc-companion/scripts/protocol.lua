@@ -403,8 +403,14 @@ function M.heartbeat(kind)
     tabs = storage.kc.tab_order,
     atlas_version = storage.kc.atlas_version,
     atlas_dirty = atlas.dirty_count("nauvis"),
+    mod_version = script.active_mods["kc-companion"],
   }
 end
+
+-- The installed app's version from the bridge's pong, when it differs from the mod this game
+-- loaded: the app copied a newer mod in, and Factorio loads mods only at start. Kept per load,
+-- not in storage: a restart loads the new mod and the question is gone.
+M.update_to = nil
 
 local function find_feed_entry(id)
   for _, t in pairs(storage.kc.tabs) do
@@ -445,6 +451,8 @@ function M.handle(msg)
     return { result(msg, M.list_marks(msg.chat)) }
   elseif t == "pong" then
     kc.last_pong_tick = game.tick
+    local app = msg.app_version
+    M.update_to = (type(app) == "string" and app ~= script.active_mods["kc-companion"]) and app or nil
   elseif t == "ack" then
     local e = find_feed_entry(msg.id)
     if e then e.acked = true end

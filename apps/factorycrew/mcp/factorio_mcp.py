@@ -979,9 +979,80 @@ def handle(req: dict) -> dict | None:
     return {"jsonrpc": "2.0", "id": rid, "result": result}
 
 
+# ── self-update: an app update replaces the files under a running server ──
+# Each chat keeps its own server process for as long as the chat lives, so after an update the
+# old code would keep serving. Before every tool call the server compares the installed app
+# version with the one it started with; on a change it re-executes itself in the same process
+# (same pid, same stdio, so the chat's connection stays) and the new code handles that call.
+
+APP_JSON = Path(__file__).parents[1] / "app.json"  # only in an installed app; the repo has app/app.json
+PENDING_ENV = "FC_MCP_PENDING_FILE"
+
+
+def app_version() -> str | None:
+    try:
+        return json.loads(APP_JSON.read_text())["version"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+STARTED_VERSION = app_version()
+
+
+def updated() -> bool:
+    now = app_version()
+    return bool(STARTED_VERSION and now and now != STARTED_VERSION)
+
+
+def reexec(pending: bytes) -> None:
+    """Start the new code in this process. `pending` is the request being handled plus whatever
+    the client already sent after it; the new process reads it before stdin."""
+    fd, path = tempfile.mkstemp(prefix="factorio-mcp-pending-")
+    with os.fdopen(fd, "wb") as f:
+        f.write(pending)
+    sys.stdout.flush()
+    sys.stderr.write(f"factorio MCP: app updated {STARTED_VERSION} -> {app_version()}, restarting in place\n")
+    sys.stderr.flush()
+    os.environ[PENDING_ENV] = path
+    # orig_argv keeps the interpreter flags (the gateway starts us with -s); it is 3.10+, and the
+    # server may run on macOS's /usr/bin/python3 3.9
+    argv = list(getattr(sys, "orig_argv", None) or [sys.executable, *sys.argv])
+    os.execv(sys.executable, [sys.executable, *argv[1:]])
+
+
+def pending_input() -> bytes:
+    """What the previous code of this process had read but not handled (see reexec)."""
+    path = os.environ.pop(PENDING_ENV, None)
+    if not path:
+        return b""
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def main() -> None:
-    for line in sys.stdin:
-        line = line.strip()
+    # own line buffer over fd 0: on re-exec everything read so far must be handed over,
+    # and sys.stdin's buffer would hide what it read ahead
+    buf = pending_input()
+    while True:
+        nl = buf.find(b"\n")
+        if nl < 0:
+            chunk = os.read(0, 1 << 16)
+            if not chunk:
+                if not buf.strip():
+                    return
+                buf += b"\n"  # a last request without a newline
+            buf += chunk
+            continue
+        raw, buf = buf[:nl], buf[nl + 1:]
+        line = raw.strip()
         if not line:
             continue
         try:
@@ -989,7 +1060,10 @@ def main() -> None:
         except ValueError:
             out = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
         else:
-            out = handle(req)
+            if isinstance(req, dict) and req.get("method") == "tools/call" and updated():
+                reexec(raw + b"\n" + buf)
+            out = handle(req) if isinstance(req, dict) else \
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
         if out is not None:
             sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
             sys.stdout.flush()

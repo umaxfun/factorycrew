@@ -195,6 +195,10 @@ local function status_text(tab)
     parts[#parts + 1] = "[color=red]Kira is offline[/color]"
   else
     parts[#parts + 1] = "[color=green]online[/color]"
+    if protocol.update_to then
+      parts[#parts + 1] = "[color=orange]Kira updated to " .. protocol.update_to ..
+        ": restart Factorio to load the new mod[/color]"
+    end
   end
   if tab.state == "thinking" then
     -- refreshed every second by M.tick, so the clock runs while a long turn works

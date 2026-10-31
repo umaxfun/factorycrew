@@ -117,7 +117,7 @@ async def main() -> None:
         STATE["mod_note"] = f"mod install failed: {e}"
         log.exception("mod install failed")
     s = fb.Settings(udp_port=int(cfg.get("udp_port", 34199)), game_port=int(cfg.get("game_port", 34200)),
-                    http_port=int(cfg.get("http_port", 34198)))
+                    http_port=int(cfg.get("http_port", 34198)), app_version=status._app_version())
     port = int(os.environ.get("PORT", "0"))
     # Health first: the gateway treats a child that dies on its first bind as a port collision.
     hs = await asyncio.start_server(handle, "127.0.0.1", port)
