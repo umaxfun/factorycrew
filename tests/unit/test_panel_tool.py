@@ -164,6 +164,17 @@ def test_outside_kiro_crew_nothing_is_saved(monkeypatch):
     assert m.library_list()["error"] == "no_library"
 
 
+def test_an_installed_app_saves_without_kirocrew_home(fake_crew, tmp_path, monkeypatch):
+    # The gateway starts an app's MCP server with no KIROCREW_HOME in its env (players' installs
+    # saved nothing because of that); the home is where the app is installed.
+    monkeypatch.delenv("KIROCREW_HOME", raising=False)
+    home = tmp_path / "crew"
+    monkeypatch.setattr(m, "__file__", str(home / "apps" / "factorycrew" / "mcp" / "factorio_mcp.py"))
+    assert m.kirocrew_home() == str(home)
+    assert m.library_save(SPEC, RES) == {"ok": True, "slug": SLUG}
+    assert (home / "fake-artifacts" / f"{SLUG}.json").exists()
+
+
 # ── the window's library, served by the dispatcher with the same CLI ──
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dispatcher"))

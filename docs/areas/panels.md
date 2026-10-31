@@ -17,7 +17,7 @@ In-game windows that Kira writes once with `factorio_panel` and the mod then kee
 
 - Uses: the bridge, through `POST /query` with `_agent: true` (the panel spec travels inside one query) and `GET /health` for the current `run_id` (`factorio_mcp.py:445`, `current_run_id` at `factorio_mcp.py:501`)
 - Uses: the mod's query environment, through `protocol.query_env()`: a panel body sees what a `factorio_query` sees, plus `input` and `state` (`panels.lua:36-45`, `panels.lua:62-65`)
-- Uses: Kiro Crew artifacts, through the `kirocrew artifact update|save|list|show|delete` CLI, found on `PATH` or at `~/.local/bin/kirocrew` (`factorio_mcp.py:465-485`, `factorio_dispatch.py:401-410`)
+- Uses: Kiro Crew artifacts, through the `kirocrew artifact update|save|list|show|delete` CLI. The MCP server takes the one next to the gateway's Python (the gateway starts app servers with its own interpreter), then `PATH`, then `~/.local/bin/kirocrew`, and passes it the home from `kirocrew_home` (`factorio_mcp.py:468-501`); the dispatcher takes `PATH` or `~/.local/bin/kirocrew` (`factorio_dispatch.py:428`)
 - Uses: Kira's window, through `gui.refresh_all()` after every create and remove (`panels.lua:479`, `panels.lua:500`)
 - Used by: Kira (agent `factorio-companion`), through the `factorio_panel` and `factorio_saved_panels` tools (`factorio_mcp.py:929-932`)
 - Used by: the dispatcher, which answers `kind: "library"` asks from the bridge queue and posts `/library_result` (`factorio_dispatch.py:438-462`)
@@ -41,7 +41,8 @@ In-game windows that Kira writes once with `factorio_panel` and the mod then kee
 - The window's library opens and deletes only slugs from the asking run's own list (`test_panel_tool.py::test_library_lists_opens_and_deletes_only_this_runs_panels`)
 - A library request starts no model turn and no "thinking" status (`test_panels_game.py::test_library_round_trip_through_the_bridge`, `tests/e2e/test_panels_e2e.py::test_window_library_opens_and_deletes_without_kira`)
 - A `library_result` for another run is dropped by the mod (`test_panels_game.py::test_library_round_trip_through_the_bridge`)
-- Outside Kiro Crew (no `KIROCREW_HOME`, or `FC_NO_ARTIFACTS` set) nothing is saved and the result says `saved.ok = false` (`test_panel_tool.py::test_outside_kiro_crew_nothing_is_saved`, `factorio_mcp.py:467`)
+- An installed app saves panels although the gateway gives its MCP server no `KIROCREW_HOME`: the home is read from the install path `<home>/apps/<app>/mcp/` (`kirocrew_home`, `factorio_mcp.py:468`; `test_panel_tool.py::test_an_installed_app_saves_without_kirocrew_home`). Up to app 0.3.4 players' panels were never saved because of this, while the e2e stands, which export `KIROCREW_HOME`, passed.
+- Outside Kiro Crew (no `KIROCREW_HOME` and not under an `apps/` dir, or `FC_NO_ARTIFACTS` set) nothing is saved and the result says `saved.ok = false` (`test_panel_tool.py::test_outside_kiro_crew_nothing_is_saved`, `factorio_mcp.py:481`)
 
 ## Easy to break
 

@@ -465,12 +465,27 @@ ARTIFACT_PREFIX = "factorio-panel-"
 SPEC_FENCE = "```json kc-panel"
 
 
+def kirocrew_home() -> str | None:
+    """The Kiro Crew home this server runs under, or None outside Kiro Crew.
+
+    The dev stands export KIROCREW_HOME; an installed app's server gets no such env from the
+    gateway, so its home is read from where it lives: <home>/apps/<app>/mcp/factorio_mcp.py.
+    Not resolved through symlinks: the install path is what names the home."""
+    if os.environ.get("KIROCREW_HOME"):
+        return os.environ["KIROCREW_HOME"]
+    mcp_dir = os.path.dirname(os.path.abspath(__file__))
+    apps = os.path.dirname(os.path.dirname(mcp_dir))
+    return os.path.dirname(apps) if os.path.basename(apps) == "apps" else None
+
+
 def _kirocrew() -> str | None:
-    """The CLI, when this server runs under a Kiro Crew gateway (its env names the home and port)."""
-    if not os.environ.get("KIROCREW_HOME") or os.environ.get("FC_NO_ARTIFACTS"):
+    """The CLI, when this server runs under a Kiro Crew gateway: the one next to the gateway's
+    interpreter first (the gateway starts app servers with its own python), then PATH."""
+    if not kirocrew_home() or os.environ.get("FC_NO_ARTIFACTS"):
         return None
     import shutil
-    return shutil.which("kirocrew") or next(
+    sibling = os.path.join(os.path.dirname(sys.executable), "kirocrew")
+    return next((p for p in [sibling] if os.access(p, os.X_OK)), None) or shutil.which("kirocrew") or next(
         (p for p in [os.path.expanduser("~/.local/bin/kirocrew")] if os.access(p, os.X_OK)), None)
 
 
@@ -480,7 +495,7 @@ def _kc(*argv: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
         return None
     try:
         return subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL)
+                              stdin=subprocess.DEVNULL, env={**os.environ, "KIROCREW_HOME": kirocrew_home()})
     except (OSError, subprocess.SubprocessError):
         return None
 
