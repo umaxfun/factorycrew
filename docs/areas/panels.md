@@ -42,6 +42,7 @@ In-game windows that Kira writes once with `factorio_panel` and the mod then kee
 - A library request starts no model turn and no "thinking" status (`test_panels_game.py::test_library_round_trip_through_the_bridge`, `tests/e2e/test_panels_e2e.py::test_window_library_opens_and_deletes_without_kira`)
 - A `library_result` for another run is dropped by the mod (`test_panels_game.py::test_library_round_trip_through_the_bridge`)
 - An installed app saves panels although the gateway gives its MCP server no `KIROCREW_HOME`: the home is read from the install path `<home>/apps/<app>/mcp/` (`kirocrew_home`, `factorio_mcp.py:468`; `test_panel_tool.py::test_an_installed_app_saves_without_kirocrew_home`). Up to app 0.3.4 players' panels were never saved because of this, while the e2e stands, which export `KIROCREW_HOME`, passed.
+- A working panel that is in the game but has no artifact (made while installs saved none) is saved once per run by the dispatcher, see [Dispatcher](dispatcher.md) (`test_panel_tool.py::test_dispatcher_saves_panels_the_game_has_but_no_artifact`).
 - Outside Kiro Crew (no `KIROCREW_HOME` and not under an `apps/` dir, or `FC_NO_ARTIFACTS` set) nothing is saved and the result says `saved.ok = false` (`test_panel_tool.py::test_outside_kiro_crew_nothing_is_saved`, `factorio_mcp.py:481`)
 
 ## Easy to break

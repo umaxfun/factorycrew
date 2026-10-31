@@ -54,6 +54,7 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 - The mod notices a stopped bridge by the missing `pong` and reconnects by itself (`tests/integration/test_bridge.py::test_no_pong_when_bridge_is_down_then_recovers`).
 - `mark` results carry `ids`/`failed` and `list_marks` a list as `[]`, never `{}` (`bridge/factorio_bridge.py:219-229`; `tests/integration/test_bridge.py::test_unfiltered_chests_marked_and_unmarked` asserts `failed == []`).
 - Stdlib only, and it runs on the macOS system `python3` 3.9 (`README.md` "Layout", `docs/worktrees.md` "Requirements on the host").
+- Every `pong` carries `Settings.app_version` when the bridge runs in the app (the backend passes the installed `app.json` version), and `/health` reports the `mod_version` from the last heartbeat (`tests/unit/test_bridge_versions.py`, `tests/integration/test_bridge.py::test_handshake`). A standalone bridge sends no `app_version`.
 
 ## Easy to break
 

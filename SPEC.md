@@ -94,12 +94,12 @@ The Factorio Lua API does not expose the save file name: `runtime-api.json` 2.1.
 Each UDP packet holds one JSON string `{"v":1,"id":"…","type":"…",...}`. A long message is split into parts with `part` and `parts` fields; the receiver reassembles them by `id`. The bridge sends the game packets of at most 4000 bytes: the game's receive buffer starts at 4 KB and doubles only after it has dropped a packet that did not fit (measured on 2.1.23: an 8000-byte packet lost, the next 8150-byte one arrived). The mod slices 4096 bytes of source JSON without breaking UTF-8; its packets reach ~8 KB, which the bridge handles. The bridge listens on a fixed port (34199 by default), the game on the port from `--enable-lua-udp`, the bridge HTTP API on 127.0.0.1:34198. The HTTP API has no authentication: whoever reaches the port can run Lua in the game. So the bridge binds to loopback only.
 
 The game sends the bridge:
-- `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick`, the list of tabs, and the atlas's `atlas_version` and `atlas_dirty` (docs/areas/atlas.md);
+- `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick`, the list of tabs, the atlas's `atlas_version` and `atlas_dirty` (docs/areas/atlas.md), and `mod_version`, the mod version the game loaded (from 0.3.6; the bridge shows it in `/health` for the app's status page);
 - `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds), and `pointers` when the player made some (see "Pointers");
 - `result`: the answer to `query`, `mark` or `unmark`, with the same `id` and `ok`, `data` or `error`.
 
 The bridge sends the game:
-- `pong`: the answer to `hello` and `heartbeat`. The window knows the link is up from it;
+- `pong`: the answer to `hello` and `heartbeat`. The window knows the link is up from it. Inside the app it carries `app_version`, the installed app's version; when that differs from the loaded mod's, the window says "Kira updated to X: restart Factorio to load the new mod" (the app already copied the new mod in; Factorio loads mods only at start);
 - `ack`: `id`, confirms that the `ask` was accepted and queued;
 - `query`: `lua` and `surface?`. Run the query and return the result;
 - `mark`: `chat` and `marks: [{surface, position, text, icon?}]`;
@@ -186,7 +186,7 @@ In a tab:
 - a feed of the last 30 messages, Kira's lines with her icon;
 - an input field, a "Send" button, and Enter to send;
 - a "thinking…" indicator;
-- a link indicator ("online" / "Kira is offline" / "UDP is off"), from `pong`;
+- a link indicator ("online" / "Kira is offline" / "UDP is off"), from `pong`, and after an app update "Kira updated to X: restart Factorio to load the new mod";
 - a marks row "Marks: 14 ◀ ▶ 🗑". The arrows open the map view on the previous and next mark with `player.set_controller{type=remote, position, surface}` (2.0 has no `zoom_to_world`), Esc returns to the character; the trash button removes all marks of the tab.
 
 - a pointers row, shown while there are pointers: "@1 assembling-machine-2 · electronic-circuit", "@2 box 30×20 · 42", and a trash button; next to the input a Point button that puts the pointer tool in the hand.

@@ -52,6 +52,7 @@ The bridge counts every call flagged `_agent` as a step of Kira's turn (`bridge/
 - The panel spec reaches the game as JSON in a Lua long string whose closing bracket never occurs in the text (`tests/unit/test_panel_tool.py::test_long_string_never_closes_early`).
 - Panel artifact slugs, tags and the code fence are the same in the server and the dispatcher (`tests/unit/test_panel_tool.py::test_dispatcher_and_mcp_agree_on_names`).
 - The atlas cache is per requested surface and dropped when `run_id` changes (:702-711; `tests/unit/test_kc_atlas.py::test_mcp_atlas_tool_on_a_fake_bridge`).
+- After an app update the running server re-executes itself in place before the next `tools/call` (same pid and stdio, so the chat keeps its connection) and the new code handles that call; requests already read are handed over through a temp file named in `FC_MCP_PENDING_FILE`. It compares `app.json` beside its `mcp/` dir with the version it started with, so outside an installed app (no `app.json` there) it never restarts (`reexec`, `main`; `tests/unit/test_mcp_self_update.py`; checked through the real update route on a dev gateway, README "Releases and updates").
 
 ## Easy to break
 
@@ -60,6 +61,7 @@ The bridge counts every call flagged `_agent` as a step of Kira's turn (`bridge/
 - Live, compute runs on `/usr/bin/python3` (3.9.6 on this Mac, from `/usr/bin/python3 --version`) because `sys.executable` is the server's interpreter (:370, `agent/factorio-companion.json:17`). `scripts/test-unit.sh` runs Python 3.12, so 3.10+ code in the server, `kc` or skills passes the unit tests and breaks for Kira (`scripts/test-unit.sh:15`).
 - A new file the server needs at runtime must also go into `scripts/build-app.sh`. It copies only `factorio_mcp.py`, `kc_compute.py`, `mcp/kc/` and `skills/` (`scripts/build-app.sh:18-23`).
 - Anything the server prints to stdout other than a JSON-RPC line breaks the stdio transport (inferred: `main` :964-978 writes responses to stdout).
+- `main` reads stdin with its own buffer over fd 0, not `sys.stdin`: on re-exec everything read but not handled must go to the new process, and `sys.stdin` would hide what it read ahead. A tool added by an update is not seen by an open chat until it restarts (the client lists tools once; the server declares no `listChanged`).
 
 ## How to check a change
 

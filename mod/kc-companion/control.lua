@@ -87,6 +87,7 @@ script.on_event(defines.events.on_udp_packet_received, function(e)
   local msg = protocol.decode(e.payload)
   if not msg then return end
   local was_connected = protocol.connected()
+  local update_to = protocol.update_to
   if msg.type == "library_result" then
     if not msg.run_id or msg.run_id == storage.kc.run_id then panels.on_library(msg) end
   else
@@ -94,7 +95,7 @@ script.on_event(defines.events.on_udp_packet_received, function(e)
       send(reply)
     end
   end
-  if REFRESH[msg.type] or (msg.type == "pong" and not was_connected) then
+  if REFRESH[msg.type] or (msg.type == "pong" and (not was_connected or protocol.update_to ~= update_to)) then
     gui.refresh_all()
   end
 end)

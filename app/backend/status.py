@@ -163,7 +163,16 @@ def status(config: dict, mods_dir: Path | None, mod_note: str) -> dict:
         elif have != shipped:
             checks.append(check("mod", "Mod", "warn", f"{have} in the mods folder, the app ships {shipped}", mod_note))
         else:
-            checks.append(check("mod", "Mod", "ok", f"{have} in {mods_dir} (restart Factorio after an update)"))
+            # the game loads mods only at start: after an update it runs the old one until restarted
+            # (mods before 0.3.6 do not report their version, so an online game without one is older)
+            running = h.get("mod_version") if h and h.get("game_online") else None
+            if h and h.get("game_online") and running != have:
+                checks.append(check("mod", "Mod", "warn",
+                                    f"the game runs {running or 'an older version'}, {have} is in {mods_dir}",
+                                    "Restart Factorio to load the updated mod."))
+            else:
+                checks.append(check("mod", "Mod", "ok", f"{have} in {mods_dir}" +
+                                    (", loaded in the game" if running else "")))
 
     seen = None if h is None else h.get("dispatcher_seen_s")
     if h is None:

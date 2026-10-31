@@ -100,4 +100,16 @@ describe("handle", function()
     protocol.handle({ type = "pong", id = "p1" })
     assert(protocol.connected())
   end)
+
+  it("reports its version and learns from the pong that the app has a newer one", function()
+    local mine = script.active_mods["kc-companion"]
+    assert(mine and protocol.heartbeat().mod_version == mine, serpent.line(protocol.heartbeat()))
+    protocol.handle({ type = "pong", id = "p2", app_version = "99.0.0" })
+    assert(protocol.update_to == "99.0.0")
+    protocol.handle({ type = "pong", id = "p3", app_version = mine })
+    assert(protocol.update_to == nil)
+    protocol.handle({ type = "pong", id = "p4", app_version = "99.0.0" })
+    protocol.handle({ type = "pong", id = "p5" }) -- a bridge outside the app (dev) sends none
+    assert(protocol.update_to == nil)
+  end)
 end)

@@ -37,6 +37,7 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 - Pointers number from 1 up to 9 per player; the next question takes them all and removes their drawings, and render ids never go on the wire (`mod/kc-companion/tests/test-pointers.lua::numbers pointers, caps them, and the next question takes and clears them`)
 - A new pointer opens the window and appends "@n " to the input (`mod/kc-companion/tests/test-pointers.lua::the window lists pointers, puts @n into the question and sends them with it`)
 - Pointer drawings are visible to the pointing player only (`mod/kc-companion/scripts/pointers.lua:113`)
+- After an app update, while the bridge's `pong` carries an `app_version` other than the loaded mod's, the status line says "Kira updated to X: restart Factorio to load the new mod"; a pong without it clears the line (`mod/kc-companion/tests/test-gui.lua` "opens with a default tab...", `test-protocol.lua` "reports its version...").
 
 ## Easy to break
 

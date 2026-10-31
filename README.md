@@ -82,7 +82,15 @@ Level 3 starts the factorycrew gateway if needed, installs the agent and dispatc
 
 Players (Kiro Crew 0.11 or newer): Apps → Discover → Sources (gear) → add the repository URL with branch `release`, install **Factorio Companion** and trust it in the dialog. An app installed from a local directory stays local-only: to switch it to the repository, uninstall it (data is kept) and install from the store. A newer version on `release` arrives through the app's Update action (a `git pull` of the branch); the store caches each app's `app.json` for up to 24 h, so the Update badge can lag a day behind a release.
 
-The mod rides along: its version is the app's, and on every start the app backend replaces the `kc-companion` folder it put in Factorio's mods folder when the version differs (a folder it did not put there is left alone). Nothing comes from the Factorio mod portal. Restart Factorio after an update; the app's status page (sidebar → Factorio) shows the mod version in the mods folder.
+The mod rides along: its version is the app's, and on every start the app backend replaces the `kc-companion` folder it put in Factorio's mods folder when the version differs (a folder it did not put there is left alone). Nothing comes from the Factorio mod portal. Restart Factorio after an update; the app's status page (sidebar → Factorio) shows the mod version in the mods folder and warns while the running game still has the old one, and Kira's window says so too.
+
+After an update everything else picks up the new code by itself, with no Kiro Crew restart and no chat closed:
+- the bridge and the status page run in the app backend, which Kiro Crew restarts on update;
+- the dispatcher's wake exits when its file changes, and the next wake (within 30 s) runs the new code;
+- Kira's MCP server: each open chat keeps its own server process, so before every tool call the server compares the installed `app.json` version with the one it started with and, on a change, re-executes itself in the same process (same pid and stdio, the chat keeps its connection) and handles that call with the new code. A tool added by the update shows in an open chat only after the chat restarts: the client reads the tool list once;
+- panels that were in the game before the update but have no artifact (up to 0.3.5 an installed app saved none) are saved once per run by the dispatcher.
+
+Verified 2026-10-31 on a dev gateway through the real update route (`POST /api/apps/factorycrew/update`, 0.3.5 to 0.3.6) with a stand-in game on UDP: Kira's MCP server kept its pid, re-executed with the new code, and her next `factorio_saved_panels` call answered; the bridge's `pong` carried 0.3.6.
 
 Verified on the dev gateway with the `release` branch served over smart HTTP on loopback: added as a source, listed with `subdirectory: apps/factorycrew`, installed after the trust dialog, then `Update` took it from 0.3.2 to 0.3.3 and the status page reported 0.3.3.
 

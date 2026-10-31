@@ -42,6 +42,8 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 - A `stop` ask is confirmed at once and stops the tab's chat; on success the watch is dropped, so the stopped turn's half-written text is not forwarded; a tab with no chat yet only gets `/stopped` (`tests/unit/test_dispatch.py::test_stop_stops_the_tabs_chat_and_drops_its_trace`, `::test_a_failed_stop_is_reported_and_the_turn_still_followed`, `::test_stop_of_a_tab_without_a_chat_only_tells_the_bridge`).
 - Library requests are confirmed at once and answered on a thread, so they never hold up questions (`dispatcher/factorio_dispatch.py:559-564`); open/delete accept only slugs from the run's own list (`tests/unit/test_panel_tool.py::test_library_lists_opens_and_deletes_only_this_runs_panels`, `::test_dispatcher_and_mcp_agree_on_names`).
 - Stdlib only, runs on the macOS system `python3` 3.9 (`README.md` "Layout", `docs/worktrees.md` "Requirements on the host").
+- Once per run (`panels_backfilled` in the dispatcher state) it saves the game's working panels that have no artifact, through the MCP server's own `library_save`, off the loop in a thread; a panel the player later deletes from the library is not saved again (`save_unsaved_panels`, `panel_sync`; `tests/unit/test_panel_tool.py::test_dispatcher_saves_panels_the_game_has_but_no_artifact`). It reads the game with plain `POST /query`, without `_agent`, so these are not Kira's steps.
+- A wake exits when its own file or the app config changes (`source_stamp`), so an app update reaches the dispatcher within one `every` (30 s).
 
 ## Easy to break
 

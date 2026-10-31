@@ -52,6 +52,9 @@ class Settings:
     request_timeout: float = 10.0  # query/mark/unmark waiting for the game's result
     atlas_prefetch: bool = True  # read the player's surface for the atlas when a game connects
     lease: float = 120.0  # an ask taken by the dispatcher returns to the queue unless confirmed
+    # the installed app's version, sent in every pong: a mod that runs an older version tells the
+    # player to restart Factorio (the app copied the new mod in, the game loads it only at start)
+    app_version: str | None = None
 
 
 @dataclass
@@ -63,6 +66,7 @@ class GameState:
     tabs: list = field(default_factory=list)
     atlas_version: int | None = None
     atlas_dirty: int | None = None
+    mod_version: str | None = None  # the mod version the game runs (heartbeat), None from mods before 0.3.6
 
 
 # ── framing ──────────────────────────────────────────────────────────────
@@ -286,7 +290,11 @@ class Bridge(asyncio.DatagramProtocol):
             g.tabs = msg.get("tabs") or []
             g.atlas_version = msg.get("atlas_version")
             g.atlas_dirty = msg.get("atlas_dirty")
-            self.send_game({"type": "pong", "id": msg.get("id")})
+            g.mod_version = msg.get("mod_version")
+            pong = {"type": "pong", "id": msg.get("id")}
+            if self.s.app_version:
+                pong["app_version"] = self.s.app_version
+            self.send_game(pong)
             self.flush_outbox()
             if fresh and self.s.atlas_prefetch:
                 asyncio.get_running_loop().create_task(self.atlas_prefetch())
@@ -575,6 +583,7 @@ class Bridge(asyncio.DatagramProtocol):
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
             "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
+            "mod_version": g.mod_version, "app_version": self.s.app_version,
             "atlas_cached": {k or "player": v.version for k, v in self.atlas_store.items() if v.run_id == g.run_id},
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),

@@ -37,6 +37,8 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 - The shipped MCP server lists `factorio_query` and `factorio_reply` (`app/backend/status.py:20`; `tests/unit/test_app_status.py::test_mcp_probe_starts_the_real_server`).
 - The app's turns go through the app's own MCP server, `@factorycrew:factorio/...` (`tests/app_e2e/test_app_e2e.py::test_it_was_the_apps_agent`).
 - `release.sh` runs only on `main` with a clean tree, refuses a tag that exists, replaces the whole `release` tree with the new build, and pushes only with `--push` (`scripts/release.sh:24-25`, `:36`, `:63-66`, `:82-87`).
+- The Mod check warns while the online game runs another mod version than the mods folder holds (a game whose mod reports none is older than 0.3.6), with "Restart Factorio to load the updated mod." (`tests/unit/test_app_status.py::test_a_game_still_running_the_old_mod_asks_for_a_restart`).
+- An update needs no Kiro Crew restart: the backend (bridge, status) is restarted by Kiro Crew, the dispatcher's wake exits on a changed file, Kira's MCP servers re-execute themselves ([MCP server](mcp-server.md)), and only Factorio has to be restarted by the player (README, "Releases and updates").
 
 ## Easy to break
 

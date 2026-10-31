@@ -35,6 +35,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 - `add_chart_tag` places a tag on an uncharted chunk, which the mark design relies on (`mod/kc-companion/tests/test-protocol.lua::can be placed on an uncharted chunk`)
 - Without `--enable-lua-udp` the mod stays quiet: one failed `recv_udp` probe sets `udp_state = "off"` and nothing is sent after it (`mod/kc-companion/control.lua:9-16`, `:39-48`)
 - Neither side checks the `v` field: `decode` and the bridge's reassembler ignore it (`mod/kc-companion/scripts/protocol.lua:364-381`; `grep '"v"' bridge/factorio_bridge.py`)
+- The heartbeat carries `mod_version` (`script.active_mods["kc-companion"]`); a `pong` with another `app_version` sets `protocol.update_to`, kept per load and not in `storage` (`test-protocol.lua` "reports its version and learns from the pong...").
 
 ## Easy to break
 

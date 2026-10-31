@@ -207,3 +207,31 @@ def test_library_lists_opens_and_deletes_only_this_runs_panels(fake_crew, monkey
     r = d.library({}, {**ask, "op": "delete", "slug": SLUG})
     assert r["ok"] and r["panels"] == [] and not (fake_crew / f"{SLUG}.json").exists()
     assert (fake_crew / "factorio-panel-other-1-elsewhere.json").exists()
+
+
+def test_dispatcher_saves_panels_the_game_has_but_no_artifact(fake_crew, monkeypatch):
+    # panels made while installs saved nothing (up to 0.3.5) get their artifact once, from the game
+    m.library_save(SPEC, RES)  # already saved: left alone
+    game = {"Science made": {**SPEC, "every": 5, "input": {"period": "1m"}, "view": RES["view"], "inputs": SPEC["inputs"]},
+            "Нехватка": {"name": "Нехватка", "title": "Нехватка в логистике", "lua": "return {}", "every": 10,
+                         "inputs": [], "actions": {"ok": "player.print(1)"}, "input": {},
+                         "view": [{"rows": [[{"item": "iron-plate"}, 5000]]}]}}
+    asked = []
+
+    def bridge(cfg, method, path, body=None, timeout=40.0):
+        assert (method, path) == ("POST", "/query") and "_agent" not in body  # not one of Kira's steps
+        asked.append(body["lua"])
+        if body["lua"] == d.PANEL_NAMES_LUA:
+            return {"ok": True, "data": list(game)}
+        name = next(n for n in game if m.lua_long_string(n) in body["lua"])
+        return {"ok": True, "data": game[name]}
+    monkeypatch.setattr(d, "bridge", bridge)
+    saved = d.save_unsaved_panels({}, "d988dac8-0", "Run 1", m=m)
+    slug = m.artifact_slug("Нехватка", "d988dac8-0")
+    assert saved == [slug] and len(asked) == 2, asked
+    got = m.library_get(slug)
+    assert got["ok"] and got["spec"] == {"name": "Нехватка", "title": "Нехватка в логистике", "lua": "return {}",
+                                         "every": 10, "actions": {"ok": "player.print(1)"}}
+    assert "| iron-plate | 5000 |" in (fake_crew / f"{slug}.json").read_text()
+    assert len(json.loads((fake_crew / f"{SLUG}.json").read_text())["versions"]) == 1
+    assert d.save_unsaved_panels({}, "d988dac8-0", "Run 1", m=m) == []

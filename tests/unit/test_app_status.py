@@ -54,7 +54,8 @@ def by_id(res):
     return {c["id"]: c for c in res["checks"]}
 
 
-HEALTHY = {"ok": True, "game_online": True, "run_name": "Run 1", "tick": 100, "tabs": ["General"],
+SHIPPED = json.loads((ROOT / "mod" / "kc-companion" / "info.json").read_text())["version"]
+HEALTHY = {"ok": True, "game_online": True, "run_name": "Run 1", "tick": 100, "tabs": ["General"], "mod_version": SHIPPED,
            "last_seen_s": 0.2, "queued_asks": 0, "leased_asks": 0, "dispatcher_seen_s": 3.0, "agent_seen_s": 40.0}
 
 
@@ -101,6 +102,21 @@ def test_stale_mod_in_the_mods_folder(tmp_path, monkeypatch):
     c = by_id(st.status({"http_port": srv.server_port}, mods, "left as is"))
     srv.shutdown()
     assert c["mod"]["state"] == "warn" and "0.0.1" in c["mod"]["detail"]
+
+
+def test_a_game_still_running_the_old_mod_asks_for_a_restart(tmp_path, monkeypatch):
+    # the update copied the new mod in, but Factorio loads mods only at start
+    mods = fake_install(tmp_path, monkeypatch)
+    for running, shown in (("0.0.1", "the game runs 0.0.1"), (None, "the game runs an older version")):
+        srv = fake_bridge({**HEALTHY, "mod_version": running})
+        c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
+        srv.shutdown()
+        assert c["mod"]["state"] == "warn" and c["mod"]["detail"].startswith(shown), c["mod"]
+        assert c["mod"]["fix"] == "Restart Factorio to load the updated mod."
+    srv = fake_bridge({**HEALTHY, "game_online": False, "mod_version": None})
+    c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
+    srv.shutdown()
+    assert c["mod"]["state"] == "ok"  # nothing to say about a game that is not running
 
 
 def test_mcp_probe_starts_the_real_server(monkeypatch):
