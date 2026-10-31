@@ -26,5 +26,5 @@ def test_pong_carries_the_app_version_and_health_the_mods():
 
 def test_outside_the_app_the_pong_is_as_before():
     b, sent = _bridge(None)
-    b.on_game_message({"type": "hello", "id": "hb-2", "run_id": "r1"})  # a mod before 0.3.6: no version
+    b.on_game_message({"type": "hello", "id": "hb-2", "run_id": "r1"})  # a mod before 0.3.7: no version
     assert sent == [{"type": "pong", "id": "hb-2"}] and b.health()["mod_version"] is None

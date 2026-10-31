@@ -90,7 +90,7 @@ After an update everything else picks up the new code by itself, with no Kiro Cr
 - Kira's MCP server: each open chat keeps its own server process, so before every tool call the server compares the installed `app.json` version with the one it started with and, on a change, re-executes itself in the same process (same pid and stdio, the chat keeps its connection) and handles that call with the new code. A tool added by the update shows in an open chat only after the chat restarts: the client reads the tool list once;
 - panels that were in the game before the update but have no artifact (up to 0.3.5 an installed app saved none) are saved once per run by the dispatcher.
 
-Verified 2026-10-31 on a dev gateway through the real update route (`POST /api/apps/factorycrew/update`, 0.3.5 to 0.3.6) with a stand-in game on UDP: Kira's MCP server kept its pid, re-executed with the new code, and her next `factorio_saved_panels` call answered; the bridge's `pong` carried 0.3.6.
+Verified 2026-10-31 on a dev gateway through the real update route (`POST /api/apps/factorycrew/update`, 0.3.5 to a build marked 0.3.6) with a stand-in game on UDP: Kira's MCP server kept its pid, re-executed with the new code, and her next `factorio_saved_panels` call answered; the bridge's `pong` carried the new version.
 
 Verified on the dev gateway with the `release` branch served over smart HTTP on loopback: added as a source, listed with `subdirectory: apps/factorycrew`, installed after the trust dialog, then `Update` took it from 0.3.2 to 0.3.3 and the status page reported 0.3.3.
 

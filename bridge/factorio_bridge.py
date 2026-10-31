@@ -66,7 +66,7 @@ class GameState:
     tabs: list = field(default_factory=list)
     atlas_version: int | None = None
     atlas_dirty: int | None = None
-    mod_version: str | None = None  # the mod version the game runs (heartbeat), None from mods before 0.3.6
+    mod_version: str | None = None  # the mod version the game runs (heartbeat), None from mods before 0.3.7
 
 
 # ── framing ──────────────────────────────────────────────────────────────

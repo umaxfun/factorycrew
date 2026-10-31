@@ -523,7 +523,7 @@ def library(cfg, ask):
     return res
 
 
-# ── panels already in the game but not saved (made before 0.3.6, when installs saved none) ──
+# ── panels already in the game but not saved (made while installs saved none) ──
 
 PANEL_NAMES_LUA = ("local out = {} for _, p in ipairs(remote.call('kc', 'panels', false)) do "
                    "if not p.error then out[#out + 1] = p.name end end return out")
