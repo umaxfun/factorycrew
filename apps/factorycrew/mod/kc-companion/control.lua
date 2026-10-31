@@ -194,6 +194,8 @@ remote.add_interface("kc", {
   panel_remove = function(name) return panels.remove(name) end,
   -- the library as the window uses it: the request that would go out, and an answer arriving
   library_request = function(op, slug) local m = protocol.library_request(op, slug) send(m) gui.refresh_all() return m end,
+  -- the window's Stop on a tab's running turn
+  stop = function(chat) local m = protocol.stop_request(chat) send(m) gui.refresh_all() return m end,
   library_result = function(msg) panels.on_library(msg) gui.refresh_all() return panels.library() end,
   library = function() return panels.library() end,
   panel_collapse = function(name, folded, index) panels.collapse(game.get_player(index or 1), name, folded) return true end,

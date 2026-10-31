@@ -29,7 +29,9 @@ function M.init_storage()
     kc.run_id = string.format("%08x-%x", seed, game.tick)
   end
   kc.run_name = kc.run_name or "Run 1"
-  kc.tabs = kc.tabs or {} -- chat -> {feed = {...}, state = "idle"|"thinking", note = nil}
+  -- chat -> {feed = {...}, state = "idle"|"thinking", note = nil}; while thinking also
+  -- thinking_since, steps, activity, trace, last_sign (tick of the last status/trace), stopping
+  kc.tabs = kc.tabs or {}
   kc.tab_order = kc.tab_order or {}
   kc.marks = kc.marks or {} -- chat -> tag_number -> {tag = LuaCustomChartTag, surface, position, text}
   kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
@@ -147,6 +149,14 @@ function M.unacked(chat)
     end
   end
   return out
+end
+
+--- The player's Stop on a running turn. The dispatcher stops the tab's Kiro Crew turn and the
+--- bridge answers with `status` idle, note "stopped" (or thinking, note "stop_failed"); until
+--- then the tab shows "stopping…".
+function M.stop_request(chat)
+  M.tab(chat).stopping = true
+  return { type = "stop", id = next_id("stop"), chat = chat, run_id = storage.kc.run_id }
 end
 
 -- ── the run's panel library (scripts/panels.lua keeps the answers) ──────────
@@ -451,9 +461,11 @@ function M.handle(msg)
     push(tab, { from = "kira", text = text, id = msg.id, options = options })
     tab.state, tab.note = "idle", nil
     tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
+    tab.stopping, tab.last_sign = nil, nil
   elseif t == "trace" then
     -- a step of the running turn: what Kira wrote between tool calls, or which tool ran
     local tab = M.tab(msg.chat)
+    tab.last_sign = game.tick
     tab.trace = tab.trace or {}
     local last = tab.trace[#tab.trace]
     if last and last.kind == "tool" and msg.kind == "tool" and last.text == msg.text then
@@ -466,11 +478,18 @@ function M.handle(msg)
     local tab = M.tab(msg.chat)
     if msg.state == "thinking" then
       -- progress of a running turn: the first status starts the clock, later ones add steps
-      if tab.state ~= "thinking" then tab.thinking_since, tab.trace = game.tick, nil end
+      if tab.state ~= "thinking" then tab.thinking_since, tab.trace, tab.stopping = game.tick, nil, nil end
       tab.steps, tab.activity = msg.steps, msg.activity
+      tab.last_sign = game.tick
+      if msg.note == "stop_failed" then tab.stopping = nil end
     else
+      if msg.note == "stopped" and tab.state == "thinking" then
+        -- the stopped turn folds into one line, like an answered one
+        local secs = tab.thinking_since and math.floor((game.tick - tab.thinking_since) / 60)
+        push(tab, { from = "stopped", text = (tab.steps or 0) .. " steps" .. (secs and (", " .. secs .. " s") or "") })
+      end
       tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
-      tab.trace = nil
+      tab.trace, tab.stopping, tab.last_sign = nil, nil, nil
     end
     tab.state, tab.note = msg.state, msg.note
   end
@@ -488,7 +507,8 @@ function M.state()
   local tabs = {}
   for chat, t in pairs(kc.tabs) do
     tabs[chat] = { feed = t.feed, state = t.state, note = t.note, steps = t.steps, activity = t.activity,
-                   thinking_since = t.thinking_since, trace = t.trace }
+                   thinking_since = t.thinking_since, trace = t.trace, stopping = t.stopping,
+                   last_sign = t.last_sign }
   end
   return {
     run_id = kc.run_id, run_name = kc.run_name, tick = game.tick,

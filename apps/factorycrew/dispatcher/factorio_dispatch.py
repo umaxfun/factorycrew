@@ -255,7 +255,10 @@ TOOL_LABELS = {
     "factorio_list_marks": "listing marks",
 }
 TRACE_MAX = 220  # chars per line in the window
-TRACE_IDLE = 300.0  # stop following a chat after this long without new lines
+# Follow a turn until it ends (turn_stats), whatever the silence: a model thinking hard writes
+# nothing for minutes, and a 300 s idle limit once lost the fallback copy of an 8-minute turn.
+# This only bounds a transcript whose end never shows (a gateway crash mid-turn).
+TRACE_MAX_AGE = 3 * 3600.0
 
 
 def transcript_path(slot):
@@ -323,7 +326,16 @@ class Tracer:
         if pos is None:
             pos = self.offset(slot)
         self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
-                            "seen": time.monotonic(), "last_text": "", "since": since, "asked": False}
+                            "started": time.monotonic(), "last_text": "", "since": since, "asked": False}
+
+    def ended(self, w):
+        """The turn ended without factorio_reply: forward its last text, then tell the bridge the
+        turn is over, so a turn that left no text stops "thinking" now and not at idle_after."""
+        self.forward(w)
+        try:
+            bridge(self.cfg, "POST", "/turn_end", {"chat": w["chat"], "ask_id": w.get("ask_id")}, timeout=10)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"could not report the end of the turn for [{w['chat']}]: {exc}")
 
     def forward(self, w):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
@@ -372,7 +384,7 @@ class Tracer:
                     content = row.get("content")
                     if isinstance(content, str) and content.strip():
                         w["last_text"] = content
-                    self.forward(w)
+                    self.ended(w)
                     done = True
                     break
                 if row.get("role") == "assistant" and isinstance(row.get("content"), str) and row["content"].strip():
@@ -381,14 +393,13 @@ class Tracer:
                     if fin:
                         done = True
                         break
-                    w["seen"] = time.monotonic()
                     try:
                         bridge(self.cfg, "POST", "/trace", {"chat": w["chat"], "kind": kind, "text": text}, timeout=5)
                     except (urllib.error.URLError, OSError, ValueError):
                         pass
                 if done:
                     break
-            if done or time.monotonic() - w["seen"] > TRACE_IDLE:
+            if done or time.monotonic() - w["started"] > TRACE_MAX_AGE:
                 del self.watch[slot]
 
 
@@ -513,6 +524,29 @@ def handle(ctx, cfg, st, ask, tracer=None):
     return True
 
 
+def stop_turn(ctx, cfg, st, ask, tracer=None):
+    """The window's Stop: end the tab's running turn the way the dashboard's Stop button does,
+    then tell the bridge. A soft stop: the chat keeps what the turn did, and its next question
+    runs as usual (measured on Kiro Crew 2026-10-31). A third private call: ScriptContext has no
+    stop, and /api/session-control/stop refuses a cron (caller_unidentified)."""
+    slot = st["slots"].get(f"{ask['run_id']}\t{ask['chat']}")
+    res = {"chat": ask["chat"], "run_id": ask["run_id"], "ok": True}
+    if slot:
+        try:
+            _private_post(ctx, f"/api/chat/slots/{slot}/stop", {})
+            if tracer is not None:
+                # the stopped turn's last text is half an answer: not forwarded to the tab
+                tracer.watch.pop(slot, None)
+        except DispatchError as exc:
+            res.update(ok=False, error=str(exc)[:160])
+    print(f"stop [{ask['chat']}]: {'stopped' if res['ok'] else res['error']}")
+    try:
+        bridge(cfg, "POST", "/stopped", res, timeout=10)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"stop [{ask['chat']}]: could not tell the bridge: {exc}")
+    return res
+
+
 def source_stamp():
     """mtimes of this script and the app config; a wake reads both once, so a change needs a new wake."""
     stamp = []
@@ -578,6 +612,10 @@ def run(ctx):
                 # each CLI call takes ~2 s: answer off the loop so questions are not held up
                 bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
                 threading.Thread(target=library, args=(cfg, ask), daemon=True).start()
+                continue
+            if ask.get("kind") == "stop":
+                bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
+                stop_turn(ctx, cfg, st, ask, tracer)
                 continue
             if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
