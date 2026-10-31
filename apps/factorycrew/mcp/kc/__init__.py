@@ -12,6 +12,7 @@ Layers (lower never imports higher):
   checks   validators: overlaps, connectivity, coverage, wiring
   circuits circuit networks read by the mod's kc.circuits: simulate, explain, trace
   world    adapters for the mod's kc.scan / kc.proto / kc.resources / kc.best (Lua) results
+  atlas    blocks, zones and what feeds what, from the mod's structure dump (docs/atlas.md)
 
 Skills are built on these and live in skills/<name>/lib. The names below are the stable surface;
 `import kc` gives the old kc_compute helpers too (tile, xy, footprint, astar, connect, unwired,
@@ -28,7 +29,7 @@ from .grid import Grid  # noqa: F401
 
 import importlib as _importlib
 
-MODULES = ("search", "steiner", "cover", "wires", "lp", "bp", "world", "circuits", "checks")
+MODULES = ("search", "steiner", "cover", "wires", "lp", "bp", "world", "circuits", "checks", "atlas")
 
 for _m in MODULES:
     try:  # modules land one by one; a missing one must not break `import kc`

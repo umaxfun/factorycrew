@@ -2,6 +2,7 @@
 -- Pure functions over storage/game so FactorioTest can exercise them without UDP.
 
 local helpers_lib = require("scripts.helpers") -- `kc` in the query environment
+local atlas = require("scripts.atlas")
 
 local M = {}
 
@@ -34,6 +35,9 @@ function M.init_storage()
   kc.mark_chat = kc.mark_chat or {} -- tag_number -> chat
   kc.seq = kc.seq or 0
   kc.pointers = kc.pointers or {} -- player_index -> {pointer, ...} (scripts/pointers.lua)
+  kc.panels = kc.panels or {} -- name -> live panel (scripts/panels.lua)
+  kc.panel_order = kc.panel_order or {}
+  kc.atlas_version = kc.atlas_version or 0 -- bumped when something is built, removed or reconfigured
 end
 
 local function next_id(prefix)
@@ -80,6 +84,23 @@ end
 
 -- "unknown" until the first recv_udp, then "on" or "off" (game started without --enable-lua-udp)
 M.udp_state = "unknown"
+
+M.MAX_OPTIONS = 6
+
+--- A trailing "[OPTIONS: a | b | c]" line of an answer: the text without it and the choices
+--- (shown as buttons that send the choice as the player's next message), or the text and nil.
+function M.split_options(text)
+  if type(text) ~= "string" then return text, nil end
+  local head, body = text:match("^(.-)%s*%[OPTIONS:%s*([^%]]-)%s*%]%s*$")
+  if not head then return text, nil end
+  local options = {}
+  for o in (body .. "|"):gmatch("([^|]*)|") do
+    o = o:gsub("^%s+", ""):gsub("%s+$", "")
+    if o ~= "" and #options < M.MAX_OPTIONS then options[#options + 1] = o end
+  end
+  if #options == 0 then return head, nil end
+  return head, options
+end
 
 local function push(tab, entry)
   entry.tick = game.tick
@@ -128,6 +149,20 @@ function M.unacked(chat)
   return out
 end
 
+-- ── the run's panel library (scripts/panels.lua keeps the answers) ──────────
+
+--- A request to the run's saved-panel library: op = "list" | "open" | "delete" (with slug).
+--- The dispatcher answers with a library_result; no model is involved.
+function M.library_request(op, slug)
+  local kc = storage.kc
+  kc.library = kc.library or { panels = {}, pending = {} }
+  kc.library.pending = kc.library.pending or {}
+  local id = next_id("lib")
+  kc.library.pending[id] = { op = op, tick = game.tick }
+  kc.library.error = nil
+  return { type = "library", id = id, op = op, slug = slug, run_id = kc.run_id, run_name = kc.run_name }
+end
+
 -- ── query execution ──────────────────────────────────────────────────────
 
 local function query_env(surface_name)
@@ -150,6 +185,7 @@ local function query_env(surface_name)
     kc = helpers_lib,
   }
 end
+M.query_env = query_env -- panels run their data source in the same environment
 
 --- Run a Lua body against the save. Returns {ok=true, data=...} or {ok=false, error=code, message=...}.
 function M.run_query(lua, surface_name)
@@ -355,6 +391,8 @@ function M.heartbeat(kind)
     run_name = storage.kc.run_name,
     tick = game.tick,
     tabs = storage.kc.tab_order,
+    atlas_version = storage.kc.atlas_version,
+    atlas_dirty = atlas.dirty_count("nauvis"),
   }
 end
 
@@ -376,7 +414,7 @@ function M.handle(msg)
   local t = msg.type
   local kc = storage.kc
   -- reply/status addressed to another run (a queued answer for a save that is no longer loaded)
-  if (t == "reply" or t == "status" or t == "trace") and msg.run_id and msg.run_id ~= kc.run_id then
+  if (t == "reply" or t == "status" or t == "trace" or t == "library_result") and msg.run_id and msg.run_id ~= kc.run_id then
     return {}
   end
   if t == "query" then
@@ -384,6 +422,11 @@ function M.handle(msg)
     r.type = "result"
     r.id = msg.id
     return { r }
+  elseif t == "atlas" then
+    -- runs over the next ticks (control.lua steps it); parts and the result go out from there
+    local err = atlas.start(msg)
+    if err then return { { type = "result", id = msg.id, ok = false, error = "atlas_" .. err:gsub(" ", "_") } } end
+    return {}
   elseif t == "mark" then
     return { result(msg, M.mark(msg.chat, msg.marks)) }
   elseif t == "unmark" then
@@ -404,7 +447,8 @@ function M.handle(msg)
         (secs and (", " .. secs .. " s") or "") })
     end
     tab.trace = nil
-    push(tab, { from = "kira", text = msg.text, id = msg.id })
+    local text, options = M.split_options(msg.text)
+    push(tab, { from = "kira", text = text, id = msg.id, options = options })
     tab.state, tab.note = "idle", nil
     tab.thinking_since, tab.steps, tab.activity = nil, nil, nil
   elseif t == "trace" then

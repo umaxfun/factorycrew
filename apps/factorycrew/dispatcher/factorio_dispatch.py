@@ -1,7 +1,7 @@
 """Factorio dispatcher: a script-cron of the factorycrew Kiro Crew gateway.
 
 Takes questions the game sent to the bridge and puts each one into its chat
-`Factorio/<run>/<tab>` (SPEC.md, "Dispatcher"). One wake runs a long-poll loop for
+`Factorio/<run>/<tab>` (SPEC.md, "How it works"; docs/areas/dispatcher.md). One wake runs a long-poll loop for
 almost the whole script timeout (Kiro Crew caps it at 3600 s), then returns; the
 cron fires it again within `every` seconds. Questions that arrive in between wait
 in the bridge's queue.
@@ -21,6 +21,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
+import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -279,6 +283,17 @@ def trace_lines(row):
     return []
 
 
+def older_than(row, since):
+    """True when the row's `ts` is before `since` (epoch seconds); rows without one are kept."""
+    if since is None or not isinstance(row.get("ts"), str):
+        return False
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(row["ts"].replace("Z", "+00:00")).timestamp() < since
+    except ValueError:
+        return False
+
+
 def turn_ended(row):
     """The gateway writes turn_stats on the last assistant message of a turn."""
     return row.get("role") == "assistant" and bool((row.get("meta") or {}).get("turn_stats"))
@@ -289,11 +304,26 @@ class Tracer:
         self.cfg = cfg
         self.watch = {}  # slot -> {"chat", "run_id", "pos", "seen"}
 
-    def start(self, slot, ask):
+    @staticmethod
+    def offset(slot):
+        """The transcript's size now; take it BEFORE the question is sent (see start)."""
         p = transcript_path(slot)
-        pos = p.stat().st_size if p.exists() else 0  # only what this turn adds
-        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "pos": pos, "seen": time.monotonic(),
-                            "last_text": ""}
+        return p.stat().st_size if p.exists() else 0
+
+    def start(self, slot, ask, since=None, pos=None):
+        """Follow the turn `ask` started. `since`: wall-clock time before the question was sent;
+        `pos`: the transcript's size before it was sent (now, when not given).
+
+        Only rows after the question's own user row count. The previous turn can still be closing
+        when the question arrives: its last message (with turn_stats) is written after `since`,
+        before this question's user row, and it was forwarded as this turn's answer 1.5 s after a
+        quick "yes" (app e2e, consent test). The byte offset alone is not enough either: the
+        gateway may rewrite the file when the question arrives, and `since` drops the old rows
+        met again that way."""
+        if pos is None:
+            pos = self.offset(slot)
+        self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
+                            "seen": time.monotonic(), "last_text": "", "since": since, "asked": False}
 
     def forward(self, w):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
@@ -302,7 +332,13 @@ class Tracer:
         if not text:
             return
         try:
-            bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text}, timeout=10)
+            # fallback: the bridge drops it if the turn did answer. The transcript may show the
+            # turn's end before its factorio_reply row, and then this copy (in the dashboard's
+            # language, with the dashboard's [OPTIONS]) came on top of the real answer.
+            r = bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text, "fallback": True,
+                                                    "ask_id": w.get("ask_id")}, timeout=10)
+            if r.get("skipped"):
+                return
             print(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
         except (urllib.error.URLError, OSError, ValueError) as exc:
             print(f"could not forward the answer for [{w['chat']}]: {exc}")
@@ -324,6 +360,12 @@ class Tracer:
                 try:
                     row = json.loads(raw)
                 except ValueError:
+                    continue
+                if older_than(row, w.get("since")):
+                    continue  # an earlier turn's row, met again after the file was rewritten
+                if not w["asked"]:
+                    # the previous turn's closing rows, until this question's user row appears
+                    w["asked"] = row.get("role") == "user"
                     continue
                 if turn_ended(row):
                     # the turn's last message carries turn_stats; no factorio_reply came before it
@@ -350,9 +392,97 @@ class Tracer:
                 del self.watch[slot]
 
 
+# ── the run's panel library: saved panels opened from the game without a model ──
+#
+# Kira's MCP server saves every working panel as a Kiro Crew artifact (mcp/factorio_mcp.py,
+# library_save): slug factorio-panel-<run>-<name>, tags factorio-panel and factorio-run-<run>,
+# the panel code in a fenced `json kc-panel` block. The window asks for the run's list, opens one
+# or deletes one; this wake answers through the bridge. The same names are used on both sides
+# (tests/unit/test_panel_tool.py::test_dispatcher_and_mcp_agree_on_names checks that they agree).
+
+ARTIFACT_PREFIX = "factorio-panel-"
+SPEC_FENCE = "```json kc-panel"
+LIST_LINE = re.compile(r"^\s*(factorio-panel-[a-z0-9-]+)\s+v\d+\s+\S+\s+\[[^\]]*\]\s+(.*)$")
+
+
+class LibraryError(RuntimeError):
+    pass
+
+
+def run_tag(run_id):
+    return "factorio-run-" + (re.sub(r"[^a-z0-9]+", "-", str(run_id).lower()).strip("-") or "unknown")
+
+
+def artifact_cli(*argv, timeout=30):
+    exe = shutil.which("kirocrew") or os.path.expanduser("~/.local/bin/kirocrew")
+    try:
+        p = subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LibraryError(f"kirocrew artifact {argv[0]}: {exc}") from exc
+    if p.returncode != 0:
+        raise LibraryError(((p.stderr or p.stdout).strip() or f"kirocrew artifact {argv[0]} failed")[-200:])
+    return p.stdout
+
+
+def library_list(run_id):
+    """[{slug, title}] of the run's saved panels, in the CLI's order."""
+    out = []
+    for line in artifact_cli("list", "--tag", run_tag(run_id)).splitlines():
+        m = LIST_LINE.match(line)
+        if m:
+            out.append({"slug": m.group(1), "title": m.group(2).strip().removeprefix("Factorio panel: ")})
+    return out
+
+
+def library_spec(slug):
+    text = artifact_cli("show", slug)
+    start = text.find(SPEC_FENCE)
+    end = text.find("\n```", start + len(SPEC_FENCE)) if start >= 0 else -1
+    if start < 0 or end < 0:
+        raise LibraryError(f"{slug} holds no panel code")
+    try:
+        spec = json.loads(text[start + len(SPEC_FENCE):end])
+    except ValueError as exc:
+        raise LibraryError(f"{slug}: bad panel code ({exc})") from exc
+    if not isinstance(spec, dict) or not spec.get("name") or not spec.get("lua"):
+        raise LibraryError(f"{slug}: the panel code has no name or lua")
+    return spec
+
+
+def library(cfg, ask):
+    """Answer one library request: list, open (the saved spec) or delete (then the new list).
+
+    Only artifacts of this run's list are opened or deleted, so the window cannot reach any other
+    artifact of the gateway."""
+    op, run_id, slug = ask.get("op") or "list", ask.get("run_id"), ask.get("slug")
+    res = {"id": ask["id"], "run_id": run_id, "op": op, "ok": True}
+    try:
+        if op in ("open", "delete"):
+            listed = library_list(run_id)
+            if not isinstance(slug, str) or slug not in {p["slug"] for p in listed}:
+                raise LibraryError(f"no saved panel {slug} in this run")
+            if op == "open":
+                res["spec"] = library_spec(slug)
+            else:
+                artifact_cli("delete", slug)
+                res["panels"] = [p for p in listed if p["slug"] != slug]
+        else:
+            res["panels"] = library_list(run_id)
+    except LibraryError as exc:
+        res.update(ok=False, error=str(exc))
+    try:
+        bridge(cfg, "POST", "/library_result", res, timeout=10)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"library {op}: could not answer the game: {exc}")
+    return res
+
+
 def handle(ctx, cfg, st, ask, tracer=None):
     try:
         slot = open_chat(ctx, cfg, st, ask)
+        since = time.time() - 1  # rows of this turn are written after this; a second of clock slack
+        pos = Tracer.offset(slot)  # before sending: the question's own user row comes after it
         try:
             ctx.send_to_session(slot, render(ask))
         except Exception as exc:  # noqa: BLE001
@@ -366,9 +496,10 @@ def handle(ctx, cfg, st, ask, tracer=None):
             st["slots"].pop(k, None)
             st["gen"][k] = st["gen"].get(k, 0) + 1
             slot = open_chat(ctx, cfg, st, ask)
+            pos = Tracer.offset(slot)
             ctx.send_to_session(slot, render(ask))
         if tracer is not None:
-            tracer.start(slot, ask)
+            tracer.start(slot, ask, since, pos)
     except Exception as exc:  # noqa: BLE001 - every failure is retried, then reported
         n = st["attempts"].get(ask["id"], 0) + 1
         st["attempts"][ask["id"]] = n
@@ -443,6 +574,11 @@ def run(ctx):
             time.sleep(5)
             continue
         for ask in asks:
+            if ask.get("kind") == "library":
+                # each CLI call takes ~2 s: answer off the loop so questions are not held up
+                bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
+                threading.Thread(target=library, args=(cfg, ask), daemon=True).start()
+                continue
             if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
             save_state(path, st)

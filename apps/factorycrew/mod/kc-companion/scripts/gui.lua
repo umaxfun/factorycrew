@@ -95,6 +95,9 @@ local function build(player)
   local kc_marks_row = inner.add{ type = "flow", name = "kc_marks_row", direction = "horizontal" }
   kc_marks_row.style.vertical_align = "center"
 
+  local kc_panels_row = inner.add{ type = "flow", name = "kc_panels_row", direction = "horizontal" }
+  kc_panels_row.style.vertical_align = "center"
+
   local kc_pointers_row = inner.add{ type = "flow", name = "kc_pointers_row", direction = "vertical" }
   kc_pointers_row.style.vertical_spacing = 0
 
@@ -236,6 +239,19 @@ local function refresh_feed(player, frame)
     l.style.single_line = false
     l.style.maximal_width = WIDTH - 40
   end
+  -- Kira's suggested answers ([OPTIONS: ...] of her last message) as buttons; a click sends the
+  -- choice as the player's next message. Only while her message is the last one and she is idle.
+  local last = tab.feed[#tab.feed]
+  if last and last.from == "kira" and last.options and tab.state ~= "thinking" then
+    local row = pane.add{ type = "flow", name = "kc_options", direction = "vertical" }
+    row.style.vertical_spacing = 2
+    for i, o in ipairs(last.options) do
+      local b = row.add{ type = "button", name = "kc_option_" .. i, caption = o, tags = { kc_option = o } }
+      b.style.horizontally_stretchable = true
+      b.style.maximal_width = WIDTH - 40
+      b.style.horizontal_align = "left"
+    end
+  end
   -- the running turn, step by step: Kira's own words between tool calls, and the tools
   if tab.state == "thinking" and tab.trace then
     for _, s in ipairs(tab.trace) do
@@ -272,6 +288,91 @@ local function refresh_marks(player, frame)
   tool(row, "kc_mark_clear", "utility/trash", "Remove all marks of this tab", enabled, "tool_button_red")
 end
 
+-- Live panels Kira made (scripts/panels.lua): one toggle per panel, pressed while it is shown.
+local function refresh_panels(player, frame)
+  local row = find(frame, "kc_panels_row")
+  if not row then return end
+  row.clear()
+  local order = storage.kc.panel_order or {}
+  row.add{ type = "label", caption = "Panels:" }
+  local flow = row.add{ type = "flow", direction = "horizontal" }
+  if #order == 0 then flow.add{ type = "label", caption = "[color=gray]none open[/color]" } end
+  for _, name in ipairs(order) do
+    local p = storage.kc.panels[name]
+    if p then
+      local shown = not (p.hidden and p.hidden[player.index])
+      local head, cut = utf8_head(p.title, TAB_CHARS + 4)
+      local b = flow.add{ type = "button", caption = cut and (head .. "…") or p.title, toggled = shown,
+                          tooltip = (shown and "Hide " or "Show ") .. p.title .. (p.error and ("\n[color=red]" .. p.error .. "[/color]") or ""),
+                          tags = { kc_panel = name, kc_panel_toggle = true } }
+      b.style.minimal_width = 0
+      b.style.horizontal_align = "center"
+    end
+  end
+  local filler = row.add{ type = "empty-widget" }
+  filler.style.horizontally_stretchable = true
+  row.add{ type = "button", name = "kc_library_toggle", caption = "Library", toggled = view(player).library == true,
+           tooltip = "Panels saved in this run (Kiro Crew artifacts): open one without asking Kira" }
+end
+
+-- The run's saved panels (scripts/panels.lua, library): open or delete them, no model involved.
+-- Its own frame at the top of the left column, beside the panels: Kira's window is tall and its
+-- bottom rows can sit below the screen edge.
+local function refresh_library(player)
+  local v = view(player)
+  local fr = player.gui.left.kc_library
+  if not v.library then
+    if fr then fr.destroy() end
+    return
+  end
+  if not fr then
+    fr = player.gui.left.add{ type = "frame", name = "kc_library", direction = "vertical" }
+    pcall(function() player.gui.left.swap_children(1, fr.get_index_in_parent()) end) -- first in the column
+    local bar = fr.add{ type = "flow", direction = "horizontal" }
+    bar.style.vertical_align = "center"
+    bar.add{ type = "label", caption = "Panel library", style = "frame_title", ignored_by_interaction = true }
+    local grip = bar.add{ type = "empty-widget", ignored_by_interaction = true }
+    grip.style.horizontally_stretchable, grip.style.minimal_width = true, 8
+    bar.add{ type = "sprite-button", name = "kc_library_close", sprite = "utility/close", style = "frame_action_button",
+             tooltip = "Close the library" }
+    local inner = fr.add{ type = "frame", name = "kc_library_body", direction = "vertical",
+                          style = "inside_shallow_frame_with_padding" }
+    inner.style.minimal_width = 260
+  end
+  local box = fr.kc_library_body
+  box.clear()
+  local lib = storage.kc.library or { panels = {}, pending = {} }
+  local loading = next(lib.pending or {}) ~= nil
+  local head = "Saved in this run"
+  if loading then head = head .. "  [color=gray]loading…[/color]" end
+  box.add{ type = "label", caption = head }
+  if lib.error then
+    local l = box.add{ type = "label", caption = "[color=red]" .. lib.error .. "[/color]" }
+    l.style.single_line = false
+    l.style.maximal_width = 320
+  end
+  local list = lib.panels or {}
+  if #list == 0 and not loading then
+    box.add{ type = "label", caption = "[color=gray]Nothing saved yet: ask Kira for a panel.[/color]" }
+  end
+  local pane = box.add{ type = "scroll-pane", horizontal_scroll_policy = "never", vertical_scroll_policy = "auto" }
+  pane.style.maximal_height = 6 * 32
+  for _, p in ipairs(list) do
+    local r = pane.add{ type = "flow", direction = "horizontal" }
+    r.style.vertical_align = "center"
+    local b = r.add{ type = "button", name = "kc_lib_open:" .. p.slug, caption = p.title,
+                     tooltip = "Open", tags = { kc_lib_open = p.slug } }
+    b.style.horizontally_stretchable = true
+    b.style.maximal_width = 320
+    b.style.horizontal_align = "left"
+    local confirm = v.confirm_delete == p.slug
+    r.add{ type = "sprite-button", name = "kc_lib_del:" .. p.slug, sprite = "utility/trash",
+           style = confirm and "tool_button_red" or "tool_button",
+           tooltip = confirm and "Click again to delete it from Kiro Crew" or "Delete from the library",
+           tags = { kc_lib_del = p.slug } }
+  end
+end
+
 local function refresh_pointers(player, frame)
   local row = find(frame, "kc_pointers_row")
   row.clear()
@@ -291,6 +392,7 @@ local function refresh_pointers(player, frame)
 end
 
 function M.refresh(player)
+  refresh_library(player)
   local frame = root(player)
   if not frame then return end
   refresh_run(player, frame)
@@ -298,6 +400,7 @@ function M.refresh(player)
   refresh_status(player, frame)
   refresh_feed(player, frame)
   refresh_marks(player, frame)
+  refresh_panels(player, frame)
   refresh_pointers(player, frame)
 end
 
@@ -332,13 +435,15 @@ function M.toggle(player)
   find(root(player), "kc_input").focus()
 end
 
---- Send the input field's text as a question. `send` puts a message on the wire.
-local function submit(player, send)
+--- Send the input field's text (or `text`, a chosen option) as a question. `send` puts a message on the wire.
+local function submit(player, send, text)
   local frame = root(player)
   local field = find(frame, "kc_input")
-  local text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
-  if text == "" then return end
-  field.text = ""
+  if text == nil then
+    text = field.text:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return end
+    field.text = ""
+  end
   send(protocol.ask(view(player).tab, text, player, pointers.take(player)))
   M.refresh(player)
   field.focus()
@@ -366,6 +471,8 @@ function M.on_click(e, send)
     M.toggle(player)
   elseif name == "kc_send" then
     submit(player, send)
+  elseif el.tags and el.tags.kc_option then
+    submit(player, send, el.tags.kc_option)
   elseif el.tags and el.tags.kc_tab then
     v.tab, v.mark, v.adding = el.tags.kc_tab, 0, false
     M.refresh(player)
@@ -383,6 +490,24 @@ function M.on_click(e, send)
     go_to_mark(player, -1)
   elseif name == "kc_mark_next" then
     go_to_mark(player, 1)
+  elseif name == "kc_library_toggle" or name == "kc_library_close" then
+    if name == "kc_library_close" then v.library = true end -- the toggle below closes it
+    v.library = not v.library
+    v.confirm_delete = nil
+    if v.library then send(protocol.library_request("list")) end -- the shown list is the last one until it arrives
+    M.refresh(player)
+  elseif el.tags and el.tags.kc_lib_open then
+    v.confirm_delete = nil
+    send(protocol.library_request("open", el.tags.kc_lib_open))
+    M.refresh(player)
+  elseif el.tags and el.tags.kc_lib_del then
+    if v.confirm_delete == el.tags.kc_lib_del then
+      v.confirm_delete = nil
+      send(protocol.library_request("delete", el.tags.kc_lib_del))
+    else
+      v.confirm_delete = el.tags.kc_lib_del -- deleting is for good: the second click does it
+    end
+    M.refresh(player)
   elseif name == "kc_point" then
     pointers.give_tool(player)
   elseif name == "kc_pointer_clear" then
@@ -454,7 +579,8 @@ end
 function M.click(name, send, index)
   local player = player_of(index)
   local frame = root(player)
-  local el = frame and find(frame, name) or mod_gui.get_button_flow(player)[name]
+  local lib = player.gui.left.kc_library
+  local el = (frame and find(frame, name)) or (lib and find(lib, name)) or mod_gui.get_button_flow(player)[name]
   if not el then return false end
   M.on_click({ element = el, player_index = player.index }, send)
   return true

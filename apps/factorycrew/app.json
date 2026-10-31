@@ -1,6 +1,6 @@
 {
   "name": "factorycrew",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "displayName": "Factorio Companion",
   "description": "Kira, a Factorio companion: ask about your live run from an in-game window; she reads the save, answers in the tab and marks places on the map.",
   "author": "umaxfun",
@@ -66,6 +66,12 @@
     "The app installs the kc-companion mod into your Factorio mods folder when it starts; enable it in the game's Mods menu if it is off. Any mod turns Steam achievements off for that save."
   ],
   "skills": [
-    "skills/belts"
+    "skills/beacons",
+    "skills/belts",
+    "skills/mining",
+    "skills/pipes",
+    "skills/power",
+    "skills/production",
+    "skills/solar"
   ]
 }

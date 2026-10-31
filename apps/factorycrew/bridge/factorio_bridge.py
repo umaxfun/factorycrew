@@ -23,6 +23,7 @@ VERSION = 1
 PACKET_MAX = 4000  # bytes per UDP packet to the game; see encode()
 MAX_PARTS = 1024
 OUTBOX_LIMIT = 200  # replies/statuses waiting for an offline game
+ATLAS_TIMEOUT = 300.0  # a big base at a small per-tick budget takes a while; the game never stalls for it
 ACTIVITY_MAX = 80  # chars of a progress note shown in the window's status line
 TRACE_MAX = 240  # chars of one trace line (what Kira wrote / which tool she ran) for the window
 
@@ -46,6 +47,7 @@ class Settings:
     offline_after: float = 15.0  # no heartbeat for this long => game offline
     idle_after: float = 90.0  # thinking without reply for this long => idle "no_reply"
     request_timeout: float = 10.0  # query/mark/unmark waiting for the game's result
+    atlas_prefetch: bool = True  # read the player's surface for the atlas when a game connects
     lease: float = 120.0  # an ask taken by the dispatcher returns to the queue unless confirmed
 
 
@@ -56,6 +58,8 @@ class GameState:
     run_name: str | None = None
     tick: int | None = None
     tabs: list = field(default_factory=list)
+    atlas_version: int | None = None
+    atlas_dirty: int | None = None
 
 
 # ── framing ──────────────────────────────────────────────────────────────
@@ -129,6 +133,86 @@ class Reassembler:
             del self.pending[k]
 
 
+# ── atlas store: the structure of a surface, merged from a full dump and partial ones ──
+
+
+class AtlasStore:
+    """Entity lines kept per chunk with their names resolved, so a partial dump (only the chunks
+    that changed, with its own name table) can replace those chunks, and the merged base can be
+    served as one dump again (mod/kc-companion/scripts/atlas.lua has the format)."""
+
+    def __init__(self, text: str, data: dict, run_id):
+        self.run_id = run_id
+        self.names: dict[str, tuple] = {}   # name -> (type, w, h, extras)
+        self.chunks: dict[tuple, list] = {}  # (cx, cy) -> [(name, rest of the E line)]
+        self.recipes: dict[str, str] = {}
+        self.trains: list[str] = []
+        self.head = ""
+        self.tick = None
+        self.version = None
+        self.apply(text, data, full=True)
+
+    def apply(self, text: str, data: dict, full: bool) -> int:
+        ids: dict[str, str] = {}
+        chunks: dict[tuple, list] = {}
+        listed: set[tuple] = set()
+        recipes: dict[str, str] = {}
+        trains: list[str] = []
+        for line in text.split("\n"):
+            k = line[:2]
+            if k == "E|":
+                f = line.split("|", 5)
+                name = ids[f[1]]
+                key = (int(f[2]) // 64, int(f[3]) // 64)  # doubled coordinates: 64 per chunk
+                chunks.setdefault(key, []).append((name, "|".join(f[2:])))
+            elif k == "N|":
+                f = line.split("|", 6)
+                ids[f[1]] = f[2]
+                self.names[f[2]] = (f[3], f[4], f[5], f[6] if len(f) > 6 else "")
+            elif k == "R|":
+                recipes[line.split("|", 2)[1]] = line
+            elif k == "T|":
+                trains.append(line)
+            elif k == "C|":
+                _, cx, cy = line.split("|")
+                listed.add((int(cx), int(cy)))
+            elif k == "H|":
+                self.head = line
+                try:
+                    self.tick = int(line.split("|")[3])
+                except (IndexError, ValueError):
+                    self.tick = None
+        if full:
+            self.chunks = chunks
+        else:
+            for key in listed:
+                self.chunks.pop(key, None)
+            self.chunks.update(chunks)
+        self.recipes.update(recipes)
+        self.trains = trains
+        self.version = (data or {}).get("version")
+        return len(listed) if not full else len(chunks)
+
+    def text(self) -> str:
+        out, ids = [], {}
+        h = self.head.split("|")
+        out.append("|".join(h[:5] + ["full"]))
+        body = []
+        n = 0
+        for key in sorted(self.chunks):
+            for name, rest in self.chunks[key]:
+                if name not in ids:
+                    n += 1
+                    ids[name] = n
+                    t, w, hh, ex = self.names[name]
+                    out.append(f"N|{n}|{name}|{t}|{w}|{hh}" + (f"|{ex}" if ex else ""))
+                body.append(f"E|{ids[name]}|{rest}")
+        out += body
+        out += list(self.recipes.values()) + self.trains
+        out.append(f"Z|{len(body)}|{len(self.chunks)}|0")
+        return "\n".join(out)
+
+
 # ── bridge ───────────────────────────────────────────────────────────────
 
 
@@ -151,6 +235,9 @@ class Bridge(asyncio.DatagramProtocol):
         self.transport: asyncio.DatagramTransport | None = None
         self.reasm = Reassembler()
         self.pending: dict[str, asyncio.Future] = {}
+        self.atlas_parts: dict[str, dict[int, str]] = {}  # request id -> seq -> text of a running dump
+        self.atlas_store: dict[str, AtlasStore] = {}  # requested surface ("" = the player's) -> structure
+        self.atlas_lock = asyncio.Lock()
         self.asks: deque[dict] = deque()  # waiting for the dispatcher
         self.leased: dict[str, tuple[dict, float]] = {}  # taken, not yet confirmed
         self.seen_asks: deque[str] = deque(maxlen=1000)
@@ -158,6 +245,8 @@ class Bridge(asyncio.DatagramProtocol):
         self.outbox: deque[dict] = deque()  # reply/status for an offline game
         self.idle_timers: dict[tuple, asyncio.TimerHandle] = {}
         self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
+        self.answered: set[tuple] = set()  # (run_id, chat) whose last question got an answer
+        self.current_ask: dict[tuple, str | None] = {}  # (run_id, chat) -> id of its last question
         self.ids = itertools.count(1)
         self.dispatcher_seen: float | None = None  # last GET /asks
         self.agent_seen: float | None = None  # last tool call of Kira's (via the MCP server)
@@ -189,10 +278,15 @@ class Bridge(asyncio.DatagramProtocol):
         if t in ("hello", "heartbeat"):
             g = self.game
             g.last_seen = time.monotonic()
+            fresh = t == "hello" or g.run_id != msg.get("run_id")
             g.run_id, g.run_name, g.tick = msg.get("run_id"), msg.get("run_name"), msg.get("tick")
             g.tabs = msg.get("tabs") or []
+            g.atlas_version = msg.get("atlas_version")
+            g.atlas_dirty = msg.get("atlas_dirty")
             self.send_game({"type": "pong", "id": msg.get("id")})
             self.flush_outbox()
+            if fresh and self.s.atlas_prefetch:
+                asyncio.get_running_loop().create_task(self.atlas_prefetch())
         elif t == "ask":
             self.game.last_seen = time.monotonic()
             self.send_game({"type": "ack", "id": msg.get("id")})
@@ -203,6 +297,21 @@ class Bridge(asyncio.DatagramProtocol):
                                                     "pointers")})
             self.ask_event.set()
             log.info("ask %s [%s] %r", msg.get("id"), msg.get("chat"), msg.get("text"))
+        elif t == "library":
+            # the window's saved-panel library: the dispatcher (inside Kiro Crew) reads the
+            # artifacts and posts /library_result; it rides the ask queue but is no question
+            self.game.last_seen = time.monotonic()
+            if msg.get("id") in self.seen_asks:
+                return
+            self.seen_asks.append(msg.get("id"))
+            self.asks.append({"kind": "library", **{k: msg.get(k) for k in ("id", "op", "slug", "run_id", "run_name")}})
+            self.ask_event.set()
+            log.info("library %s %s %s", msg.get("id"), msg.get("op"), msg.get("slug") or "")
+        elif t == "atlas_part":
+            # a slice of an atlas dump in progress; the final "result" says how many there were
+            parts = self.atlas_parts.get(str(msg.get("id")))
+            if parts is not None and isinstance(msg.get("seq"), int) and isinstance(msg.get("text"), str):
+                parts[msg["seq"]] = msg["text"]
         elif t == "result":
             fut = self.pending.pop(str(msg.get("id")), None)
             if fut and not fut.done():
@@ -239,6 +348,8 @@ class Bridge(asyncio.DatagramProtocol):
         msg = dict(msg, id=rid)
         fut = asyncio.get_running_loop().create_future()
         self.pending[rid] = fut
+        if msg["type"] == "atlas":
+            self.atlas_parts[rid] = {}
         started = time.monotonic()
         self.send_game(msg)
         try:
@@ -247,9 +358,66 @@ class Bridge(asyncio.DatagramProtocol):
             raise BridgeError("game_timeout", "the game did not answer in time (paused, or a query is still running)")
         finally:
             self.pending.pop(rid, None)
+            parts = self.atlas_parts.pop(rid, None)
         res = {k: v for k, v in res.items() if k not in ("v", "type", "id")}
+        if msg["type"] == "atlas" and res.get("ok"):
+            want = (res.get("data") or {}).get("parts")
+            if not isinstance(want, int) or sorted(parts or {}) != list(range(1, want + 1)):
+                raise BridgeError("atlas_incomplete", f"got {len(parts or {})} of {want} dump parts (a packet was lost); "
+                                                      "ask again")
+            res["text"] = "\n".join(parts[i] for i in range(1, want + 1))
         res["ms"] = round((time.monotonic() - started) * 1000)
         return normalize_lists(msg["type"], res)
+
+    # ── atlas ──
+
+    async def atlas(self, surface: str, refresh: bool, have_version, timeout: float) -> dict:
+        async with self.atlas_lock:
+            st = self.atlas_store.get(surface)
+            g = self.game
+            started = time.monotonic()
+            how = "cached"
+            if refresh or st is None or st.run_id != g.run_id or g.atlas_dirty == -1:
+                r = await self.request({"type": "atlas", "surface": surface or None}, timeout)
+                if not r.get("ok"):
+                    return r
+                st = AtlasStore(r["text"], r.get("data"), g.run_id)
+                self.atlas_store[surface] = st
+                how, read = "full", len(st.chunks)
+            elif (g.tick is None or st.tick is None or g.tick > st.tick) and \
+                    (g.atlas_version != st.version or g.atlas_dirty):
+                # a heartbeat from before the last dump says nothing about what changed after it
+                r = await self.request({"type": "atlas", "surface": surface or None, "chunks": "dirty"}, timeout)
+                if not r.get("ok"):
+                    return r
+                data = r.get("data") or {}
+                if data.get("partial"):
+                    read = st.apply(r["text"], data, full=False)
+                    how = "partial"
+                else:
+                    st = AtlasStore(r["text"], data, g.run_id)
+                    self.atlas_store[surface] = st
+                    how, read = "full", len(st.chunks)
+            else:
+                read = 0
+            out = {"ok": True, "version": st.version, "how": how, "chunks_read": read,
+                   "ms": round((time.monotonic() - started) * 1000)}
+            if have_version is not None and have_version == st.version and how == "cached":
+                out["unchanged"] = True
+            else:
+                out["text"] = st.text()
+            return out
+
+    async def atlas_prefetch(self) -> None:
+        """Read the player's surface once the game is online, so the first question does not wait
+        for a full dump (a large base takes about a minute in the background)."""
+        try:
+            await asyncio.sleep(3)
+            if self.online() and "" not in self.atlas_store:
+                await self.atlas("", False, None, ATLAS_TIMEOUT)
+                log.info("atlas prefetched: %d chunks", len(self.atlas_store[""].chunks))
+        except Exception:
+            log.exception("atlas prefetch failed")
 
     # ── asks / thinking ──
 
@@ -284,15 +452,18 @@ class Bridge(asyncio.DatagramProtocol):
             ask = self.asks.popleft()
             self.leased[ask["id"]] = (ask, exp)
             out.append(ask)
-            self.set_thinking(ask["run_id"], ask["chat"])
+            if ask.get("kind") != "library":  # a library request starts no turn
+                self.set_thinking(ask["run_id"], ask["chat"], ask.get("id"))
         return out
 
     def confirm_asks(self, ids: list[str]) -> int:
         return sum(1 for i in ids if self.leased.pop(i, None) is not None)
 
-    def set_thinking(self, run_id, chat) -> None:
+    def set_thinking(self, run_id, chat, ask_id=None) -> None:
         key = (run_id, chat)
         self.working[key] = {"steps": 0, "activity": ""}
+        self.answered.discard(key)  # a new question: its answer is still to come
+        self.current_ask[key] = ask_id
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "thinking"})
         self.arm_idle(key)
 
@@ -328,8 +499,22 @@ class Bridge(asyncio.DatagramProtocol):
         log.info("no reply in %ss for [%s], sending idle", self.s.idle_after, chat)
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": "no_reply"})
 
-    def reply(self, chat: str, text: str) -> dict:
+    def reply(self, chat: str, text: str, fallback: bool = False, ask_id: str | None = None) -> dict:
+        """An answer for a tab. `fallback`: the dispatcher's copy of the turn's last text, sent when
+        it saw no factorio_reply in the transcript; dropped if this turn already answered, or if
+        `ask_id` is not the tab's current question (a copy of an earlier turn). The transcript is
+        not a reliable signal for either; the bridge's own record is."""
         run_id = self.game.run_id
+        key = (run_id, chat)
+        if fallback and key in self.answered:
+            log.info("dropped the dispatcher's copy for [%s]: the turn already answered", chat)
+            return {"ok": True, "delivered": False, "queued": False, "skipped": "already_answered"}
+        if fallback and ask_id and self.current_ask.get(key) != ask_id:
+            log.info("dropped the dispatcher's copy for [%s]: %s is not its current question", chat, ask_id)
+            return {"ok": True, "delivered": False, "queued": False, "skipped": "stale"}
+        if fallback:
+            log.info("forwarded the dispatcher's copy for [%s] (the turn had no factorio_reply)", chat)
+        self.answered.add((run_id, chat))
         timer = self.idle_timers.pop((run_id, chat), None)
         if timer:
             timer.cancel()
@@ -342,7 +527,8 @@ class Bridge(asyncio.DatagramProtocol):
         g = self.game
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
-            "tick": g.tick, "tabs": g.tabs,
+            "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
+            "atlas_cached": {k or "player": v.version for k, v in self.atlas_store.items() if v.run_id == g.run_id},
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),
             "dispatcher_seen_s": ago(self.dispatcher_seen), "agent_seen_s": ago(self.agent_seen),
@@ -368,7 +554,15 @@ class Bridge(asyncio.DatagramProtocol):
             chat, text = body.get("chat"), body.get("text")
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
-            return 200, self.reply(chat, text)
+            ask_id = body.get("ask_id") if isinstance(body.get("ask_id"), str) else None
+            return 200, self.reply(chat, text, fallback=body.get("fallback") is True, ask_id=ask_id)
+        if method == "POST" and path == "/library_result":
+            # the dispatcher's answer to a library request: a list, a panel spec, a deletion
+            if not isinstance(body.get("id"), str):
+                raise BridgeError("bad_request", "id is required")
+            msg = {k: v for k, v in body.items() if k not in ("type", "v", "_agent")}
+            msg["type"] = "library_result"
+            return 200, {"ok": True, "delivered": self.deliver(msg)}
         if method == "POST" and path == "/trace":
             # a step of a running turn, from the dispatcher following the chat transcript
             chat, text, kind = body.get("chat"), body.get("text"), body.get("kind") or "text"
@@ -391,6 +585,18 @@ class Bridge(asyncio.DatagramProtocol):
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
             return 200, {"ok": True, "updated": self.activity(chat, text, step=False)}
+        if method == "POST" and path == "/atlas":
+            # the structure of a surface (docs/atlas.md): kept here, refreshed by partial dumps of the
+            # chunks that changed; `raw` asks the game for a dump as is, bypassing the store
+            if body.get("_agent"):
+                self.activity(None, "reading the base")
+            if body.get("raw"):
+                msg = {"type": "atlas", "surface": body.get("surface"), "budget": body.get("budget"),
+                       "send_bytes": body.get("send_bytes"), "max_chunks": body.get("max_chunks")}
+                async with self.atlas_lock:  # the mod runs one dump at a time (a prefetch may be running)
+                    return 200, await self.request(msg, float(body.get("timeout") or ATLAS_TIMEOUT))
+            return 200, await self.atlas(body.get("surface") or "", bool(body.get("refresh")),
+                                         body.get("have_version"), float(body.get("timeout") or ATLAS_TIMEOUT))
         if method == "POST" and path in ("/query", "/mark", "/unmark", "/list_marks"):
             # Only the agent's own calls (the MCP server flags them) are steps of a turn: tests,
             # tools/ui_dev.py or anything else polling the game must not move the counter.
