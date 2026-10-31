@@ -45,7 +45,10 @@ class Settings:
     game_port: int = 34200
     http_port: int = 34198
     offline_after: float = 15.0  # no heartbeat for this long => game offline
-    idle_after: float = 90.0  # thinking without reply for this long => idle "no_reply"
+    # thinking with no sign of life for this long => idle "no_reply". A backstop only: a model
+    # thinking hard goes minutes without a step, and the dispatcher reports the turn's real end
+    # (/turn_end). 90 s once cut a working turn off in the window.
+    idle_after: float = 1200.0
     request_timeout: float = 10.0  # query/mark/unmark waiting for the game's result
     atlas_prefetch: bool = True  # read the player's surface for the atlas when a game connects
     lease: float = 120.0  # an ask taken by the dispatcher returns to the queue unless confirmed
@@ -307,6 +310,19 @@ class Bridge(asyncio.DatagramProtocol):
             self.asks.append({"kind": "library", **{k: msg.get(k) for k in ("id", "op", "slug", "run_id", "run_name")}})
             self.ask_event.set()
             log.info("library %s %s %s", msg.get("id"), msg.get("op"), msg.get("slug") or "")
+        elif t == "stop":
+            # the window's Stop on a running turn: the dispatcher stops the chat's Kiro Crew turn
+            # and posts /stopped. It goes first, and questions of that tab still waiting here go.
+            self.game.last_seen = time.monotonic()
+            if msg.get("id") in self.seen_asks:
+                return
+            self.seen_asks.append(msg.get("id"))
+            key = (msg.get("run_id"), msg.get("chat"))
+            dropped = [a["id"] for a in self.asks if not a.get("kind") and (a.get("run_id"), a.get("chat")) == key]
+            self.asks = deque(a for a in self.asks if a["id"] not in dropped)
+            self.asks.appendleft({"kind": "stop", **{k: msg.get(k) for k in ("id", "chat", "run_id")}})
+            self.ask_event.set()
+            log.info("stop %s [%s]%s", msg.get("id"), msg.get("chat"), f", dropped queued {dropped}" if dropped else "")
         elif t == "atlas_part":
             # a slice of an atlas dump in progress; the final "result" says how many there were
             parts = self.atlas_parts.get(str(msg.get("id")))
@@ -452,7 +468,7 @@ class Bridge(asyncio.DatagramProtocol):
             ask = self.asks.popleft()
             self.leased[ask["id"]] = (ask, exp)
             out.append(ask)
-            if ask.get("kind") != "library":  # a library request starts no turn
+            if not ask.get("kind"):  # a library request or a stop starts no turn
                 self.set_thinking(ask["run_id"], ask["chat"], ask.get("id"))
         return out
 
@@ -493,11 +509,42 @@ class Bridge(asyncio.DatagramProtocol):
         return len(keys)
 
     def idle_timeout(self, key) -> None:
-        self.idle_timers.pop(key, None)
+        log.info("no sign of life in %ss for [%s], sending idle", self.s.idle_after, key[1])
+        self.end_turn(key, "no_reply")
+
+    def end_turn(self, key, note: str) -> None:
+        """The tab's turn is over with no answer to the game: "no_reply" or "stopped"."""
+        timer = self.idle_timers.pop(key, None)
+        if timer:
+            timer.cancel()
         self.working.pop(key, None)
         run_id, chat = key
-        log.info("no reply in %ss for [%s], sending idle", self.s.idle_after, chat)
-        self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": "no_reply"})
+        self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": note})
+
+    def turn_end(self, chat: str, ask_id: str | None) -> dict:
+        """The dispatcher saw the chat's turn end in the transcript. If no answer reached the tab
+        (no factorio_reply, no fallback copy), it stops "thinking" now instead of at idle_after."""
+        key = (self.game.run_id, chat)
+        if key not in self.working or (ask_id and self.current_ask.get(key) != ask_id):
+            return {"ok": True, "ended": False}
+        log.info("the turn for [%s] ended without an answer to the game", chat)
+        self.end_turn(key, "no_reply")
+        return {"ok": True, "ended": True}
+
+    def stopped(self, run_id, chat: str, ok: bool, error: str = "") -> dict:
+        """The dispatcher's answer to a stop: the turn is stopped, or it could not be."""
+        key = (run_id or self.game.run_id, chat)
+        if not ok and key in self.working:
+            w = self.working[key]
+            w["activity"] = f"could not stop: {error}"[:ACTIVITY_MAX]
+            self.arm_idle(key)
+            sent = self.deliver({"type": "status", "run_id": key[0], "chat": chat, "state": "thinking",
+                                 "steps": w["steps"], "activity": w["activity"], "note": "stop_failed"})
+            return {"ok": True, "delivered": sent}
+        log.info("turn for [%s] stopped by the player%s", chat, "" if ok else f" (stop failed: {error})")
+        self.answered.add(key)  # what the stopped turn wrote last is no answer: a fallback copy is dropped
+        self.end_turn(key, "stopped")
+        return {"ok": True, "delivered": self.online()}
 
     def reply(self, chat: str, text: str, fallback: bool = False, ask_id: str | None = None) -> dict:
         """An answer for a tab. `fallback`: the dispatcher's copy of the turn's last text, sent when
@@ -556,6 +603,14 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "chat and text are required strings")
             ask_id = body.get("ask_id") if isinstance(body.get("ask_id"), str) else None
             return 200, self.reply(chat, text, fallback=body.get("fallback") is True, ask_id=ask_id)
+        if method == "POST" and path in ("/turn_end", "/stopped"):
+            # from the dispatcher: a turn ended in the transcript / the player's stop was carried out
+            chat = body.get("chat")
+            if not isinstance(chat, str):
+                raise BridgeError("bad_request", "chat is required")
+            if path == "/turn_end":
+                return 200, self.turn_end(chat, body.get("ask_id") if isinstance(body.get("ask_id"), str) else None)
+            return 200, self.stopped(body.get("run_id"), chat, body.get("ok") is not False, str(body.get("error") or ""))
         if method == "POST" and path == "/library_result":
             # the dispatcher's answer to a library request: a list, a panel spec, a deletion
             if not isinstance(body.get("id"), str):

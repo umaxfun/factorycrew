@@ -6,10 +6,10 @@ The bridge is the only process that talks UDP to the game. It gives the dispatch
 
 - `bridge/factorio_bridge.py`: the whole bridge, stdlib only, one asyncio loop (`bridge/factorio_bridge.py:1-9`).
   - `encode`, `Reassembler`: UDP framing into `part` packets and reassembly by `id` (`:77`, `:105`).
-  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`atlas_part`/`result` from the game (`:276`).
+  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`stop`/`atlas_part`/`result` from the game (`:276`).
   - `request`: one call to the game, waits for its `result` (`:344`).
   - `take_asks`, `confirm_asks`, `requeue_expired`: the ask queue and its lease (`:424-460`).
-  - `set_thinking`, `activity`, `idle_timeout`, `reply`: the per-tab status and the 90 s idle clock (`:462-524`).
+  - `set_thinking`, `activity`, `idle_timeout`, `end_turn`, `turn_end`, `stopped`, `reply`: the per-tab status and the idle clock (20 min, a backstop) (`:462-524`).
   - `health`, `route`, `handle_http`: `/health` and the HTTP routes (`:526-649`).
   - `AtlasStore`, `atlas`, `atlas_prefetch`: the atlas cache, see [Atlas](atlas.md).
 - `Settings` (`:41-51`) and `main` (`:669`): ports and timeouts, all settable from the command line.
@@ -26,6 +26,8 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 | `POST /query`, `/mark`, `/unmark`, `/list_marks` | MCP | forwarded to the game, answer waited for |
 | `POST /atlas` | MCP `factorio_atlas` | see [Atlas](atlas.md) |
 | `POST /library_result` | dispatcher | panel library answer to the game, see [Panels](panels.md) |
+| `POST /turn_end {chat, ask_id?}` | dispatcher | the turn ended in the transcript with no answer to the game: `idle`, `no_reply` |
+| `POST /stopped {chat, run_id, ok, error?}` | dispatcher | the window's Stop was carried out (`idle`, `stopped`) or failed (`thinking`, `stop_failed`) |
 
 ## Talks to
 
@@ -43,7 +45,8 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 - A refused request answers HTTP 200 with `{"ok": false, "error": <code>}`; only bad JSON is 400 and an unknown route 404, so callers read `ok`, not the status (`bridge/factorio_bridge.py:635-641`; `tests/integration/conftest.py:133` asserts `isError == not ok`).
 - An `ask` is always acked, and queued once per `id` (last 1000 ids remembered) (`bridge/factorio_bridge.py:291-297`; `tests/integration/test_bridge.py::test_ask_reaches_dispatcher_with_ack_and_thinking`).
 - A leased ask that is not confirmed in time goes back to the front of the queue (`tests/integration/test_bridge.py::test_asks_wait_while_dispatcher_is_away`).
-- Leasing an ask sends `thinking` (a `library` request does not); with no sign of life for `idle_after` the bridge sends `idle` with `note: no_reply` (`tests/integration/test_bridge.py::test_idle_after_timeout_without_reply`).
+- Leasing an ask sends `thinking` (a `library` request or a `stop` does not); with no sign of life for `idle_after` (default 1200 s) the bridge sends `idle` with `note: no_reply` (`tests/integration/test_bridge.py::test_idle_after_timeout_without_reply`). `/turn_end` does it at once, but only for the tab's current question (`tests/integration/test_bridge.py::test_turn_end_from_the_dispatcher_ends_thinking`).
+- A `stop` from the game goes to the front of the queue and drops that tab's questions still queued; `/stopped` with `ok` ends the turn with note `stopped` and drops a later fallback copy; with `ok: false` the turn goes on with activity "could not stop: …" and its answer still lands (`tests/integration/test_bridge.py::test_stop_from_the_window`, `::test_a_stop_that_failed_keeps_the_turn`).
 - Only calls flagged `_agent` count as steps; each step, `/progress`, `/alive` and `/trace` restart the idle clock; a `/trace` after the answer returns `sent: false` (`tests/integration/test_bridge.py::test_long_turn_progress_reaches_the_tab`).
 - A dispatcher fallback copy (`fallback: true`) is dropped when the turn already answered (`skipped: already_answered`) or when its `ask_id` is not the tab's current question (`skipped: stale`) (`tests/integration/test_bridge.py::test_dispatchers_fallback_copy_is_dropped_after_a_real_answer`).
 - With no heartbeat for `offline_after` (15 s) game requests fail at once with `game_offline`; replies queue and are delivered when the game is back (`tests/integration/test_bridge.py::test_game_offline_and_reply_queue`).
@@ -55,7 +58,7 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 ## Easy to break
 
 - `/health` keys are read by other code: the app status page (`game_online`, `last_seen_s`, `dispatcher_seen_s`, `queued_asks`, `leased_asks`, `agent_seen_s`), `tests/e2e/watch.py` and `tests/integration/test_atlas_game.py` (`atlas_version`, `atlas_dirty`) (`app/backend/status.py:136-198`, `tests/e2e/watch.py:108-131`). `dispatcher_seen_s` and `agent_seen_s` are read from a real bridge by no test, only from fake dicts in `tests/unit/test_app_status.py`, so renaming one turns the status page red with nothing else failing (grep of `tests/`).
-- A new MCP tool that posts without `_agent` is not counted as a step and does not restart the 90 s clock, so a long turn can end as "Kira did not answer here" while still working (`bridge/factorio_bridge.py:600-605`, `mcp/factorio_mcp.py:938-939`).
+- A new MCP tool that posts without `_agent` is not counted as a step and does not restart the idle clock, so a long silent turn can end as "Kira did not answer here" while still working (`bridge/factorio_bridge.py:600-605`, `mcp/factorio_mcp.py:938-939`).
 - The UDP ports have two sides: the mod hard-codes `M.BRIDGE_PORT = 34199`, and `tools/ui_dev.py` rewrites it for dev ports. Changing the bridge default alone means no `hello` arrives and `game_online` stays false (`mod/kc-companion/scripts/protocol.lua:10`, `tools/ui_dev.py:148`).
 - A running bridge keeps the code it started with. After an edit, restart it (`./scripts/stand.sh ui restart`); `./scripts/stand.sh check` reports a bridge running older code (`docs/worktrees.md` "Checking only your own stand").
 - A port that answers is not proof it is your bridge: a dispatcher pointed at another session's bridge takes that session's questions (`docs/worktrees.md` "What is yours").
@@ -78,7 +81,7 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 - HTTP on loopback only, no authentication: whoever reaches the port can run Lua in the game. SPEC.md "Mod ↔ bridge protocol".
 - Packets to the game at most 4000 bytes: the game's receive buffer starts at 4 KB and grows only after dropping a packet. SPEC.md "Mod ↔ bridge protocol".
 - An ask queue with a lease: a question survives a dispatcher restart and a dispatcher dying halfway. SPEC.md "How it works".
-- The bridge sends `idle` itself after 90 s without a sign of life: "thinking…" must not hang when the agent does not answer. SPEC.md "How it works" (the agent paragraph and "Who sets the status"), "v1 done criteria".
+- The bridge sends `idle` itself after 20 min without a sign of life, and at once on the dispatcher's `/turn_end`: "thinking…" must not hang when the agent does not answer, and a model thinking for minutes must not be cut off (90 s did that until 0.3.3). SPEC.md "How it works" (the agent paragraph and "Who sets the status"), "v1 done criteria".
 - `factorio_query` runs arbitrary Lua with no sandbox; read-only is an agent rule: confirmed by Michael on 2026-10-29, SPEC.md "Agent tools".
 
 ## Terms

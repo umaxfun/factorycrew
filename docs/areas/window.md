@@ -13,7 +13,7 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 
 ## Talks to
 
-- Uses: [Mod core](mod-core.md), through `protocol.tab`, `protocol.ask`, `protocol.chat_marks`, `protocol.unmark`, `protocol.close_tab`, `protocol.connected`, `protocol.udp_state`, `protocol.library_request` (`mod/kc-companion/scripts/gui.lua`)
+- Uses: [Mod core](mod-core.md), through `protocol.tab`, `protocol.ask`, `protocol.chat_marks`, `protocol.unmark`, `protocol.close_tab`, `protocol.connected`, `protocol.udp_state`, `protocol.library_request`, `protocol.stop_request` (`mod/kc-companion/scripts/gui.lua`)
 - Used by: Mod core's `control.lua`, which routes `on_gui_click`, `on_gui_confirmed`, `kc-toggle`, `on_player_selected_area`, `on_player_alt_selected_area` and `kc-clear-cursor` here, and refreshes the window after bridge messages (`mod/kc-companion/control.lua:83-151`)
 - Uses: [Live panels](panels.md) (`mod/kc-companion/scripts/panels.lua`) for the Panels row and the library list; `panels.on_click` sees every click before `gui.on_click` (`mod/kc-companion/scripts/gui.lua:292-375`; `mod/kc-companion/control.lua:138-143`)
 - Sends: the pointers' wire form inside `ask.pointers`, rendered into the chat header by the dispatcher ([SPEC.md, "Pointers"](../../SPEC.md#pointers), ["The message the dispatcher puts in the chat"](../../SPEC.md#the-message-the-dispatcher-puts-in-the-chat))
@@ -26,6 +26,8 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 - The link indicator reads "Kira is offline" or "UDP is off" before the first `pong` and "online" after (same test)
 - Enter or Send sends the trimmed text as an `ask` into the selected tab, with the player's position, and empties the field (`mod/kc-companion/tests/test-gui.lua::sends the input as an ask into the selected tab and shows it`)
 - "thinking… N s · step K" and the activity show while a turn runs and clear on `reply`; the trace folds into "(worked: K steps, N s)" (`mod/kc-companion/tests/test-gui.lua::shows elapsed time, steps and activity while a long turn works`, `::shows the running turn step by step, then folds it into one line`)
+- After 60 s without a new step the status line adds "· no new step for N s" and the turn stays on (`mod/kc-companion/tests/test-gui.lua::says when a running turn has gone quiet, and keeps it running`)
+- While a turn runs the status row has a Stop button; a click sends `stop` and shows "stopping…"; `idle` with note `stopped` folds the trace into "(stopped after K steps, N s)" and removes the button; `stop_failed` keeps the turn (`mod/kc-companion/tests/test-gui.lua::stops a running turn from the window`)
 - Tabs sit in a 4-column grid of fixed-width buttons; a name over 9 characters is cut with "…" by UTF-8 character, with the full name in the tooltip (`mod/kc-companion/tests/test-gui.lua::wraps many tabs into a grid of fixed-width buttons and cuts long names`)
 - Closing a tab keeps its feed; reopening the name brings it back (`mod/kc-companion/tests/test-gui.lua::adds, switches and closes tabs`)
 - ◀ ▶ wrap around the tab's marks, and the trash button removes only this tab's marks (`mod/kc-companion/tests/test-gui.lua::counts, walks and clears the tab's marks`)
@@ -39,7 +41,8 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 ## Easy to break
 
 - `gui.on_click` ignores any element whose name does not start with `kc_` (`mod/kc-companion/scripts/gui.lua:467`)
-- `refresh` rebuilds each row with `clear()`, and the feed scrolls to the bottom on every refresh (`mod/kc-companion/scripts/gui.lua:272`); `gui.tick` re-renders the feed every second while the last question is unacknowledged (`mod/kc-companion/scripts/gui.lua:412-422`)
+- The status row is the exception to `clear()`: `gui.tick` updates it every second, so its label is updated in place and the Stop button is added or destroyed only when the turn starts or ends. A button rebuilt every second loses a click that lands between press and release (inferred: Factorio raises the click on release, on the element that was pressed) (`mod/kc-companion/scripts/gui.lua`, `refresh_status`)
+- `refresh` rebuilds each other row with `clear()`, and the feed scrolls to the bottom on every refresh (`mod/kc-companion/scripts/gui.lua:272`); `gui.tick` re-renders the feed every second while the last question is unacknowledged (`mod/kc-companion/scripts/gui.lua:412-422`)
 - A row added to `build` needs a nil guard in its `refresh_*`, as `refresh_panels` has (`mod/kc-companion/scripts/gui.lua:294`). A window left open in a save keeps its old element tree, so `find` returns nil there (inferred: GUI elements are saved with the game)
 - Text cut with `string.sub` splits Cyrillic; `utf8_head` exists because Factorio's Lua has no `utf8` library (`mod/kc-companion/scripts/gui.lua:146-155`; the "Логистика…" case in `test-gui.lua`)
 - The trash button unmarks locally and sends nothing to the bridge; Kira sees the change only through `factorio_list_marks` (`mod/kc-companion/scripts/gui.lua:516-519`)

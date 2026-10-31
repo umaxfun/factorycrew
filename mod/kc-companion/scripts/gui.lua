@@ -11,6 +11,7 @@ local ROOT = "kc_main"
 local DEFAULT_TAB = "General"
 local WIDTH = 460
 local TRACE_COLOR = "[color=0.62,0.62,0.62]" -- live steps of a turn: quieter than the answer
+local QUIET_SECONDS = 60 -- a running turn without a new step this long says so in the status line
 
 local function view(player)
   local kc = storage.kc
@@ -197,9 +198,12 @@ local function status_text(tab)
   end
   if tab.state == "thinking" then
     -- refreshed every second by M.tick, so the clock runs while a long turn works
-    local s = "thinking…"
+    local s = tab.stopping and "stopping…" or "thinking…"
     if tab.thinking_since then s = s .. " " .. math.floor((game.tick - tab.thinking_since) / 60) .. " s" end
     if tab.steps and tab.steps > 0 then s = s .. " · step " .. tab.steps end
+    -- a model thinking hard can go minutes without a step; the turn is still on until it ends
+    local quiet = tab.last_sign and math.floor((game.tick - tab.last_sign) / 60)
+    if quiet and quiet >= QUIET_SECONDS then s = s .. " · no new step for " .. quiet .. " s" end
     parts[#parts + 1] = "[color=yellow]" .. s .. "[/color]"
     if tab.activity and tab.activity ~= "" then
       parts[#parts + 1] = "[color=yellow]" .. tab.activity .. "[/color]"
@@ -212,8 +216,26 @@ end
 
 local function refresh_status(player, frame)
   local row = find(frame, "kc_status_row")
-  row.clear()
-  row.add{ type = "label", name = "kc_status", caption = status_text(protocol.tab(view(player).tab)) }
+  local tab = protocol.tab(view(player).tab)
+  local label = row.kc_status
+  if not label then
+    label = row.add{ type = "label", name = "kc_status" }
+    label.style.single_line = false
+    label.style.maximal_width = WIDTH - 90
+  end
+  label.caption = status_text(tab)
+  -- M.tick runs this every second: the Stop button is added and removed only when the state
+  -- changes, because a button rebuilt under the cursor loses the click
+  local thinking = tab.state == "thinking"
+  if thinking and not row.kc_stop then
+    local filler = row.add{ type = "empty-widget", name = "kc_status_filler" }
+    filler.style.horizontally_stretchable = true
+    row.add{ type = "button", name = "kc_stop", caption = "Stop",
+             tooltip = "Stop Kira's turn. Her Kiro Crew chat keeps what she did so far." }
+  elseif not thinking and row.kc_stop then
+    row.kc_stop.destroy()
+    if row.kc_status_filler then row.kc_status_filler.destroy() end
+  end
 end
 
 local function refresh_feed(player, frame)
@@ -232,6 +254,8 @@ local function refresh_feed(player, frame)
       who = "[font=default-bold][color=0.6,0.8,1]You:[/color][/font] " .. e.text .. with .. warn
     elseif e.from == "trace_summary" then
       who = TRACE_COLOR .. "(worked: " .. e.text .. ")[/color]"
+    elseif e.from == "stopped" then
+      who = TRACE_COLOR .. "(stopped after " .. e.text .. ")[/color]"
     else
       who = "[img=kc-kira] [font=default-bold][color=1,0.8,0.4]Kira:[/color][/font] " .. e.text
     end
@@ -471,6 +495,9 @@ function M.on_click(e, send)
     M.toggle(player)
   elseif name == "kc_send" then
     submit(player, send)
+  elseif name == "kc_stop" then
+    send(protocol.stop_request(v.tab))
+    M.refresh(player)
   elseif el.tags and el.tags.kc_option then
     submit(player, send, el.tags.kc_option)
   elseif el.tags and el.tags.kc_tab then

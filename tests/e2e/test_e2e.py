@@ -134,3 +134,23 @@ def test_answers_in_the_players_language(player):
     print(f"\nreply in Russian ({t_all:.1f}s): {text}")
     assert cyrillic(text), "asked in Russian, answered in another language"
     assert "20" in text
+
+
+def test_stop_a_long_turn_then_ask_again(player):
+    # The window's Stop through the real gateway: the dispatcher stops the chat's turn
+    # (/api/chat/slots/<slot>/stop), the tab says so, nothing of the stopped turn arrives later,
+    # and the same chat answers the next question.
+    chat = "Stop"
+    player.ask(chat, "Before you answer, run 30 separate factorio_query calls, one entity type per call "
+                     "(belts, inserters, chests, poles, ...), then write a long report on all of them.")
+    wait_until(lambda: (lambda t: t if t["state"] == "thinking" and (t.get("steps") or 0) >= 1 else None)(player.tab(chat)),
+               timeout=ANSWER_TIMEOUT, what="the long turn running, with a step")
+    player.lua(f'return remote.call("kc", "stop", {lua_str(chat)})')
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(player.tab(chat)), timeout=60,
+                   what="the turn stopped")
+    assert t["note"] == "stopped" and t["feed"][-1]["from"] == "stopped", (t.get("note"), t["feed"][-3:])
+    time.sleep(15)
+    t = player.tab(chat)
+    assert t["feed"][-1]["from"] == "stopped" and t["state"] == "idle", t["feed"][-3:]
+    reply, _, _ = player.ask_and_wait(chat, "Reply with just: OK")
+    assert reply.strip(), reply

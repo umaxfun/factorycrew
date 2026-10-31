@@ -122,7 +122,7 @@ def test_bridge_gave_up(tmp_path):
     def t(chat):
         d = next(seq)
         return {"feed": [{"from": "player", "text": "q", "acked": True}], **d}
-    with pytest.raises(watch.Stuck, match=r"(?s)bridge gave up"):
+    with pytest.raises(watch.Stuck, match=r"(?s)ended with no answer to the game"):
         wait(health(), kc, t)
 
 

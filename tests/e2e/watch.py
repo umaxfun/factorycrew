@@ -14,7 +14,8 @@ first one that stopped moving, with what it saw there:
   * Kira's `factorio` MCP server failed to start (kiro-cli's mcp.log in the gateway home), so
     the turn runs with no game tools at all;
   * the turn runs but nothing moves: no MCP step, no trace line, no transcript growth;
-  * the bridge itself gave up (90 s without a sign of life -> "did not answer here").
+  * the turn ended with no answer to the game, or the bridge gave up after 20 min without a
+    sign of life ("did not answer here").
 """
 from __future__ import annotations
 
@@ -143,7 +144,7 @@ def wait_reply(*, health, tab, chat: str, before: int, kc_home: Path, timeout: f
                   "tools: " + "; ".join(dead[:2]) + ". If the checkout is under ~/.kiro/crew/scratch, the "
                   "gateway's sandbox cannot read it (docs/worktrees.md, Requirements)", path)
         if t.get("note") == "no_reply" and state != "thinking" and picked is not None:
-            stuck("agent turn", "the bridge gave up: 90 s without a reply or any sign of life", path)
+            stuck("agent turn", "the turn ended with no answer to the game (or 20 min without any sign of life)", path)
 
         size = path.stat().st_size if path and path.exists() else -1
         sig = (state, t.get("steps"), len(t.get("trace") or []), size, len(feed))

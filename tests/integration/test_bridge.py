@@ -151,6 +151,58 @@ def test_idle_after_timeout_without_reply(stack):
     assert t["note"] == "no_reply"
 
 
+def test_turn_end_from_the_dispatcher_ends_thinking(stack):
+    ask_id = stack.ask("Ended", "how are you?")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    wait_until(lambda: stack.tab("Ended")["state"] == "thinking", what="thinking")
+    # a copy of an earlier turn's end does not end this one
+    assert http("POST", "/turn_end", {"chat": "Ended", "ask_id": "ask-older"})["ended"] is False
+    assert http("POST", "/turn_end", {"chat": "Ended", "ask_id": ask_id})["ended"] is True
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Ended")), what="idle")
+    assert t["note"] == "no_reply"
+
+
+def test_stop_from_the_window(stack, mcp):
+    first = stack.ask("Stop", "plan the whole rail network")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [first]
+    http("POST", "/asks/done", {"ids": [first]})
+    wait_until(lambda: stack.tab("Stop")["state"] == "thinking", what="thinking")
+    assert mcp.tool("factorio_query", lua="return 1")["ok"]  # one step
+    later = stack.ask("Stop", "and the stations too")  # waits in the bridge's queue
+    stop = stack.rcon.lua('return remote.call("kc", "stop", "Stop")')
+    assert stop["type"] == "stop" and stop["chat"] == "Stop" and stack.tab("Stop")["stopping"]
+    # the stop goes to the dispatcher first, and the tab's waiting question is dropped
+    asks = wait_until(lambda: http("GET", "/asks?wait=2")["asks"], what="the stop at the bridge")
+    assert [(a.get("kind"), a["id"]) for a in asks] == [("stop", stop["id"])], asks
+    assert later not in [a["id"] for a in asks]
+    http("POST", "/asks/done", {"ids": [stop["id"]]})
+    assert stack.tab("Stop")["state"] == "thinking"  # a stop starts no turn of its own
+    assert http("POST", "/stopped", {"chat": "Stop", "run_id": stop["run_id"], "ok": True})["ok"]
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Stop")), what="idle after stop")
+    assert t["note"] == "stopped" and not t.get("stopping") and t.get("trace") is None
+    assert t["feed"][-1]["from"] == "stopped" and t["feed"][-1]["text"].startswith("1 steps"), t["feed"][-1]
+    # the dispatcher's copy of the stopped turn's last text is no answer
+    r = http("POST", "/reply", {"chat": "Stop", "text": "Half a plan", "fallback": True, "ask_id": first})
+    assert r["skipped"] == "already_answered"
+
+
+def test_a_stop_that_failed_keeps_the_turn(stack, mcp):
+    ask_id = stack.ask("NoStop", "plan the whole rail network")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    wait_until(lambda: stack.tab("NoStop")["state"] == "thinking", what="thinking")
+    stop = stack.rcon.lua('return remote.call("kc", "stop", "NoStop")')
+    assert [a["id"] for a in http("GET", "/asks?wait=5")["asks"]] == [stop["id"]]
+    http("POST", "/asks/done", {"ids": [stop["id"]]})
+    http("POST", "/stopped", {"chat": "NoStop", "run_id": stop["run_id"], "ok": False, "error": "HTTP 404"})
+    t = wait_until(lambda: (lambda t: t if not t.get("stopping") else None)(stack.tab("NoStop")), what="stop failed")
+    assert t["state"] == "thinking" and t["activity"] == "could not stop: HTTP 404", t
+    # her answer still lands
+    assert mcp.tool("factorio_reply", chat="NoStop", text="the plan")["delivered"]
+    wait_until(lambda: stack.tab("NoStop")["feed"][-1].get("text") == "the plan", what="the answer after a failed stop")
+
+
 def test_long_turn_progress_reaches_the_tab(stack, mcp):
     ask_id = stack.ask("Logo", "draw a logo with lamps")
     assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]

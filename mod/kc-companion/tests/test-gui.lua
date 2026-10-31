@@ -126,6 +126,57 @@ describe("gui", function()
     assert(tab.thinking_since == nil and tab.steps == nil)
   end)
 
+  it("says when a running turn has gone quiet, and keeps it running", function()
+    if not player then return end
+    gui.toggle(player)
+    protocol.handle({ type = "status", chat = "General", state = "thinking", steps = 3 })
+    local tab = protocol.tab("General")
+    tab.last_sign = game.tick - 60 * 59
+    gui.tick()
+    assert(not joined(player.gui.screen.kc_main):find("no new step", 1, true))
+    tab.last_sign = game.tick - 60 * 200 -- the model has been thinking for minutes
+    gui.tick()
+    local s = joined(player.gui.screen.kc_main)
+    assert(s:find("step 3 · no new step for 200 s", 1, true) and tab.state == "thinking", s)
+    -- the next step clears it
+    protocol.handle({ type = "trace", chat = "General", kind = "tool", text = "running a Lua query" })
+    gui.tick()
+    assert(not joined(player.gui.screen.kc_main):find("no new step", 1, true))
+  end)
+
+  it("stops a running turn from the window", function()
+    if not player then return end
+    gui.toggle(player)
+    assert(not find(player.gui.screen.kc_main, "kc_stop"), "a Stop button with no turn running")
+    protocol.handle({ type = "status", chat = "General", state = "thinking", steps = 4 })
+    protocol.handle({ type = "trace", chat = "General", kind = "text", text = "Tracing the main line." })
+    gui.refresh_all()
+    local button = find(player.gui.screen.kc_main, "kc_stop")
+    assert(button, "no Stop button while thinking")
+    gui.tick()
+    -- the per-second refresh keeps the same button, so a click in progress is not lost
+    assert(button.valid and find(player.gui.screen.kc_main, "kc_stop") == button, "Stop button rebuilt by the tick")
+    click("kc_stop")
+    assert(#sent == 1 and sent[1].type == "stop" and sent[1].chat == "General" and sent[1].run_id == storage.kc.run_id,
+      serpent.line(sent))
+    assert(joined(player.gui.screen.kc_main):find("stopping…", 1, true))
+    -- the dispatcher could not stop it: the turn goes on and says why
+    protocol.handle({ type = "status", chat = "General", state = "thinking", steps = 4, note = "stop_failed",
+                      activity = "could not stop: HTTP 404" })
+    gui.refresh_all()
+    local s = joined(player.gui.screen.kc_main)
+    assert(s:find("thinking…", 1, true) and s:find("could not stop: HTTP 404", 1, true), s)
+    -- the second try works: the trace folds into one line, the button goes
+    click("kc_stop")
+    protocol.handle({ type = "status", chat = "General", state = "idle", note = "stopped" })
+    gui.refresh_all()
+    s = joined(player.gui.screen.kc_main)
+    assert(s:find("(stopped after 4 steps", 1, true) and not s:find("Tracing the main line", 1, true), s)
+    assert(not find(player.gui.screen.kc_main, "kc_stop"), "Stop button left after the turn")
+    local tab = protocol.tab("General")
+    assert(tab.state == "idle" and not tab.stopping and tab.trace == nil)
+  end)
+
   it("shows the running turn step by step, then folds it into one line", function()
     if not player then return end
     gui.toggle(player)

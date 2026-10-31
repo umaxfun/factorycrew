@@ -172,6 +172,66 @@ def test_keeps_watching_while_the_turn_runs(tmp_path, monkeypatch):
     assert [p for p, _ in posted if p == "/reply"] == [] and "s1" in t.watch
 
 
+def test_a_quiet_turn_is_followed_to_its_end(tmp_path, monkeypatch):
+    # A model thinking 8 minutes writes nothing; a 300 s idle limit dropped the watch and with
+    # it the fallback copy. The watch now ends only with the turn.
+    posted, t = _turn(tmp_path, monkeypatch, [{"role": "user", "content": "[Factorio ...]\nplan the whole rail network"}])
+    t.watch["s1"]["started"] -= 600  # ten minutes of silence
+    t.poll()
+    assert "s1" in t.watch
+    with open(d.transcript_path("s1"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "assistant", "content": "Here is the plan.", "meta": {"turn_stats": {"credits": 3}}}) + "\n")
+    t.poll()
+    assert ("/reply", {"chat": "General", "text": "Here is the plan.", "fallback": True, "ask_id": None}) in posted
+    assert ("/turn_end", {"chat": "General", "ask_id": None}) in posted and t.watch == {}
+
+
+def test_a_turn_that_left_no_text_reports_its_end(tmp_path, monkeypatch):
+    posted, t = _turn(tmp_path, monkeypatch, [
+        {"role": "user", "content": "[Factorio ...]\nwhy is the furnace idle?"},
+        {"role": "assistant", "content": "", "meta": {"turn_stats": {"credits": 0.2}}},
+    ])
+    assert [p for p, _ in posted] == ["/turn_end"] and t.watch == {}
+
+
+class _Ctx:
+    def __init__(self, answer):
+        self.calls, self.answer = [], answer
+
+    def _post(self, path, body):
+        self.calls.append((path, body))
+        return self.answer
+
+
+def _stop(monkeypatch, ctx, slots):
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {})
+    t = d.Tracer({})
+    t.watch["s1"] = {"chat": "Build"}
+    d.stop_turn(ctx, {}, {"slots": slots}, {"kind": "stop", "id": "stop-1", "run_id": "r", "chat": "Build"}, t)
+    return posted, t
+
+
+def test_stop_stops_the_tabs_chat_and_drops_its_trace(monkeypatch):
+    ctx = _Ctx({"ok": True})
+    posted, t = _stop(monkeypatch, ctx, {"r\tBuild": "s1"})
+    assert ctx.calls == [("/api/chat/slots/s1/stop", {})]
+    assert "s1" not in t.watch  # the stopped turn's half-written text is not forwarded
+    assert posted == [("/stopped", {"chat": "Build", "run_id": "r", "ok": True})]
+
+
+def test_a_failed_stop_is_reported_and_the_turn_still_followed(monkeypatch):
+    posted, t = _stop(monkeypatch, _Ctx({"error": "HTTP 404"}), {"r\tBuild": "s1"})
+    assert "s1" in t.watch
+    assert posted[0][0] == "/stopped" and posted[0][1]["ok"] is False and "HTTP 404" in posted[0][1]["error"]
+
+
+def test_stop_of_a_tab_without_a_chat_only_tells_the_bridge(monkeypatch):
+    ctx = _Ctx({"ok": True})
+    posted, _ = _stop(monkeypatch, ctx, {})
+    assert ctx.calls == [] and posted == [("/stopped", {"chat": "Build", "run_id": "r", "ok": True})]
+
+
 def test_trace_lines_carry_kiras_text_and_tool_labels():
     """What the window's live trace shows for each transcript row. The app e2e only sees text lines
     when the model happens to write between tool calls, so the mapping is pinned here."""
