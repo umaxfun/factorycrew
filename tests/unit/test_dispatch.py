@@ -194,6 +194,49 @@ def test_a_turn_that_left_no_text_reports_its_end(tmp_path, monkeypatch):
     assert [p for p, _ in posted] == ["/turn_end"] and t.watch == {}
 
 
+USAGE_LIMIT_ROW = {  # the row a turn left when the Kiro credits ran out (gamer account, 2026-10-31)
+    "role": "error", "meta": {"mid": "m-1"},
+    "content": "❌ {'errorType': 'UsageLimitReachedError', 'retryErrorType': 'CLIENT_ERROR', 'requestId': "
+               "'05de9941-511a-4813-b803-4949f3b2c12e', 'actions': ['upgradePlan']}. Retrying will not help until "
+               "the limit resets. Check your plan's usage allowance, or switch to a model or account tier with "
+               "remaining capacity."}
+
+
+def test_a_turn_killed_by_the_usage_limit_tells_the_tab_at_once(tmp_path, monkeypatch):
+    # The window said "thinking" for minutes: the error row has no turn_stats, so the watch waited
+    # for the bridge's 20-minute backstop.
+    posted, t = _turn(tmp_path, monkeypatch, [
+        {"role": "user", "content": "[Factorio ...]\nadd two buttons"},
+        {"role": "assistant", "content": "Let me look at the panel."},
+        USAGE_LIMIT_ROW,
+    ])
+    assert [(p, b) for p, b in posted if p != "/trace"] == [
+        ("/reply", {"chat": "General", "text": d.USAGE_LIMIT_TEXT, "fallback": True, "ask_id": None}),
+        ("/turn_end", {"chat": "General", "ask_id": None})]
+    assert t.watch == {}
+
+
+def test_other_terminal_errors_are_shown_without_the_mark():
+    text = d.turn_failed({"role": "error", "content": "⏱️ This turn hit the 4-hour limit and was stopped."})
+    assert text == "Kiro Crew could not finish this turn: This turn hit the 4-hour limit and was stopped."
+    assert d.turn_failed({"role": "error", "content": "❌ You have reached the limit for overages. (r…"}) == d.USAGE_LIMIT_TEXT
+    assert d.turn_failed({"role": "error", "content": "process exited (rc=None)"}).endswith("process exited (rc=None)")
+
+
+def test_retry_notices_and_a_declined_approval_do_not_end_the_turn(tmp_path, monkeypatch):
+    for row in ({"role": "error", "content": "⟳ Connection unstable — retrying…",
+                 "meta": {"kind": "transient_retry", "notice": "transient_retrying"}},
+                {"role": "error", "content": "⟳ Backend hiccup — retrying…"},
+                {"role": "error", "content": "⏱ A tool needed your approval and nothing came back within 10 minutes, "
+                                             "so I declined it on your behalf and carried on from the denial."}):
+        assert d.turn_failed(row) is None
+    posted, t = _turn(tmp_path, monkeypatch, [
+        {"role": "user", "content": "[Factorio ...]\ncheck my belts"},
+        {"role": "error", "content": "⟳ Connection unstable — retrying…", "meta": {"kind": "transient_retry"}},
+    ])
+    assert posted == [] and "s1" in t.watch
+
+
 class _Ctx:
     def __init__(self, answer):
         self.calls, self.answer = [], answer
