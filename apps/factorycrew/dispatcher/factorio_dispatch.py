@@ -329,6 +329,8 @@ TRACE_MAX = 220  # chars per line in the window
 # nothing for minutes, and a 300 s idle limit once lost the fallback copy of an 8-minute turn.
 # This only bounds a transcript whose end never shows (a gateway crash mid-turn).
 TRACE_MAX_AGE = 3 * 3600.0
+REREAD = 64 * 1024  # bytes read again before the saved offset on each poll (see Tracer.poll)
+SEEN_MAX = 2000  # hashes of the rows already handled, per watched turn
 
 
 def transcript_path(slot):
@@ -467,17 +469,33 @@ class Tracer:
     def poll(self):
         for slot, w in list(self.watch.items()):
             p = transcript_path(slot)
+            # The gateway rewrites the whole file when it updates the metadata row on line 1, so
+            # a byte offset can land a few bytes off: inside the question's own row, which then
+            # failed to parse, and the turn was never followed (gamer, 2026-11-01: no trace, no
+            # answer in the game, "thinking" until the backstop). Read from a little before the
+            # offset (from the start if the file shrank) and skip rows already seen.
             try:
                 with open(p, "rb") as f:
-                    f.seek(w["pos"])
+                    size = f.seek(0, os.SEEK_END)
+                    start = 0 if size < w["pos"] else max(0, w["pos"] - REREAD)
+                    f.seek(start)
                     data = f.read()
             except OSError:
-                data = b""
+                data, start = b"", w["pos"]
+            if start > 0:
+                cut = data.find(b"\n") + 1  # the line the backstep landed in is not whole
+                data, start = data[cut:], start + cut
             # only whole lines; a half-written one waits for the next poll
             end = data.rfind(b"\n") + 1
-            w["pos"] += end
+            w["pos"] = start + end
+            seen = w.setdefault("seen", [])
             done = False
             for raw in data[:end].splitlines():
+                key = hashlib.sha1(raw).hexdigest()[:12]
+                if key in seen:
+                    continue
+                seen.append(key)
+                del seen[:-SEEN_MAX]
                 try:
                     row = json.loads(raw)
                 except ValueError:
