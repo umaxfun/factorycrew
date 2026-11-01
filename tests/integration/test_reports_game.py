@@ -2,6 +2,7 @@
 planted error reaches the fake Sentry once, with the failing code and no player text."""
 from __future__ import annotations
 
+import json
 import time
 
 from conftest import http, lua_str, wait_until
@@ -54,3 +55,24 @@ def test_an_error_in_the_mods_own_handler_answers_and_is_reported(stack, sentry)
     got = wait_until(lambda: lua_errors(sentry, "mod", "handling mark"), timeout=15, what="the mod's LuaError")
     assert "handling mark" in got[-1][0]["exception"]["values"][0]["value"]
     assert stack.rcon.lua("return game.tick") > 0  # the game goes on
+
+
+def test_a_bug_report_from_the_mod_reaches_sentry_without_a_dispatcher(stack, sentry):
+    """The window's message (the window itself is level 1: a server has no player). No dispatcher
+    runs at level 2: after 15 s the bridge sends the report itself and answers the game; the
+    dispatcher's path, with the chat, is in tests/e2e/test_reports_e2e.py."""
+    import io
+    import zipfile
+    rc = stack.rcon
+    before = len(sentry.got)
+    bug_id = rc.lua('return remote.call("kc", "bug_report", "General", "L2: the panel froze")')
+    got = wait_until(lambda: (lambda r: r if r and r["id"] == bug_id else None)(
+        rc.lua('return remote.call("kc", "last_bug_result")')), timeout=40, what="the bridge's answer to the game")
+    assert got["ok"] and got["sent"] and len(got["report_id"]) == 8, got
+    ev, files = next((e, f) for e, f in sentry.events()[before:] if e.get("contexts", {}).get("feedback"))
+    assert ev["contexts"]["feedback"]["message"] == "L2: the panel froze" and ev["tags"]["by"] == "bridge"
+    assert ev["event_id"].startswith(got["report_id"])
+    z = zipfile.ZipFile(io.BytesIO(files["report.zip"]))
+    assert {"comment.txt", "report.json", "bridge-health.json", "bridge.log"} <= set(z.namelist())
+    info = json.loads(z.read("report.json"))
+    assert info["factorio_version"] and info["mod_version"] and info["chat"] == "General"

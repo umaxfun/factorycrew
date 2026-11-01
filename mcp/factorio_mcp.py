@@ -258,6 +258,27 @@ TOOLS = [
         },
     },
     {
+        "name": "factorio_feedback",
+        "description": (
+            "Send the developers of this app (Kira, the mod, the bridge) a bug report or a feature idea "
+            "from the player. TWO calls, the player's yes in between: (1) without `send`: give `kind` "
+            "(bug|feature), `text` (what happened or what is wanted, steps, what was expected, in the "
+            "player's words plus what you found) and `chat`; it sends NOTHING and returns `draft` and "
+            "`goes` (what the report holds). Show the player the text and `goes` with factorio_reply and "
+            "ask for a yes. (2) Only after the player said yes in this chat: call with `send` = the draft "
+            "id; it sends exactly that draft and returns `report_id`. A changed text needs a new draft."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["bug", "feature"]},
+                "text": {"type": "string"},
+                "chat": {"type": "string"},
+                "send": {"type": "string", "description": "draft id, only after the player said yes"},
+            },
+        },
+    },
+    {
         "name": "factorio_progress",
         "description": (
             "Show the player what you are doing during a long turn, e.g. 'planning the layout', "
@@ -739,6 +760,92 @@ def library_get(name: str) -> dict:
     return {"ok": True, "slug": slug, "spec": spec}
 
 
+# ── feedback to the developers (docs/sentry.md, T4) ──────────────────────
+# A draft first, the player's yes, then the send: the draft is kept on disk (the server can
+# re-exec itself between the two calls), and the send takes the draft as it was shown.
+
+FEEDBACK_GOES = ("the text above, the versions of the app, the mod and the game, the bridge's state and recent "
+                 "log, and this tab's chat with Kira (questions, answers, tool calls). Only the developers see it.")
+DRAFT_MAX_AGE = 24 * 3600
+
+
+def _drafts_dir() -> Path:
+    home = kirocrew_home() or os.path.expanduser("~/.kiro/crew")
+    return Path(home) / "factorio" / "feedback-drafts"
+
+
+def _tab_chat(home: str | None, chat: str) -> bytes | None:
+    """The end of the tab's chat transcript, found through the dispatcher's state."""
+    if not home:
+        return None
+    try:
+        st = json.loads((Path(home) / "factorio" / "dispatch-state.json").read_text())
+    except (OSError, ValueError):
+        return None
+    run = current_run_id()
+    slot = (st.get("slots") or {}).get(f"{run}\t{chat}")
+    if not slot:
+        return None
+    try:
+        data = (Path(home) / "sessions" / f"dashboard_{slot}.jsonl").read_bytes()
+    except OSError:
+        return None
+    return data[-2 * 1024 * 1024:]
+
+
+def feedback(args: dict) -> dict:
+    if not report:
+        return {"ok": False, "error": "unavailable", "message": "error reports are not installed (report/ is missing)"}
+    d = _drafts_dir()
+    if args.get("send"):
+        draft_id = str(args["send"])
+        if not draft_id.isalnum():
+            return {"ok": False, "error": "bad_request", "message": "send must be a draft id"}
+        p = d / f"{draft_id}.json"
+        try:
+            draft = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return {"ok": False, "error": "no_draft", "message": f"no draft {draft_id}: make one first (call without send)"}
+        if time.time() - draft["created"] > DRAFT_MAX_AGE:
+            return {"ok": False, "error": "draft_expired", "message": "the draft is over a day old: make a new one"}
+        try:
+            health = json.loads(urllib.request.urlopen(BRIDGE + "/health", timeout=5).read())
+        except (OSError, ValueError):
+            health = {"error": "the bridge did not answer"}
+        try:
+            recent = json.loads(urllib.request.urlopen(BRIDGE + "/recent_log", timeout=5).read()).get("lines") or []
+        except (OSError, ValueError):
+            recent = []
+        info = {k: draft.get(k) for k in ("kind", "chat", "created")}
+        info.update(app_version=app_version() or STARTED_VERSION, mod_version=health.get("mod_version"),
+                    run_id=health.get("run_id"), run_name=health.get("run_name"))
+        files = {"report.json": json.dumps(info, ensure_ascii=False, indent=1).encode(),
+                 "bridge-health.json": json.dumps(health, ensure_ascii=False, indent=1).encode(),
+                 "bridge.log": "\n".join(recent).encode(),
+                 "chat.jsonl": _tab_chat(kirocrew_home(), draft["chat"])}
+        res = report.bug_report(f"[{draft['kind']}] {draft['text']}", files, "kira", {"kind": draft["kind"], "by": "kira"})
+        if res.get("ok"):
+            p.unlink(missing_ok=True)
+        return res
+    kind, text, chat = args.get("kind"), args.get("text"), args.get("chat")
+    if kind not in ("bug", "feature") or not isinstance(text, str) or not text.strip() or not isinstance(chat, str):
+        return {"ok": False, "error": "bad_request", "message": "kind (bug|feature), text and chat are required"}
+    import uuid
+    draft_id = uuid.uuid4().hex[:10]
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.glob("*.json"):  # drafts nobody confirmed
+        try:
+            if time.time() - old.stat().st_mtime > DRAFT_MAX_AGE:
+                old.unlink()
+        except OSError:
+            pass
+    (d / f"{draft_id}.json").write_text(json.dumps(
+        {"kind": kind, "text": text.strip()[:4000], "chat": chat, "created": time.time()}, ensure_ascii=False))
+    return {"ok": True, "draft": draft_id, "sent": False, "text": text.strip()[:4000], "goes": FEEDBACK_GOES,
+            "next": "show the player the text and what goes, ask for a yes; after the yes call again with "
+                    f"send=\"{draft_id}\""}
+
+
 def _atlas(args: dict) -> tuple[object, dict | None]:
     """The cached atlas for the requested surface, re-read on refresh or when another save runs."""
     from kc import atlas as kc_atlas
@@ -972,6 +1079,8 @@ def call_tool(name: str, args: dict) -> dict:
         return library_list((args or {}).get("query"), bool((args or {}).get("all_runs")))
     if name == "factorio_atlas":
         return atlas_tool(args or {})
+    if name == "factorio_feedback":
+        return feedback(args or {})
     path = ROUTES.get(name)
     if not path:
         return {"ok": False, "error": "unknown_tool", "message": name}

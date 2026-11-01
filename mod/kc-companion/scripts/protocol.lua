@@ -197,6 +197,35 @@ function M.library_request(op, slug)
   return { type = "library", id = id, op = op, slug = slug, run_id = kc.run_id, run_name = kc.run_name }
 end
 
+--- A bug report from the window (docs/sentry.md, T3). `screenshot`: the path the mod asked the
+--- game to write under script-output, or nil. The state shown in the dialog lives in the player's
+--- view (storage.kc.ui[index].bug): {id, state = "sending"|"done", ...}.
+function M.bug_report_request(player, chat, comment, screenshot)
+  local kc = storage.kc
+  local id = next_id("bug")
+  if player then -- nil from the test interface on a server with no player
+    kc.ui = kc.ui or {}
+    kc.ui[player.index] = kc.ui[player.index] or { mark = 0 }
+    kc.ui[player.index].bug = { id = id, state = "sending", tick = game.tick }
+  end
+  return { type = "bug_report", id = id, chat = chat, comment = comment, screenshot = screenshot,
+           run_id = kc.run_id, run_name = kc.run_name, mod_version = script.active_mods["kc-companion"],
+           factorio_version = script.active_mods["base"], tick = game.tick }
+end
+
+--- The answer to a bug report: put it into the view of the player who sent it.
+function M.on_bug_report_result(msg)
+  M.last_bug_result = { id = msg.id, ok = msg.ok, report_id = msg.report_id, sent = msg.sent } -- tests
+  for _, v in pairs(storage.kc.ui or {}) do
+    if v.bug and v.bug.id == msg.id then
+      v.bug = { id = msg.id, state = "done", ok = msg.ok, report_id = msg.report_id, path = msg.path,
+                sent = msg.sent, error = msg.error, tick = game.tick }
+      return true
+    end
+  end
+  return false
+end
+
 -- ── query execution ──────────────────────────────────────────────────────
 
 local function query_env(surface_name)
@@ -454,7 +483,12 @@ function M.handle(msg)
   local t = msg.type
   local kc = storage.kc
   -- reply/status addressed to another run (a queued answer for a save that is no longer loaded)
-  if (t == "reply" or t == "status" or t == "trace" or t == "library_result") and msg.run_id and msg.run_id ~= kc.run_id then
+  if (t == "reply" or t == "status" or t == "trace" or t == "library_result" or t == "bug_report_result")
+      and msg.run_id and msg.run_id ~= kc.run_id then
+    return {}
+  end
+  if t == "bug_report_result" then
+    M.on_bug_report_result(msg)
     return {}
   end
   if t == "query" then

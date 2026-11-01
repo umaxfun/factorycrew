@@ -112,7 +112,7 @@ end)
 
 -- what changes the window when it arrives from the bridge
 local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true, trace = true,
-                  library_result = true }
+                  library_result = true, bug_report_result = true }
 
 local function on_packet(e)
   local msg = protocol.decode(e.payload)
@@ -213,6 +213,15 @@ remote.add_interface("kc", {
   ui_close = function(index) gui.close(index) end,
   ui_click = function(name, index) return gui.click(name, send, index) end,
   ui_confirm = function(name, text, index) return gui.confirm(name, text, send, index) end,
+  ui_set = function(name, value, index) return gui.set_field(name, value, index) end,
+  -- a bug report as the window sends it, for a server with no player (level 2)
+  bug_report = function(chat, comment)
+    local m = protocol.bug_report_request(game.connected_players[1], chat, comment, nil)
+    send(m)
+    return m.id
+  end,
+  last_bug_result = function() return protocol.last_bug_result or false end, -- nil would drop the key in JSON
+  bug_dialog = function(index) return gui.bug_dialog(index) end,
   -- pointers as if made with the tool: {x, y} is a click, {{x0, y0}, {x1, y1}} a drag
   point = function(where, index)
     local player = game.get_player(index or 1)

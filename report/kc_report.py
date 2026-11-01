@@ -6,7 +6,8 @@ asked to send. Nothing here ever raises into the caller or waits for the network
 written to the outbox and a background thread sends it, retrying while there is no network.
 
 Settings, first match wins:
-  DSN          env FC_SENTRY_DSN (empty: send nothing) > the copy fetched from the release
+  DSN          env FC_SENTRY_DSN (empty: send nothing) > "dsn" in <KIROCREW_HOME>/factorio/report.json
+               (this machine's own; the e2e scripts write it) > the copy fetched from the release
                branch (cached a day) > report/settings.json shipped next to this file
   environment  env FC_REPORT_ENV > report/environment (written by the build; `prod` for a
                release) > dev-<hostname>
@@ -56,6 +57,7 @@ RATE_WINDOW = 3600  # the same automatic error at most once an hour
 # many and varied, and the free plan's 5k events a month must outlast a bad evening
 MAX_AUTO_PER_HOUR = 30
 SETTINGS_MAX_AGE = 86400
+BUG_REPORT_MAX = 15 * 1024 * 1024  # under Sentry's 20 MB compressed request (docs/sentry.md)
 PATH_HOME = re.compile(r"(/Users/|/home/|[A-Za-z]:\\Users\\)[^/\\\s'\"]+")
 
 
@@ -142,6 +144,11 @@ class Reporter:
     def dsn(self) -> str:
         if self._dsn is not None:
             return self._dsn
+        # this machine's own setting, read on every send: the e2e scripts point a stand at a fake
+        # Sentry (or at none) with it, since the gateway may not pass env to crons and MCP servers
+        local = _read_json(self.outbox.parent / "report.json")
+        if isinstance(local, dict) and isinstance(local.get("dsn"), str):
+            return local["dsn"]
         cached = _read_json(self.outbox / "settings.json") or {}
         if DSN_RE.match(str(cached.get("dsn", ""))):
             return cached["dsn"]
@@ -230,15 +237,54 @@ class Reporter:
         """Queue what the player asked to send (comment plus files). Works with telemetry off.
         Returns a short report id, or None if it could not even be written."""
         try:
-            ev = self._event(level="info")
-            ev["tags"].update(tags or {}, source=source)
-            ev["contexts"]["feedback"] = {"message": message[:4000], "source": source}
-            items = [({"type": "feedback"}, ev)] + self._attachment_items(attachments)
-            self._queue("report", ev["event_id"], items)
-            return ev["event_id"][:8]
+            return self._report(message, source, attachments, tags)[:8]
         except Exception:  # noqa: BLE001
             log.warning("could not save the bug report", exc_info=True)
             return None
+
+    def _report(self, message: str, source: str, attachments, tags) -> str:
+        ev = self._event(level="info")
+        ev["tags"].update({k: str(v) for k, v in (tags or {}).items()}, source=source)
+        ev["contexts"]["feedback"] = {"message": message[:4000], "source": source}
+        items = [({"type": "feedback"}, ev)] + self._attachment_items(attachments)
+        self._queue("report", ev["event_id"], items)
+        return ev["event_id"]
+
+    def pending(self, event_id: str) -> bool:
+        """True while the report is still in the outbox (not sent yet)."""
+        return any(p.name.endswith(f"-{event_id}.envelope") for p in self.files())
+
+    def bug_report(self, comment: str, files: dict, source: str, tags: dict | None = None,
+                   wait: float = 8.0) -> dict:
+        """A bug report the player asked for: `files` ({name: bytes}) go as one report.zip, a
+        copy is saved in <outbox>/../bug-reports/<id>.zip, and the sender gets up to `wait`
+        seconds to deliver it. {ok, report_id, path, sent} or {ok: False, error}."""
+        import io
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("comment.txt", comment)
+            for name, data in files.items():
+                if data is not None:
+                    z.writestr(name, data)
+        data = buf.getvalue()
+        if len(data) > BUG_REPORT_MAX:
+            return {"ok": False, "error": f"the report is {len(data) // 1024} KB, over {BUG_REPORT_MAX // 1024} KB"}
+        event_id = self._report(comment, source, [("report.zip", data, "application/zip")], tags)
+        rid = event_id[:8]
+        copy = self.outbox.parent / "bug-reports" / f"{rid}.zip"
+        try:
+            self._write(copy, data)
+        except OSError:
+            copy = None
+        deadline = time.monotonic() + wait
+        while self.dsn() and self.pending(event_id) and time.monotonic() < deadline:
+            self._wake.set()
+            if self._thread is None:  # a caller without the sender thread sends here
+                self.flush()
+            time.sleep(0.2)
+        return {"ok": True, "report_id": rid, "path": str(copy) if copy else None,
+                "sent": bool(self.dsn()) and not self.pending(event_id)}
 
     @staticmethod
     def _attachment_items(attachments) -> list:
@@ -434,6 +480,53 @@ def capture_message(kind: str, message: str, tags: dict | None = None, attachmen
 
 def reporter() -> Reporter | None:
     return _REPORTER
+
+
+def bug_report(comment: str, files: dict, source: str, tags: dict | None = None, wait: float = 8.0) -> dict:
+    if _REPORTER is None:
+        return {"ok": False, "error": "error reports are not set up in this part"}
+    try:
+        return _REPORTER.bug_report(comment, files, source, tags, wait)
+    except Exception as e:  # noqa: BLE001
+        log.warning("bug report failed", exc_info=True)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+
+
+def script_output_dir() -> Path | None:
+    """Factorio's script-output folder, where the mod's screenshot lands (game.take_screenshot)."""
+    if os.environ.get("FC_FACTORIO_SCRIPT_OUTPUT"):
+        return Path(os.environ["FC_FACTORIO_SCRIPT_OUTPUT"])
+    home = Path.home()
+    if sys.platform == "darwin":
+        d = home / "Library" / "Application Support" / "factorio" / "script-output"
+    elif sys.platform.startswith("win"):
+        d = Path(os.environ.get("APPDATA", home)) / "Factorio" / "script-output"
+    else:
+        d = home / ".factorio" / "script-output"
+    return d if d.is_dir() else None
+
+
+def read_screenshot(rel: str | None, wait: float = 6.0) -> bytes | None:
+    """The screenshot the mod asked the game for: written a tick or more later, so wait for it.
+    Only names under kc-bug/ are read."""
+    if not rel or not re.match(r"^kc-bug/[A-Za-z0-9_.-]+\.(png|jpg)$", rel):
+        return None
+    d = script_output_dir()
+    if d is None:
+        return None
+    p = d / rel
+    deadline = time.monotonic() + wait
+    last = -1
+    while time.monotonic() < deadline:
+        try:
+            size = p.stat().st_size
+            if size > 0 and size == last:  # written and no longer growing
+                return p.read_bytes()
+            last = size
+        except OSError:
+            pass
+        time.sleep(0.5)
+    return None
 
 
 def install_hooks() -> None:

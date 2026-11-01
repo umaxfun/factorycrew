@@ -266,6 +266,62 @@ describe("gui", function()
     assert(joined(player.gui.screen.kc_main):find("Megabase 2", 1, true))
   end)
 
+  it("says once that error reports are on, until OK", function()
+    if not player then return end
+    gui.toggle(player)
+    assert(joined(player.gui.screen.kc_main):find("never your questions or chats", 1, true))
+    click("kc_notice_ok")
+    assert(not joined(player.gui.screen.kc_main):find("never your questions", 1, true))
+    gui.toggle(player)
+    gui.toggle(player) -- reopened: still gone
+    assert(not joined(player.gui.screen.kc_main):find("never your questions", 1, true))
+  end)
+
+  it("sends a bug report from the window and shows its id", function()
+    if not player then return end
+    gui.toggle(player)
+    click("kc_bug_open")
+    local d = gui.bug_dialog(player.index)
+    assert(d and d.mode == "form" and d.text:find("this tab's chat with Kira", 1, true), serpent.line(d))
+    gui.set_field("kc_bug_comment", "the panel does not update", player.index)
+    gui.set_field("kc_bug_shot", false, player.index)
+    gui.refresh(player)
+    assert(gui.bug_dialog(player.index).mode == "form" and
+      find(player.gui.screen.kc_bug, "kc_bug_comment").text == "the panel does not update", "a refresh lost the comment")
+    assert(gui.click("kc_bug_send", send, player.index))
+    local m = sent[#sent]
+    assert(m.type == "bug_report" and m.comment == "the panel does not update" and m.chat == "General"
+      and m.screenshot == nil and m.run_id == storage.kc.run_id and m.mod_version, serpent.line(m))
+    assert(gui.bug_dialog(player.index).mode == "sending")
+    protocol.handle({ type = "bug_report_result", id = m.id, run_id = storage.kc.run_id, ok = true,
+                      report_id = "ab12cd34", sent = true })
+    gui.refresh(player)
+    d = gui.bug_dialog(player.index)
+    assert(d.mode == "done" and d.text:find("ab12cd34", 1, true) and d.text:find("Sent", 1, true), serpent.line(d))
+    assert(gui.click("kc_bug_close", send, player.index) and not player.gui.screen.kc_bug)
+    -- offline: saved, with the local copy's path
+    click("kc_bug_open")
+    gui.click("kc_bug_send", send, player.index)
+    protocol.handle({ type = "bug_report_result", id = sent[#sent].id, ok = true, report_id = "ff00", sent = false,
+                      path = "/x/bug-reports/ff00.zip" })
+    gui.refresh(player)
+    d = gui.bug_dialog(player.index)
+    assert(d.text:find("when the network is back", 1, true) and d.text:find("ff00.zip", 1, true), serpent.line(d))
+    gui.click("kc_bug_close", send, player.index)
+  end)
+
+  it("gives up on a bug report with no answer in a minute", function()
+    if not player then return end
+    gui.toggle(player)
+    click("kc_bug_open")
+    gui.click("kc_bug_send", send, player.index)
+    storage.kc.ui[player.index].bug.tick = game.tick - 3601
+    gui.tick()
+    local d = gui.bug_dialog(player.index)
+    assert(d.mode == "done" and d.text:find("no answer from Kiro Crew", 1, true), serpent.line(d))
+    gui.click("kc_bug_close", send, player.index)
+  end)
+
   it("counts, walks and clears the tab's marks", function()
     if not player then return end
     gui.toggle(player)

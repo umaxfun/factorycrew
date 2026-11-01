@@ -192,6 +192,21 @@ def test_switching_off_while_running_drops_queued_errors_before_sending(tmp_path
             for i in range(len(sentry.got))] == ["mine"]
 
 
+def test_this_machines_report_json_overrides_the_shipped_dsn(tmp_path, monkeypatch, sentry):
+    monkeypatch.delenv("FC_SENTRY_DSN", raising=False)
+    rp = r.Reporter("bridge", root=ROOT, outbox=tmp_path / "factorio" / "outbox", environment="dev-test",
+                    settings_url=None, start=False)
+    assert "sentry.io" in rp.dsn()
+    (tmp_path / "factorio").mkdir(exist_ok=True)
+    (tmp_path / "factorio" / "report.json").write_text(json.dumps({"dsn": ""}))
+    assert rp.dsn() == "" and rp.capture_exception(boom()) is None  # e2e: nothing to the real Sentry
+    (tmp_path / "factorio" / "report.json").write_text(json.dumps({"dsn": sentry.dsn}))
+    rp.send_report("to the fake")
+    assert rp.flush() is None and rp.files() == []
+    assert [json.loads(sentry.items(i)[1][0][1])["contexts"]["feedback"]["message"]
+            for i in range(len(sentry.got))] == ["to the fake"]
+
+
 def test_module_functions_never_raise_when_not_configured():
     r._REPORTER = None
     assert r.capture_exception(ValueError()) is None and r.send_report("x") is None

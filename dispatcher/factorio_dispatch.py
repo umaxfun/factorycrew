@@ -661,6 +661,63 @@ def handle(ctx, cfg, st, ask, tracer=None):
     return True
 
 
+TRANSCRIPT_MAX = 2 * 1024 * 1024  # the end of a long chat is what matters
+
+
+def tab_transcript(st, run_id, chat) -> bytes | None:
+    """The end of the tab's chat transcript: what the player asked, what Kira did and answered."""
+    slot = st.get("slots", {}).get(f"{run_id}\t{chat}")
+    if not slot:
+        return None
+    try:
+        with open(transcript_path(slot), "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - TRANSCRIPT_MAX))
+            data = f.read()
+    except OSError:
+        return None
+    return data[data.find(b"\n") + 1:] if size > TRANSCRIPT_MAX else data
+
+
+def bug_report_files(st, ask) -> dict:
+    """{name: bytes} of a report from the window: the bridge's part (report.json, its health and
+    log; bridge/factorio_bridge.py, bug_report_files) plus this dispatcher's log, its state and
+    the tab's chat. The player saw this list in the dialog (mod/kc-companion/scripts/gui.lua)."""
+    info = {k: ask.get(k) for k in ("id", "chat", "run_id", "run_name", "mod_version", "factorio_version", "tick")}
+    info["dispatcher"] = {"file": __file__, "stamp": source_stamp()}
+    files = {
+        "report.json": json.dumps(info, ensure_ascii=False, indent=1).encode(),
+        "bridge-health.json": json.dumps(ask.get("health"), ensure_ascii=False, indent=1).encode(),
+        "bridge.log": (ask.get("bridge_log") or "").encode(),
+        "dispatcher.log": "\n".join(RECENT_LOG).encode(),
+        "dispatch-state.json": json.dumps({k: st.get(k) for k in ("slots", "gen", "runs")}, ensure_ascii=False,
+                                          indent=1).encode(),
+        "chat.jsonl": tab_transcript(st, ask.get("run_id"), ask.get("chat")),
+    }
+    if report:
+        files["screenshot.png"] = report.read_screenshot(ask.get("screenshot"))
+    return files
+
+
+def bug_report(cfg, st, ask):
+    """The window's "Report a problem": build the report, send it (or keep it for later) and tell
+    the window its id."""
+    if report:
+        res = report.bug_report(ask.get("comment") or "", bug_report_files(st, ask), "button",
+                                {"by": "dispatcher", "mod_version": ask.get("mod_version") or "?",
+                                 "factorio": ask.get("factorio_version") or "?"})
+    else:
+        res = {"ok": False, "error": "error reports are not installed (report/ is missing)"}
+    note(f"bug report {ask.get('id')}: {res.get('report_id') or res.get('error')}"
+         f"{' sent' if res.get('sent') else ' kept for later' if res.get('ok') else ''}")
+    try:
+        bridge(cfg, "POST", "/bug_report_result", {"id": ask["id"], "run_id": ask.get("run_id"), **res}, timeout=10)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        note(f"bug report {ask.get('id')}: could not tell the game: {exc}")
+    return res
+
+
 def stop_turn(ctx, cfg, st, ask, tracer=None):
     """The window's Stop: end the tab's running turn the way the dashboard's Stop button does,
     then tell the bridge. A soft stop: the chat keeps what the turn did, and its next question
@@ -784,6 +841,11 @@ def wake(ctx):
             if ask.get("kind") == "stop":
                 bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
                 stop_turn(ctx, cfg, st, ask, tracer)
+                continue
+            if ask.get("kind") == "bug_report":
+                # reading the chat, a screenshot and sending take seconds: off the loop
+                bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
+                threading.Thread(target=bug_report, args=(cfg, dict(st), ask), daemon=True).start()
                 continue
             if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
