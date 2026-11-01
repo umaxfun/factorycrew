@@ -71,11 +71,41 @@ LOG_LINES = 400
 RECENT_LOG: list = []  # this wake's last printed lines, for a bug report
 
 
+LOG_FILE_MAX = 1024 * 1024
+
+
+def log_path() -> Path:
+    """<crew home>/factorio/dispatcher.log: the lines of every wake, so a bug report also holds
+    what the wakes before this one did (a turn may start under one and end under the next)."""
+    home = os.environ.get("KIROCREW_HOME") or str(Path.home() / ".kiro" / "crew")
+    return Path(home) / "factorio" / "dispatcher.log"
+
+
 def note(line: str) -> None:
-    """print() for the cron's output, and a copy kept for a bug report."""
+    """print() for the cron's output, and a copy for a bug report (memory and the log file)."""
     print(line)
-    RECENT_LOG.append(time.strftime("%H:%M:%S ") + line)
+    stamped = time.strftime("%Y-%m-%d %H:%M:%S ") + line
+    RECENT_LOG.append(stamped)
     del RECENT_LOG[:-LOG_LINES]
+    try:
+        p = log_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.exists() and p.stat().st_size > LOG_FILE_MAX:
+            os.replace(p, p.with_suffix(".log.prev"))
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(stamped + "\n")
+    except OSError:
+        pass
+
+
+def log_tail(n_bytes: int = 512 * 1024) -> bytes:
+    out = b""
+    for p in (log_path().with_suffix(".log.prev"), log_path()):
+        try:
+            out += p.read_bytes()
+        except OSError:
+            pass
+    return out[-n_bytes:] if out else "\n".join(RECENT_LOG).encode()
 
 
 def report_exception(exc: BaseException, **tags) -> None:
@@ -113,6 +143,7 @@ def load_state(path: Path) -> dict:
     s.setdefault("runs", {})  # run_id -> {"folder": id, "name": str}
     s.setdefault("slots", {})  # "<run_id>\t<tab>" -> slot key
     s.setdefault("attempts", {})  # ask id -> failures
+    s.setdefault("watch", {})  # slot -> a turn being followed (Tracer.snapshot)
     s.setdefault("gen", {})  # "<run_id>\t<tab>" -> slot key generation (bumped on not_creator)
     s.setdefault("panels_backfilled", [])  # runs whose unsaved in-game panels were saved once
     return s
@@ -369,7 +400,21 @@ def turn_failed(row):
 class Tracer:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.watch = {}  # slot -> {"chat", "run_id", "pos", "seen"}
+        self.watch = {}  # slot -> {"chat", "run_id", "ask_id", "pos", "started", "last_text", "since", "asked"}
+
+    # A turn can outlive the wake that sent its question (run_seconds, a gateway restart, a new
+    # dispatcher after an app update): the watches are kept in dispatch-state.json, and the next
+    # wake goes on reading each transcript from where the last one stopped. Before 0.3.10 they
+    # lived in memory only, and a turn that ended under the next wake never reached the game
+    # (2026-11-01, gamer: both answers of a tab stayed in the chat, the window said "thinking").
+
+    def snapshot(self) -> dict:
+        return {slot: dict(w) for slot, w in self.watch.items()}
+
+    def restore(self, saved) -> None:
+        for slot, w in (saved or {}).items():
+            if isinstance(w, dict) and {"chat", "run_id", "pos", "started"} <= set(w) and slot not in self.watch:
+                self.watch[slot] = {"ask_id": None, "last_text": "", "since": None, "asked": False, **w}
 
     @staticmethod
     def offset(slot):
@@ -390,7 +435,7 @@ class Tracer:
         if pos is None:
             pos = self.offset(slot)
         self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
-                            "started": time.monotonic(), "last_text": "", "since": since, "asked": False}
+                            "started": time.time(), "last_text": "", "since": since, "asked": False}
 
     def ended(self, w):
         """The turn ended without factorio_reply: forward its last text, then tell the bridge the
@@ -479,7 +524,7 @@ class Tracer:
                         pass
                 if done:
                     break
-            if done or time.monotonic() - w["started"] > TRACE_MAX_AGE:
+            if done or time.time() - w["started"] > TRACE_MAX_AGE:
                 del self.watch[slot]
 
 
@@ -695,7 +740,7 @@ def bug_report_files(st, ask) -> dict:
         "report.json": json.dumps(info, ensure_ascii=False, indent=1).encode(),
         "bridge-health.json": json.dumps(ask.get("health"), ensure_ascii=False, indent=1).encode(),
         "bridge.log": (ask.get("bridge_log") or "").encode(),
-        "dispatcher.log": "\n".join(RECENT_LOG).encode(),
+        "dispatcher.log": log_tail(),
         "dispatch-state.json": json.dumps({k: st.get(k) for k in ("slots", "gen", "runs")}, ensure_ascii=False,
                                           indent=1).encode(),
     }
@@ -821,10 +866,17 @@ def wake(ctx):
     parent = os.getppid()
     stamp = source_stamp()
     tracer = Tracer(cfg)
+    note(f"wake started (pid {os.getpid()})")
+    tracer.restore(st.get("watch"))  # turns an earlier wake was following
+    if tracer.watch:
+        note(f"following {len(tracer.watch)} turn(s) started before this wake: {', '.join(w['chat'] for w in tracer.watch.values())}")
     synced = set()  # runs whose unsaved panels this wake started saving
     synced_ok = []  # runs whose saving finished (appended by the thread)
     while time.monotonic() < deadline:
         tracer.poll()
+        if tracer.snapshot() != (st.get("watch") or {}):
+            st["watch"] = tracer.snapshot()
+            save_state(path, st)
         if os.getppid() != parent:
             # The gateway that started this wake is gone (stopped or restarted) and does not
             # reap script children: exit, or two dispatchers end up sharing the queue.

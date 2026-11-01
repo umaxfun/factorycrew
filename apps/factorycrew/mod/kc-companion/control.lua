@@ -127,7 +127,9 @@ local function on_packet(e)
         send(reply)
       end
     end
-    if REFRESH[msg.type] or (msg.type == "pong" and (not was_connected or protocol.update_to ~= update_to)) then
+    if REFRESH[msg.type] or protocol.dropped_turns
+        or (msg.type == "pong" and (not was_connected or protocol.update_to ~= update_to)) then
+      protocol.dropped_turns = nil
       gui.refresh_all()
     end
   end, debug.traceback)

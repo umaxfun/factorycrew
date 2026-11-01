@@ -326,6 +326,9 @@ local function status_text(tab)
     end
   elseif tab.note == "no_reply" then
     parts[#parts + 1] = "[color=orange]Kira did not answer here; the answer may be in the chat[/color]"
+  elseif tab.note == "lost" then
+    parts[#parts + 1] = "[color=orange]This turn was lost when the app or the game restarted; " ..
+      "the answer may be in the chat in Kiro Crew. Ask again.[/color]"
   end
   return table.concat(parts, "   ")
 end
@@ -411,7 +414,7 @@ local function refresh_feed(player, frame)
   end
   -- a turn that went wrong (stopped, no answer, Kiro Crew gave up on it): the report is one click
   -- away, right under it, with the tab's raw session (docs/sentry.md, "Raw sessions")
-  if tab.state ~= "thinking" and last and (last.from == "stopped" or tab.note == "no_reply"
+  if tab.state ~= "thinking" and last and (last.from == "stopped" or tab.note == "no_reply" or tab.note == "lost"
       or (last.from == "kira" and type(last.text) == "string"
           and (last.text:find("^Kiro Crew could not finish") or last.text:find("^Kiro has no credits")))) then
     pane.add{ type = "button", name = "kc_bug_open_feed", caption = "Report this to the developer",
