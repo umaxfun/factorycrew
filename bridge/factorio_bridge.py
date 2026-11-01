@@ -30,6 +30,49 @@ TRACE_MAX = 240  # chars of one trace line (what Kira wrote / which tool she ran
 log = logging.getLogger("factorio-bridge")
 
 
+def _load_report():
+    """report/kc_report.py (docs/sentry.md): one level up, in the repo and in the app. None when
+    it is missing or broken: the bridge runs the same without error reports."""
+    import sys
+    from pathlib import Path
+    d = Path(__file__).resolve().parent.parent / "report"
+    if not (d / "kc_report.py").exists():
+        return None
+    sys.path.insert(0, str(d))
+    try:
+        import kc_report
+        return kc_report
+    except Exception:  # noqa: BLE001
+        return None
+
+
+report = _load_report()
+LOG_LINES = 400  # the bridge's last log lines, for a bug report
+
+
+class RecentLog(logging.Handler):
+    """Keeps the last LOG_LINES formatted log lines in memory (a bug report sends them)."""
+
+    def __init__(self):
+        super().__init__(logging.INFO)
+        self.lines: deque[str] = deque(maxlen=LOG_LINES)
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+
+    def emit(self, record) -> None:
+        try:
+            self.lines.append(self.format(record))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+RECENT = RecentLog()
+
+
+def report_exception(exc: BaseException, **tags) -> None:
+    if report:
+        report.capture_exception(exc, {"part": "bridge", **tags})
+
+
 class BridgeError(Exception):
     def __init__(self, code: str, message: str = ""):
         super().__init__(message or code)
@@ -268,8 +311,9 @@ class Bridge(asyncio.DatagramProtocol):
         if msg is not None:
             try:
                 self.on_game_message(msg)
-            except Exception:  # never let one bad packet kill the loop
+            except Exception as e:  # never let one bad packet kill the loop
                 log.exception("failed to handle %r", msg.get("type"))
+                report_exception(e, message_type=str(msg.get("type")))
 
     def send_game(self, msg: dict) -> None:
         if not self.transport:
@@ -336,12 +380,29 @@ class Bridge(asyncio.DatagramProtocol):
             parts = self.atlas_parts.get(str(msg.get("id")))
             if parts is not None and isinstance(msg.get("seq"), int) and isinstance(msg.get("text"), str):
                 parts[msg["seq"]] = msg["text"]
+        elif t == "lua_error":
+            # Lua that failed inside the game with no request waiting for it: a panel's body or
+            # button, or the mod's own handler (docs/sentry.md, T2). It goes with the failing code.
+            self.game.last_seen = time.monotonic()
+            self.report_lua(str(msg.get("message") or "?"), str(msg.get("source") or "mod"),
+                            msg.get("lua") if isinstance(msg.get("lua"), str) else None,
+                            name=msg.get("name"))
         elif t == "result":
             fut = self.pending.pop(str(msg.get("id")), None)
             if fut and not fut.done():
                 fut.set_result(msg)
         else:
             log.debug("ignoring %r", t)
+
+    def report_lua(self, message: str, source: str, lua: str | None, **tags) -> None:
+        """A Lua error goes to the developer with the code that failed (Michael, 2026-11-01)."""
+        if not report:
+            return
+        files = [("code.lua", lua.encode(), "text/x-lua")] if lua else None
+        report.capture_message("LuaError", message, {
+            "part": "bridge", "source": source, "mod_version": self.game.mod_version or "?",
+            "app_version": self.s.app_version or "?",
+            **{k: str(v) for k, v in tags.items() if v is not None}}, files)
 
     def flush_outbox(self) -> None:
         keep: deque[dict] = deque()
@@ -440,8 +501,9 @@ class Bridge(asyncio.DatagramProtocol):
             if self.online() and "" not in self.atlas_store:
                 await self.atlas("", False, None, ATLAS_TIMEOUT)
                 log.info("atlas prefetched: %d chunks", len(self.atlas_store[""].chunks))
-        except Exception:
+        except Exception as e:
             log.exception("atlas prefetch failed")
+            report_exception(e, where="atlas_prefetch")
 
     # ── asks / thinking ──
 
@@ -673,7 +735,11 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "lua is required")
             if path in ("/mark", "/unmark") and not isinstance(body.get("chat"), str) and not body.get("all"):
                 raise BridgeError("bad_request", "chat is required")
-            return 200, await self.request(msg, body.get("timeout"))
+            res = await self.request(msg, body.get("timeout"))
+            if path == "/query" and body.get("_agent") and res.get("error") in ("compile_error", "runtime_error"):
+                self.report_lua(str(res.get("message") or res["error"]), "factorio_query", body["lua"],
+                                error=res["error"])
+            return 200, res
         return 404, {"ok": False, "error": "not_found", "message": f"{method} {path}"}
 
     async def handle_http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -702,6 +768,7 @@ class Bridge(asyncio.DatagramProtocol):
             status, obj = 400, {"ok": False, "error": "bad_request", "message": str(e)}
         except Exception as e:
             log.exception("http handler failed")
+            report_exception(e, where="http", path=target.partition("?")[0] if "target" in locals() else "?")
             obj = {"ok": False, "error": "internal", "message": str(e)}
         data = json.dumps(obj, ensure_ascii=False).encode()
         reason = {200: "OK", 400: "Bad Request", 404: "Not Found"}.get(status, "Error")
@@ -720,6 +787,13 @@ class Bridge(asyncio.DatagramProtocol):
 
 async def serve(settings: Settings) -> None:
     loop = asyncio.get_running_loop()
+    logging.getLogger().addHandler(RECENT)
+    if report:
+        # the app backend runs this in its own process and has set reports up already
+        if report.reporter() is None:
+            report.configure("bridge")
+            report.install_hooks()
+        loop.set_exception_handler(report.asyncio_handler)
     bridge = Bridge(settings)
     await loop.create_datagram_endpoint(lambda: bridge, local_addr=(settings.host, settings.udp_port))
     server = await asyncio.start_server(bridge.handle_http, settings.http_host, settings.http_port)

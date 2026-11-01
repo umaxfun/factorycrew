@@ -323,6 +323,24 @@ describe("panels", function()
     assert(not frame("h") and #panels.list() == 0)
   end)
 
+  it("queues a panel's first failure and every failed button for the developer, with the code", function()
+    protocol.take_lua_errors()
+    local body = "state.n = (state.n or 0) + 1 if state.n > 1 then error('broken ' .. state.n) end return {'ok'}"
+    panels.set{ name = "rep", every = 1, lua = body, actions = { boom = [[ error("nope") ]] } }
+    for _ = 1, 3 do due("rep") panels.tick() end -- fails twice and more: reported once
+    local errs = protocol.take_lua_errors()
+    assert(#errs == 1 and errs[1].type == "lua_error" and errs[1].source == "panel" and errs[1].name == "rep", serpent.line(errs))
+    assert(errs[1].message:find("broken 2", 1, true) and errs[1].lua == body, serpent.line(errs[1]))
+    if player then
+      panels.run_action(player, "rep", "boom")
+      panels.run_action(player, "rep", "boom")
+      errs = protocol.take_lua_errors()
+      assert(#errs >= 2 and errs[1].source == "panel_action" and errs[1].lua:find("nope", 1, true), serpent.line(errs))
+    end
+    for i = 1, 30 do protocol.queue_lua_error("mod", "e" .. i) end
+    assert(#protocol.take_lua_errors() == protocol.LUA_ERRORS_MAX, "the queue is capped")
+  end)
+
   it("is available to Kira's queries as kc.panel", function()
     local r = protocol.run_query("return kc.panel{name = 'q', lua = 'return {kc.fmt(2500)}'}")
     assert(r.ok and r.data.ok and r.data.view[1] == "2500", serpent.line(r))

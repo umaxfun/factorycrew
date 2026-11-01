@@ -1,11 +1,8 @@
 """report/kc_report.py against a fake Sentry on localhost (docs/sentry.md, T1)."""
 from __future__ import annotations
 
-import gzip
-import http.server
 import json
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -13,55 +10,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "report"))
+sys.path.insert(0, str(ROOT / "tests"))
 import kc_report as r  # noqa: E402
-
-KEY = "0" * 32
-
-
-class FakeSentry:
-    """Answers each POST with `self.status`; keeps the decoded envelopes."""
-
-    def __init__(self):
-        self.status, self.headers, self.got = 200, {}, []
-        outer = self
-
-        class H(http.server.BaseHTTPRequestHandler):
-            def do_POST(self):
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                if self.headers.get("Content-Encoding") == "gzip":
-                    body = gzip.decompress(body)
-                outer.got.append((self.path, dict(self.headers), body))
-                self.send_response(outer.status)
-                for k, v in outer.headers.items():
-                    self.send_header(k, v)
-                self.end_headers()
-                self.wfile.write(b"{}")
-
-            def log_message(self, *a):
-                pass
-
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.dsn = f"http://{KEY}@127.0.0.1:{self.server.server_port}/7"
-
-    def items(self, i=-1):
-        """Parse by each item's `length`, as Sentry does: a payload may hold newlines."""
-        body = self.got[i][2]
-        nl = body.index(b"\n")
-        head, out, k = json.loads(body[:nl]), [], nl + 1
-        while k < len(body):
-            nl = body.index(b"\n", k)
-            h = json.loads(body[k:nl])
-            out.append((h, body[nl + 1:nl + 1 + h["length"]]))
-            k = nl + 1 + h["length"] + 1
-        return head, out
+from fake_sentry import KEY, FakeSentry  # noqa: E402
 
 
 @pytest.fixture
 def sentry():
     s = FakeSentry()
     yield s
-    s.server.shutdown()
+    s.close()
 
 
 def rep(tmp_path, dsn, **kw):
@@ -162,7 +120,7 @@ def test_offline_reports_wait_and_all_go_when_the_network_is_back(tmp_path, sent
     assert rp.flush() is None and rp.files() == [] and len(back.got) == 3
     stamps = [json.loads(back.items(i)[1][0][1])["timestamp"] for i in range(3)]
     assert all(s < time.time() - 0 for s in stamps)  # the time it happened, not the time it went
-    back.server.shutdown()
+    back.close()
 
 
 def test_server_errors_are_retried_and_refusals_dropped(tmp_path, sentry):
@@ -201,7 +159,8 @@ def test_no_dsn_means_no_errors_queued_and_reports_wait(tmp_path):
     assert rp.send_report("x") and rp.flush() is None and len(rp.files()) == 1
 
 
-def test_a_fetched_dsn_must_point_at_sentry(tmp_path):
+def test_a_fetched_dsn_must_point_at_sentry(tmp_path, monkeypatch):
+    monkeypatch.delenv("FC_SENTRY_DSN", raising=False)  # test-unit.sh sets it empty
     rp = rep(tmp_path, None)
     rp._write(rp.outbox / "settings.json", json.dumps({"dsn": f"https://{KEY}@evil.example.com/1"}).encode())
     assert "sentry.io" in rp.dsn()  # the fetched copy is ignored, the shipped one is used

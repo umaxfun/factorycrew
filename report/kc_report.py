@@ -52,6 +52,9 @@ MAX_FILES = 50
 MAX_BYTES = 50 * 1024 * 1024
 AUTO_MAX_AGE = 30 * 86400
 RATE_WINDOW = 3600  # the same automatic error at most once an hour
+# ...and at most this many automatic errors an hour from one machine: Kira's Lua mistakes are
+# many and varied, and the free plan's 5k events a month must outlast a bad evening
+MAX_AUTO_PER_HOUR = 30
 SETTINGS_MAX_AGE = 86400
 PATH_HOME = re.compile(r"(/Users/|/home/|[A-Za-z]:\\Users\\)[^/\\\s'\"]+")
 
@@ -207,14 +210,15 @@ class Reporter:
             return None
 
     def capture_message(self, kind: str, message: str, tags: dict | None = None,
-                        attachments: list | None = None, platform_name: str = "other") -> str | None:
+                        attachments: list | None = None, platform_name: str = "other",
+                        level: str = "error") -> str | None:
         """Queue an automatic error that is not a Python exception (a Lua error, for one).
         `attachments`: [(filename, bytes, content_type)], e.g. the Lua code that failed."""
         try:
             if not self.telemetry or not self.dsn():
                 return None
             first = scrub(message).splitlines()[0][:200] if message.strip() else ""
-            ev = {**self._event(platform_name=platform_name),
+            ev = {**self._event(level=level, platform_name=platform_name),
                   "exception": {"values": [{"type": kind, "value": scrub(message)[:2000]}]}}
             return self._auto(f"{kind}|{first}|{self.version}", ev, tags, attachments)
         except Exception:  # noqa: BLE001
@@ -249,9 +253,9 @@ class Reporter:
         fp = hashlib.sha1(key.encode()).hexdigest()[:16]
         sent = self._sent_log()
         now = time.time()
-        if now - sent.get(fp, 0) < RATE_WINDOW:
-            return None
         sent = {k: t for k, t in sent.items() if now - t < RATE_WINDOW}
+        if fp in sent or len(sent) >= MAX_AUTO_PER_HOUR:
+            return None
         sent[fp] = now
         self._write(self.outbox / "sent.json", json.dumps(sent).encode())
         items = [({"type": "event"}, ev)] + self._attachment_items(attachments)
@@ -423,8 +427,48 @@ def capture_exception(exc: BaseException, tags: dict | None = None) -> str | Non
     return _REPORTER.capture_exception(exc, tags) if _REPORTER else None
 
 
-def capture_message(kind: str, message: str, tags: dict | None = None, attachments: list | None = None) -> str | None:
-    return _REPORTER.capture_message(kind, message, tags, attachments) if _REPORTER else None
+def capture_message(kind: str, message: str, tags: dict | None = None, attachments: list | None = None,
+                    level: str = "error") -> str | None:
+    return _REPORTER.capture_message(kind, message, tags, attachments, level=level) if _REPORTER else None
+
+
+def reporter() -> Reporter | None:
+    return _REPORTER
+
+
+def install_hooks() -> None:
+    """Uncaught exceptions of the main thread and of other threads become reports; the previous
+    hooks still run (the traceback still goes to stderr). For asyncio, see `asyncio_handler`."""
+    prev_sys, prev_thread = sys.excepthook, threading.excepthook
+
+    def on_sys(t, e, tb):
+        if not issubclass(t, (KeyboardInterrupt, SystemExit)):
+            capture_exception(e, {"uncaught": "main"})
+            _drain()
+        prev_sys(t, e, tb)
+
+    def on_thread(args):
+        if args.exc_value is not None and not issubclass(args.exc_type, SystemExit):
+            capture_exception(args.exc_value, {"uncaught": "thread"})
+        prev_thread(args)
+
+    sys.excepthook, threading.excepthook = on_sys, on_thread
+
+
+def asyncio_handler(loop, context) -> None:
+    """loop.set_exception_handler(asyncio_handler): a task that died with nobody awaiting it."""
+    exc = context.get("exception")
+    if isinstance(exc, BaseException):
+        capture_exception(exc, {"uncaught": "asyncio"})
+    loop.default_exception_handler(context)
+
+
+def _drain(seconds: float = 2.0) -> None:
+    """The process is about to die: give the sender a moment to try what is queued."""
+    if _REPORTER is not None:
+        t = threading.Thread(target=_REPORTER.flush, daemon=True)
+        t.start()
+        t.join(seconds)
 
 
 def send_report(message: str, source: str = "button", attachments: list | None = None,

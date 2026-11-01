@@ -28,6 +28,7 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 
 ## Must stay true
 
+- A wake that raises, a question not passed after the last attempt, and a turn Kiro Crew ended with an error row (as a `warning` `KiroCrewTurnError`) are reported; the player's question never is. Its lines go through `note()`, which keeps the last 400 for a bug report (`tests/unit/test_report_parts.py::test_dispatcher_reports_a_dead_turn_as_a_warning_and_a_question_it_could_not_pass`). See [Error and bug reports](../sentry.md).
 - A question is confirmed (`/asks/done`) only after `send_to_session` returned, or after its third failure was reported to the tab as "Could not pass the question to Kiro Crew: <reason>"; an unconfirmed one comes back by lease (`dispatcher/factorio_dispatch.py:486-496`; no unit test, the lease side is `tests/integration/test_bridge.py::test_asks_wait_while_dispatcher_is_away`).
 - One chat per `run_id` + tab: key `factorio-<sha1(run_id\ttab)[:12]>` (plus `-<gen>` after a `not_creator`), title = tab name, in the run's folder (`dispatcher/factorio_dispatch.py:144-162`; `tests/e2e/test_e2e.py::test_other_tab_is_a_separate_chat`).
 - On `not_creator` the tab gets a new chat (next generation, same title and folder) and the question is resent (`dispatcher/factorio_dispatch.py:472-483`; `tests/app_e2e/test_app_e2e.py::test_tab_from_an_earlier_install_still_answers`).

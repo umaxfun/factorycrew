@@ -44,6 +44,7 @@ The bridge counts every call flagged `_agent` as a step of Kira's turn (`bridge/
 
 ## Must stay true
 
+- A tool that raises answers `{ok: false, error: "internal"}` instead of killing the server, and is reported; Kira's `factorio_compute` code that fails is reported with `main.py` and `stderr.txt` (`tests/unit/test_report_parts.py::test_mcp_reports_a_broken_tool_and_answers_instead_of_dying`, `::test_mcp_reports_kiras_failing_python_with_its_code`). See [Error and bug reports](../sentry.md).
 - Stdlib only. pytest is for tests only (README.md "Layout"; the imports at `mcp/factorio_mcp.py:8-17`).
 - `isError` is `not ok` for every tool, and the payload is one JSON text block (`mcp/factorio_mcp.py:953-956`; asserted on every call in `tests/integration/conftest.py:130-134`).
 - The bridge can't be reached → `{"ok": false, "error": "bridge_unreachable"}`; the server never raises (`bridge_post` :277-278).

@@ -46,6 +46,11 @@ install_files() {
   echo "installed agent -> $KIRO_HOME/agents/factorio-companion.json"
   # Copy only on change: a running wake exits when this file's mtime moves (it compiled the
   # old source), so an identical copy would restart it for nothing.
+  # error reports (docs/sentry.md): the installed dispatcher finds report/ next to itself
+  mkdir -p "$KIROCREW_HOME/crons/report"
+  for f in kc_report.py settings.json; do
+    cmp -s "$ROOT/report/$f" "$KIROCREW_HOME/crons/report/$f" || cp "$ROOT/report/$f" "$KIROCREW_HOME/crons/report/$f"
+  done
   if cmp -s "$ROOT/dispatcher/factorio_dispatch.py" "$KIROCREW_HOME/crons/factorio_dispatch.py"; then
     echo "dispatcher unchanged -> $KIROCREW_HOME/crons/factorio_dispatch.py"
   else

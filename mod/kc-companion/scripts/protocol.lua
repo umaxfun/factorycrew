@@ -47,6 +47,30 @@ local function next_id(prefix)
   return string.format("%s-%d-%d", prefix, game.tick, storage.kc.seq)
 end
 
+-- ── Lua errors for the developer (docs/sentry.md) ────────────────────────
+-- Lua that failed with no request waiting for it (a panel's body or button, the mod's own
+-- handler) is queued here and sent as `lua_error` by control.lua; the bridge reports it with
+-- the code. A module table, not storage: losing it on load is fine, and the save does not change.
+
+M.LUA_ERRORS_MAX = 20
+M.lua_errors = {}
+
+function M.queue_lua_error(source, message, lua, name)
+  if #M.lua_errors >= M.LUA_ERRORS_MAX then return end
+  M.lua_errors[#M.lua_errors + 1] = {
+    type = "lua_error", source = source, name = name,
+    message = string.sub(tostring(message), 1, 2000),
+    lua = type(lua) == "string" and string.sub(lua, 1, 20000) or nil,
+  }
+end
+
+--- The queued errors, emptied.
+function M.take_lua_errors()
+  local out = M.lua_errors
+  M.lua_errors = {}
+  return out
+end
+
 -- ── tabs ─────────────────────────────────────────────────────────────────
 
 function M.tab(chat)

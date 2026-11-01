@@ -37,6 +37,23 @@ def _bridge_url() -> str:
 
 
 BRIDGE = _bridge_url().rstrip("/")
+
+
+def _load_report():
+    """report/kc_report.py (docs/sentry.md), one level up in the repo and in the app; None when
+    it is missing or broken: the server runs the same without error reports."""
+    d = Path(__file__).resolve().parents[1] / "report"
+    if not (d / "kc_report.py").exists():
+        return None
+    sys.path.insert(0, str(d))
+    try:
+        import kc_report
+        return kc_report
+    except Exception:  # noqa: BLE001
+        return None
+
+
+report = _load_report()
 PROTOCOL_VERSION = "2025-06-18"
 
 POS = {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}
@@ -410,6 +427,11 @@ def compute(args: dict) -> dict:
         res["message"] = f"stopped after {timeout} s; make the computation smaller or raise timeout (max {COMPUTE_TIMEOUT_MAX})"
     elif proc.returncode != 0:
         res["error"] = "python_error"
+        if report:  # Kira's code that failed goes with it, as for Lua (docs/sentry.md)
+            last = (res["stderr"].strip().splitlines() or ["python_error"])[-1]
+            report.capture_message("ComputeError", last, {"part": "mcp", "tool": "factorio_compute"},
+                                   [("main.py", code.encode(), "text/x-python"),
+                                    ("stderr.txt", res["stderr"].encode(), "text/plain")])
     if len(json.dumps(result, ensure_ascii=False)) > COMPUTE_OUT_MAX:
         res.update(ok=False, result=None, error="result_too_large",
                    message="result over 64 KB; return less, e.g. a compact list of [x, y, name]")
@@ -969,7 +991,12 @@ def handle(req: dict) -> dict | None:
         result = {"tools": TOOLS}
     elif method == "tools/call":
         p = req.get("params") or {}
-        res = call_tool(p.get("name"), p.get("arguments") or {})
+        try:
+            res = call_tool(p.get("name"), p.get("arguments") or {})
+        except Exception as e:  # a broken tool answers with an error instead of killing the server
+            if report:
+                report.capture_exception(e, {"part": "mcp", "tool": str(p.get("name"))})
+            res = {"ok": False, "error": "internal", "message": f"{type(e).__name__}: {e}"[:300]}
         result = {"content": [{"type": "text", "text": json.dumps(res, ensure_ascii=False)}],
                   "isError": not res.get("ok", False)}
     elif method == "ping":
@@ -1038,6 +1065,9 @@ def pending_input() -> bytes:
 
 
 def main() -> None:
+    if report:
+        report.configure("mcp")
+        report.install_hooks()
     # own line buffer over fd 0: on re-exec everything read so far must be handed over,
     # and sys.stdin's buffer would hide what it read ahead
     buf = pending_input()

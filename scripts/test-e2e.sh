@@ -8,6 +8,9 @@
 # few agent turns (~1-2 credits). A fresh stand per run = a new run_id, so every run gets its
 # own folder Factorio/<e2e MM-DD HH:MM> and empty chats.
 set -euo pipefail
+# Error reports (docs/sentry.md): tests send nothing to the real Sentry unless FC_SENTRY_DSN
+# is given; tests that check reports start their own fake one.
+export FC_SENTRY_DSN="${FC_SENTRY_DSN-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="factorycrew-test:2.1.23"
 . "$ROOT/scripts/lib/checkout.sh"

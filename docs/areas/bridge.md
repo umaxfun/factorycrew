@@ -6,7 +6,8 @@ The bridge is the only process that talks UDP to the game. It gives the dispatch
 
 - `bridge/factorio_bridge.py`: the whole bridge, stdlib only, one asyncio loop (`bridge/factorio_bridge.py:1-9`).
   - `encode`, `Reassembler`: UDP framing into `part` packets and reassembly by `id` (`:77`, `:105`).
-  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`stop`/`atlas_part`/`result` from the game (`:276`).
+  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`stop`/`atlas_part`/`lua_error`/`result` from the game.
+  - `report`, `report_exception`, `Bridge.report_lua`, `RECENT`: error reports and the last log lines, see [Error and bug reports](../sentry.md).
   - `request`: one call to the game, waits for its `result` (`:344`).
   - `take_asks`, `confirm_asks`, `requeue_expired`: the ask queue and its lease (`:424-460`).
   - `set_thinking`, `activity`, `idle_timeout`, `end_turn`, `turn_end`, `stopped`, `reply`: the per-tab status and the idle clock (20 min, a backstop) (`:462-524`).

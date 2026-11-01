@@ -28,6 +28,8 @@ import factorio_bridge as fb  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import status  # noqa: E402  (status page checks)
 
+report = fb.report  # report/kc_report.py, loaded by the bridge module; None if missing
+
 log = logging.getLogger("factorycrew")
 MOD = "kc-companion"
 MANAGED_MARK = ".factorycrew-managed"  # a mod folder we installed and may replace
@@ -131,14 +133,19 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
         await writer.drain()
     except (asyncio.TimeoutError, ConnectionError):
         pass
-    except Exception:  # a broken check must not take the backend down
+    except Exception as e:  # a broken check must not take the backend down
         log.exception("request failed")
+        if report:
+            report.capture_exception(e, {"part": "backend", "where": "http"})
     finally:
         writer.close()
 
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if report:
+        report.configure("backend")  # the bridge in this process reports through it too
+        report.install_hooks()
     cfg = load_config()
     mods = factorio_mods_dir()
     STATE.update(config=cfg, mods=mods)
@@ -148,6 +155,8 @@ async def main() -> None:
     except Exception as e:  # a failed mod copy must not keep the bridge down
         STATE["mod_note"] = f"mod install failed: {e}"
         log.exception("mod install failed")
+        if report:
+            report.capture_exception(e, {"part": "backend", "where": "install_mod"})
     s = fb.Settings(udp_port=int(cfg.get("udp_port", 34199)), game_port=int(cfg.get("game_port", 34200)),
                     http_port=int(cfg.get("http_port", 34198)), app_version=status._app_version())
     port = int(os.environ.get("PORT", "0"))

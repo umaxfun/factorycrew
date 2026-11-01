@@ -7,6 +7,9 @@
 #
 # Needs `uv` (it brings Python 3.12 and pytest; nothing is installed system-wide).
 set -euo pipefail
+# Error reports (docs/sentry.md): tests send nothing to the real Sentry unless FC_SENTRY_DSN
+# is given; tests that check reports start their own fake one.
+export FC_SENTRY_DSN="${FC_SENTRY_DSN-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 # no path among the arguments (only options like -k or -x): run tests/unit, not pytest.ini's

@@ -7,6 +7,9 @@
 # the run its own app gateway (FC_APP_PORT, home FC_APP_HOME), app bridge ports
 # (FC_APP_HTTP/UDP/GAME) and client data dir (FC_APP_UI_HOME). Nothing outside the slot is touched.
 set -euo pipefail
+# Error reports (docs/sentry.md): tests send nothing to the real Sentry unless FC_SENTRY_DSN
+# is given; tests that check reports start their own fake one.
+export FC_SENTRY_DSN="${FC_SENTRY_DSN-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/checkout.sh"
 checkout_readable_by_gateway "$ROOT"
