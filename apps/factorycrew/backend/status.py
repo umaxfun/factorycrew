@@ -69,6 +69,33 @@ def bridge_health(port: int) -> dict | None:
         return None
 
 
+_library_cache: dict = {"at": 0.0, "result": None}
+
+
+def probe_library() -> dict:
+    """List the saved panels with the CLI call Kira's saves use (cached for a minute):
+    {"ok", "n"} or {"ok": False, "error"}. Panels went unsaved for days with every other check green."""
+    now = time.monotonic()
+    if _library_cache["result"] is not None and now - _library_cache["at"] < MCP_PROBE_TTL:
+        return _library_cache["result"]
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("factorio_mcp_for_status", ROOT / "mcp" / "factorio_mcp.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        p = m._kc("list", "--tag", m.ARTIFACT_TAG, timeout=20)
+        if p is None:
+            res = {"ok": False, "error": "no kirocrew CLI or Kiro Crew home found"}
+        elif p.returncode != 0:
+            res = {"ok": False, "error": (p.stderr or p.stdout).strip()[-300:] or f"exit {p.returncode}"}
+        else:
+            res = {"ok": True, "n": sum(1 for line in p.stdout.splitlines() if m.ARTIFACT_PREFIX in line)}
+    except Exception as e:  # a broken probe must not break the page
+        res = {"ok": False, "error": str(e)[-300:]}
+    _library_cache.update(at=now, result=res)
+    return res
+
+
 def probe_mcp() -> dict:
     """Start the MCP server the way the gateway does and ask for its tools (cached for a minute)."""
     now = time.monotonic()
@@ -193,6 +220,14 @@ def status(config: dict, mods_dir: Path | None, mod_note: str) -> dict:
                             "Python could not run the app's MCP server; reinstall the app."))
     else:
         checks.append(check("mcp", "MCP server", "ok", f"starts and lists {len(m['tools'])} tools ({m['ms']} ms)"))
+
+    lib = probe_library()
+    if lib["ok"]:
+        checks.append(check("library", "Panel library", "ok", f"saving works, {lib['n']} saved panels"))
+    else:
+        checks.append(check("library", "Panel library", "fail", f"cannot reach Kiro Crew artifacts: {lib['error']}",
+                            "Kira's panels are not saved and the window's Library is empty. Restart Kiro Crew; "
+                            "if it stays, send this line to the app's author."))
 
     path, agent = installed_agent(home)
     servers = (agent or {}).get("mcpServers") or {}

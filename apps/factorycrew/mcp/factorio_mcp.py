@@ -489,13 +489,37 @@ def _kirocrew() -> str | None:
         (p for p in [os.path.expanduser("~/.local/bin/kirocrew")] if os.access(p, os.X_OK)), None)
 
 
+GATEWAY_PORT_FILE = Path(__file__).parents[1] / "data" / "gateway_port"  # written by the dispatcher
+
+
+def gateway_port() -> str | None:
+    """The port of the gateway this app runs under, for the CLI.
+
+    The CLI otherwise dials KIROCREW_PORT or 5476, which on a machine with a second gateway (a
+    desktop app on another port, another user's gateway on 5476) is not ours: every artifact call
+    then fails with "gateway ownership not verified". Order: the bound port the gateway exports to
+    its children, then the port the dispatcher saw (its cron env carries no port), then KIROCREW_PORT."""
+    if os.environ.get("KIROCREW_BOUND_PORT", "").isdigit():
+        return os.environ["KIROCREW_BOUND_PORT"]
+    try:
+        p = GATEWAY_PORT_FILE.read_text().strip()
+        if p.isdigit():
+            return p
+    except OSError:
+        pass
+    return os.environ.get("KIROCREW_PORT") or None
+
+
 def _kc(*argv: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
     exe = _kirocrew()
     if not exe:
         return None
+    env = {**os.environ, "KIROCREW_HOME": kirocrew_home()}
+    if gateway_port():
+        env["KIROCREW_PORT"] = gateway_port()
     try:
         return subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL, env={**os.environ, "KIROCREW_HOME": kirocrew_home()})
+                              stdin=subprocess.DEVNULL, env=env)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -513,7 +537,13 @@ def run_tag(run_id) -> str:
 def artifact_slug(name: str, run_id=None) -> str:
     """One artifact per panel name per run: the library is the run's, not shared between runs."""
     run = _slugify(run_id) if run_id else ""
-    return ARTIFACT_PREFIX + (run + "-" if run else "") + ((_slugify(name) or "panel")[:60])
+    part = (_slugify(name) or "panel")[:60]
+    if not str(name).isascii():
+        # a Cyrillic name slugifies to nothing (or to its Latin bits only): two such panels would
+        # share one artifact, so a short hash of the full name keeps them apart
+        import hashlib
+        part = part[:51] + "-" + hashlib.sha1(str(name).encode()).hexdigest()[:8]
+    return ARTIFACT_PREFIX + (run + "-" if run else "") + part
 
 
 def current_run_id():

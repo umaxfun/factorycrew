@@ -1,6 +1,6 @@
 # factorycrew release channel
 
-Built Kiro Crew app, version 0.3.7 (source `edeac0c` on `main`). Do not edit: `scripts/release.sh` on
+Built Kiro Crew app, version 0.3.8 (source `6594988` on `main`). Do not edit: `scripts/release.sh` on
 `main` writes this branch.
 
 Install: Kiro Crew 0.11 or newer, Apps -> Discover -> Sources (gear) -> add this repository with
