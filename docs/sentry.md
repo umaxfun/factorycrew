@@ -28,6 +28,17 @@ Why: on 2026-10-31 a player's tab kept "thinking" after Kiro credits ran out, an
 - **Switch off means off:** with `telemetry=false` no automatic error is written, and those already queued are deleted before the next send, also in a part that is already running. The button and Kira's skill still work, because the player asks for them explicitly.
 - **Offline bug report:** the window says "saved, it will go when the network is back" and shows the zip's path, so the player can also hand it over by other means (T3).
 
+## Raw sessions
+
+Michael, 2026-11-01: long answers that stop for no visible reason and tools that fail are the bugs he meets most, so a report must hand over the raw session in one click, not a summary. `report.session_files(home, slot)` collects, for one chat:
+- `session/transcript.jsonl`: the gateway's transcript (`<home>/sessions/dashboard_<slot>.jsonl`): rows, tool calls with input and output, error rows, `turn_stats`;
+- `session/kiro-messages.jsonl`, `session/kiro-session.json`: kiro-cli's own conversation, found through `<home>/session_map.json` (`dashboard:<slot>` → `sid`) under `<kiro home>/sessions/*/<sid>`; the kiro home is `<home>/kiro` on a dev gateway and `~/.kiro` for the desktop app;
+- `session/kiro-log-<dir>.jsonl`, `session/mcp-log-<dir>.jsonl`: from every kiro-cli log dir (the newest 40) that names the session: its lines plus every warning and error of that process, and the process's whole `mcp.log`;
+- `session/gateway.log`: the gateway log lines naming the slot;
+- `session/missing.txt`: what could not be read and why, instead of failing the report.
+
+Each file keeps its last 40 MB; a zip over 15 MB loses the first half of its biggest file until it fits. The window's report, Kira's `factorio_feedback` and the app page's report all carry it: the window and Kira for their tab, the app page for the three Factorio chats written to last (`chat<n>-<slot>/...`). A comment is optional everywhere, and under a turn that went wrong (stopped, no answer, "Kiro Crew could not finish", no credits) the window shows "Report this to the developer", which opens the dialog with nothing to fill in.
+
 ## Main files
 
 - `report/kc_report.py`: `Reporter` (settings, `capture_exception`, `capture_message`, `send_report`, the outbox, `flush`, the sender thread) and module functions `configure(part)`, `capture_exception`, `capture_message`, `send_report` that never raise.

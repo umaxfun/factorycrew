@@ -680,29 +680,15 @@ def handle(ctx, cfg, st, ask, tracer=None):
     return True
 
 
-TRANSCRIPT_MAX = 2 * 1024 * 1024  # the end of a long chat is what matters
-
-
-def tab_transcript(st, run_id, chat) -> bytes | None:
-    """The end of the tab's chat transcript: what the player asked, what Kira did and answered."""
-    slot = st.get("slots", {}).get(f"{run_id}\t{chat}")
-    if not slot:
-        return None
-    try:
-        with open(transcript_path(slot), "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - TRANSCRIPT_MAX))
-            data = f.read()
-    except OSError:
-        return None
-    return data[data.find(b"\n") + 1:] if size > TRANSCRIPT_MAX else data
+def crew_home() -> Path:
+    return Path(os.environ.get("KIROCREW_HOME") or str(Path.home() / ".kiro" / "crew"))
 
 
 def bug_report_files(st, ask) -> dict:
     """{name: bytes} of a report from the window: the bridge's part (report.json, its health and
     log; bridge/factorio_bridge.py, bug_report_files) plus this dispatcher's log, its state and
-    the tab's chat. The player saw this list in the dialog (mod/kc-companion/scripts/gui.lua)."""
+    the tab's whole raw session (report.session_files: the transcript, the kiro-cli conversation
+    and its logs). The player saw this list in the dialog (mod/kc-companion/scripts/gui.lua)."""
     info = {k: ask.get(k) for k in ("id", "chat", "run_id", "run_name", "mod_version", "factorio_version", "tick")}
     info["dispatcher"] = {"file": __file__, "stamp": source_stamp()}
     files = {
@@ -712,8 +698,12 @@ def bug_report_files(st, ask) -> dict:
         "dispatcher.log": "\n".join(RECENT_LOG).encode(),
         "dispatch-state.json": json.dumps({k: st.get(k) for k in ("slots", "gen", "runs")}, ensure_ascii=False,
                                           indent=1).encode(),
-        "chat.jsonl": tab_transcript(st, ask.get("run_id"), ask.get("chat")),
     }
+    slot = st.get("slots", {}).get(f"{ask.get('run_id')}\t{ask.get('chat')}")
+    if report and slot:
+        files.update(report.session_files(crew_home(), slot))
+    elif not slot:
+        files["session/missing.txt"] = f"tab {ask.get('chat')!r} has no chat yet".encode()
     if report:
         files["screenshot.png"] = report.read_screenshot(ask.get("screenshot"))
     return files

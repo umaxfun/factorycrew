@@ -21,6 +21,7 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 
 ## Must stay true
 
+- Under a turn that went wrong (stopped, `no_reply`, an answer starting "Kiro Crew could not finish" or "Kiro has no credits") the feed shows "Report this to the developer", which opens the same dialog (`mod/kc-companion/tests/test-gui.lua::offers the report right under a turn that went wrong`).
 - "Report a problem" in the run row opens the bug report dialog `kc_bug` (comment, screenshot checkbox, what goes, Send); it keeps typed text across refreshes, shows the report id or the local copy's path from `bug_report_result`, and gives up after a minute with no answer. A note at the top says once that error reports are on (`mod/kc-companion/tests/test-gui.lua::sends a bug report from the window and shows its id`, `::says once that error reports are on, until OK`, `::gives up on a bug report with no answer in a minute`). See [Error and bug reports](../sentry.md).
 - The top-bar button is a `sprite-button` named `kc_toggle` with the `kc-kira` sprite (`mod/kc-companion/tests/test-gui.lua::opens with a default tab, top-bar button and no-connection indicator`)
 - A window opened with no tabs creates the `General` tab (`mod/kc-companion/scripts/gui.lua:29`; same test)

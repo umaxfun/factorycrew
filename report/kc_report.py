@@ -261,13 +261,24 @@ class Reporter:
         seconds to deliver it. {ok, report_id, path, sent} or {ok: False, error}."""
         import io
         import zipfile
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("comment.txt", comment)
-            for name, data in files.items():
-                if data is not None:
-                    z.writestr(name, data)
-        data = buf.getvalue()
+        files = {k: v for k, v in files.items() if v is not None}
+
+        def pack():
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("comment.txt", comment)
+                for name, blob in files.items():
+                    z.writestr(name, blob)
+            return buf.getvalue()
+        data = pack()
+        for _ in range(12):  # over the limit: keep the end of the biggest file, the part that matters
+            if len(data) <= BUG_REPORT_MAX:
+                break
+            big = max(files, key=lambda k: len(files[k]))
+            if len(files[big]) < 64 * 1024:
+                break
+            files[big] = files[big][len(files[big]) // 2:]
+            data = pack()
         if len(data) > BUG_REPORT_MAX:
             return {"ok": False, "error": f"the report is {len(data) // 1024} KB, over {BUG_REPORT_MAX // 1024} KB"}
         event_id = self._report(comment, source, [("report.zip", data, "application/zip")], tags)
@@ -527,6 +538,120 @@ def read_screenshot(rel: str | None, wait: float = 6.0) -> bytes | None:
             pass
         time.sleep(0.5)
     return None
+
+
+# ── a chat's raw session, for a bug report (docs/sentry.md, "Raw sessions") ──
+# Michael, 2026-11-01: long answers that stop, tools that fail; the report must carry the whole
+# session as Kiro Crew and kiro-cli keep it, not a summary. Each piece is read best-effort: what
+# cannot be read is named in `missing.txt` instead of failing the report.
+
+SESSION_FILE_MAX = 40 * 1024 * 1024  # raw bytes per file before the zip; the end is what matters
+LOG_DIRS_SCANNED = 40  # newest kiro-cli log dirs searched for the session's id
+
+
+def _tail(p: Path, cap: int) -> bytes:
+    with open(p, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - cap))
+        data = f.read()
+    return data[data.find(b"\n") + 1:] if size > cap else data
+
+
+def kiro_home(kirocrew_home: Path) -> Path:
+    """kiro-cli's home: <crew home>/kiro on a dev gateway (KIRO_HOME), ~/.kiro for the desktop app."""
+    if os.environ.get("KIRO_HOME"):
+        return Path(os.environ["KIRO_HOME"])
+    own = kirocrew_home / "kiro"
+    return own if (own / "sessions").is_dir() else Path.home() / ".kiro"
+
+
+def session_files(kirocrew_home: Path, slot: str, cap: int = SESSION_FILE_MAX) -> dict:
+    """{name: bytes} of one chat (`slot`, e.g. factorio-<hash>): the gateway's transcript, the
+    kiro-cli conversation (messages.jsonl, session.json), the kiro-cli log lines of that session
+    and every warning or error in the same processes' logs, their mcp.log, and the gateway log
+    lines naming the slot."""
+    home = Path(kirocrew_home)
+    out, missing = {}, []
+
+    def take(name, fn):
+        try:
+            data = fn()
+            if data:
+                out[name] = data
+            else:
+                missing.append(f"{name}: empty or not found")
+        except OSError as e:
+            missing.append(f"{name}: {type(e).__name__}: {e.strerror or e}")
+
+    take("session/transcript.jsonl", lambda: _tail(home / "sessions" / f"dashboard_{slot}.jsonl", cap))
+    sid = None
+    try:
+        entry = (json.loads((home / "session_map.json").read_text()) or {}).get(f"dashboard:{slot}") or {}
+        sid = entry.get("sid")
+    except (OSError, ValueError) as e:
+        missing.append(f"session_map.json: {e}")
+    kh = kiro_home(home)
+    if sid:
+        sid_dir = sid if sid.startswith("sess_") else None
+        found = None
+        try:
+            for d in (kh / "sessions").iterdir():
+                for name in ([sid_dir] if sid_dir else []) + [sid, f"sess_{sid}"]:
+                    if name and (d / name).is_dir():
+                        found = d / name
+                        break
+                if found:
+                    break
+        except OSError as e:
+            missing.append(f"kiro sessions: {e.strerror or e}")
+        if found:
+            take("session/kiro-messages.jsonl", lambda: _tail(found / "messages.jsonl", cap))
+            take("session/kiro-session.json", lambda: (found / "session.json").read_bytes())
+        else:
+            missing.append(f"kiro-cli session {sid}: not found under {kh}/sessions")
+        try:
+            dirs = sorted((d for d in (kh / "logs").iterdir() if d.is_dir()), reverse=True)[:LOG_DIRS_SCANNED]
+        except OSError as e:
+            dirs = []
+            missing.append(f"kiro logs: {e.strerror or e}")
+        key = sid.removeprefix("sess_")
+        for d in dirs:
+            try:
+                log = (d / "kiro.log").read_bytes()
+            except OSError:
+                continue
+            if key.encode() not in log:
+                continue
+            keep = [line for line in log.splitlines()
+                    if key.encode() in line or b'"level":"error"' in line or b'"level":"warn' in line]
+            out[f"session/kiro-log-{d.name}.jsonl"] = b"\n".join(keep)[-cap:]
+            take(f"session/mcp-log-{d.name}.jsonl", lambda d=d: _tail(d / "mcp.log", cap))
+    else:
+        missing.append(f"no kiro-cli session id for {slot} in session_map.json")
+    lines = []
+    for name in ("gateway.log.prev", "gateway.log"):
+        try:
+            lines += [line for line in (home / name).read_bytes().splitlines() if slot.encode() in line]
+        except FileNotFoundError:
+            pass  # no rotated log yet
+        except OSError as e:
+            missing.append(f"{name}: {e.strerror or e}")
+    if lines:
+        out["session/gateway.log"] = b"\n".join(lines)[-cap:]
+    if missing:
+        out["session/missing.txt"] = "\n".join(missing).encode()
+    return out
+
+
+def recent_slots(kirocrew_home: Path, n: int = 3) -> list:
+    """The `n` Factorio chats written to last (for a report from the app page)."""
+    try:
+        paths = sorted(Path(kirocrew_home, "sessions").glob("dashboard_factorio-*.jsonl"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+    return [p.name[len("dashboard_"):-len(".jsonl")] for p in paths[:n]]
 
 
 def install_hooks() -> None:

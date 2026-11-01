@@ -89,7 +89,11 @@ def test_kira_drafts_a_bug_report_and_sends_it_only_after_yes(player, sentry):
     assert msg.startswith("[bug]") and "library" in msg.lower() and ev["tags"]["by"] == "kira", msg
     assert ev["event_id"][:8] in text, "Kira did not tell the player the report id"
     z = zipfile.ZipFile(io.BytesIO(files["report.zip"]))
-    assert b"Library button" in z.read("chat.jsonl"), "the tab's chat is not in the report"
+    names = set(z.namelist())
+    assert b"Library button" in z.read("session/transcript.jsonl"), "the tab's chat is not in the report"
+    assert {"session/kiro-messages.jsonl", "session/kiro-session.json"} <= names, names  # the raw session
+    assert any(n.startswith("session/kiro-log-") for n in names), names
+    print("  missing:", z.read("session/missing.txt").decode() if "session/missing.txt" in names else "none")
 
 
 def test_the_windows_report_goes_with_the_tabs_chat(player, sentry):
@@ -106,7 +110,9 @@ def test_the_windows_report_goes_with_the_tabs_chat(player, sentry):
     assert ev["contexts"]["feedback"]["message"] == "e2e: the window's report" and ev["tags"]["by"] == "dispatcher"
     z = zipfile.ZipFile(io.BytesIO(files["report.zip"]))
     names = set(z.namelist())
-    assert {"chat.jsonl", "dispatcher.log", "bridge.log", "bridge-health.json", "report.json"} <= names, names
-    assert b"Library button" in z.read("chat.jsonl")
+    assert {"session/transcript.jsonl", "session/kiro-messages.jsonl", "dispatcher.log", "bridge.log",
+            "bridge-health.json", "report.json"} <= names, names
+    assert b"Library button" in z.read("session/kiro-messages.jsonl"), "the kiro-cli conversation is not the tab's"
+    assert "session/missing.txt" not in names, z.read("session/missing.txt")
     local = KC_HOME / "factorio" / "bug-reports" / f"{res['report_id']}.zip"
     assert local.exists(), "no local copy of the report"

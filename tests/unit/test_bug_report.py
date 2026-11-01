@@ -88,7 +88,7 @@ def test_the_dispatcher_adds_the_tabs_chat_and_its_own_log(sentry, tmp_path, mon
     assert path == "/bug_report_result" and body["id"] == "bug-1" and body["report_id"] == res["report_id"]
     (ev, files), = sentry.events()
     z = unzip(files["report.zip"])
-    assert z["chat.jsonl"].startswith(b'{"role": "user"') and b"wake started" in z["dispatcher.log"]
+    assert z["session/transcript.jsonl"].startswith(b'{"role": "user"') and b"wake started" in z["dispatcher.log"]
     assert json.loads(z["bridge-health.json"]) == {"game_online": True} and z["bridge.log"] == b"12:00 INFO ask bug-1"
     assert json.loads(z["report.json"])["factorio_version"] == "2.0.77" and ev["tags"]["by"] == "dispatcher"
 
@@ -119,7 +119,7 @@ def test_the_bridge_queues_a_report_with_its_health_and_log_and_sends_it_when_no
     assert msg["type"] == "bug_report_result" and msg["ok"] and msg["sent"] and msg["id"] == "bug-1"
     (ev, files), = sentry.events()
     z = unzip(files["report.zip"])
-    assert "chat.jsonl" not in z and b"without the tab's chat" in z["report.json"] and ev["tags"]["by"] == "bridge"
+    assert "session/transcript.jsonl" not in z and b"without the tab's chat" in z["report.json"] and ev["tags"]["by"] == "bridge"
 
 
 def test_the_status_page_sends_a_report_without_the_game(sentry, tmp_path, monkeypatch):
@@ -127,12 +127,18 @@ def test_the_status_page_sends_a_report_without_the_game(sentry, tmp_path, monke
     import status
     monkeypatch.setattr(server, "ROOT", tmp_path)
     monkeypatch.setattr(status, "status", lambda *a: {"state": "fail", "checks": [{"id": "game", "state": "fail"}]})
-    assert server.app_bug_report({"comment": "  "})["ok"] is False
+    (tmp_path / "sessions").mkdir()
+    (tmp_path / "sessions" / "dashboard_factorio-aaa.jsonl").write_text('{"role": "user", "content": "q"}\n')
+    monkeypatch.setattr(server, "kirocrew_home", lambda: tmp_path)
+    res = server.app_bug_report({"comment": "  "})  # one click: no comment needed
+    assert res["ok"]
     res = server.app_bug_report({"comment": "the bridge is down"})
     assert res["ok"] and res["sent"]
-    (ev, files), = sentry.events()
+    (_, empty), (ev, files) = sentry.events()
+    assert unzip(empty["report.zip"])["comment.txt"] == b"(no comment)"
     z = unzip(files["report.zip"])
     assert json.loads(z["status.json"])["state"] == "fail" and z["comment.txt"] == b"the bridge is down"
+    assert z["chat1-factorio-aaa/transcript.jsonl"] == b'{"role": "user", "content": "q"}\n'
     assert ev["contexts"]["feedback"]["source"] == "app"
 
 
@@ -150,7 +156,7 @@ def test_kiras_feedback_sends_nothing_until_the_draft_is_confirmed(sentry, tmp_p
     monkeypatch.setattr(m, "current_run_id", lambda: "r1")
     assert m.call_tool("factorio_feedback", {"kind": "bug", "chat": "General"})["error"] == "bad_request"
     d = m.call_tool("factorio_feedback", {"kind": "bug", "text": "The science panel stops updating.", "chat": "General"})
-    assert d["ok"] and d["sent"] is False and "this tab's chat" in d["goes"] and sentry.got == []
+    assert d["ok"] and d["sent"] is False and "this tab's whole session" in d["goes"] and sentry.got == []
     assert m.call_tool("factorio_feedback", {"send": "nosuchdraft"})["error"] == "no_draft"
     res = m.call_tool("factorio_feedback", {"send": d["draft"]})
     assert res["ok"] and res["sent"] and len(res["report_id"]) == 8
@@ -158,7 +164,7 @@ def test_kiras_feedback_sends_nothing_until_the_draft_is_confirmed(sentry, tmp_p
     assert ev["contexts"]["feedback"]["message"] == "[bug] The science panel stops updating."
     assert ev["contexts"]["feedback"]["source"] == "kira" and ev["tags"]["kind"] == "bug"
     z = unzip(files["report.zip"])
-    assert z["chat.jsonl"].startswith(b'{"role": "user"') and json.loads(z["report.json"])["chat"] == "General"
+    assert z["session/transcript.jsonl"].startswith(b'{"role": "user"') and json.loads(z["report.json"])["chat"] == "General"
     assert m.call_tool("factorio_feedback", {"send": d["draft"]})["error"] == "no_draft"  # sent once
     assert Path(res["path"]) == tmp_path / "factorio" / "bug-reports" / f"{res['report_id']}.zip"  # beside the outbox
 
@@ -168,3 +174,42 @@ def test_the_feedback_tool_is_listed_with_the_two_step_rule():
     import factorio_mcp as m
     tool = next(t for t in m.TOOLS if t["name"] == "factorio_feedback")
     assert "sends NOTHING" in tool["description"] and "after the player said yes" in tool["description"]
+
+
+def test_a_raw_session_holds_the_transcript_the_kiro_conversation_and_its_logs(tmp_path):
+    """The layout of a dev gateway (kiro-cli home under the crew home), as on 2026-11-01."""
+    home, sid, slot = tmp_path, "sess_e90c", "factorio-cf37"
+    (home / "sessions").mkdir()
+    (home / "sessions" / f"dashboard_{slot}.jsonl").write_text('{"role": "error", "content": "x"}\n')
+    (home / "session_map.json").write_text(json.dumps({f"dashboard:{slot}": {"sid": sid}}))
+    conv = home / "kiro" / "sessions" / "22ef" / sid
+    conv.mkdir(parents=True)
+    (conv / "messages.jsonl").write_text('{"payload": "the model said"}\n')
+    (conv / "session.json").write_text("{}")
+    logs = home / "kiro" / "logs" / "20261101T0941"
+    logs.mkdir(parents=True)
+    (logs / "kiro.log").write_text("\n".join([
+        '{"level":"info","message":"ACP session/new sessionId=sess_e90c"}',
+        '{"level":"info","message":"another session, nothing to do with it"}',
+        '{"level":"error","message":"stream ended early"}']))
+    (logs / "mcp.log").write_text('{"level":"error","serverName":"factorio","message":"Failed to connect"}')
+    (home / "gateway.log").write_text(f"10:41 WARNING slot={slot} turn cut\n10:42 INFO other\n")
+    f = kc_report.session_files(home, slot)
+    assert f["session/transcript.jsonl"].startswith(b'{"role": "error"')
+    assert f["session/kiro-messages.jsonl"] == b'{"payload": "the model said"}\n' and "session/kiro-session.json" in f
+    log = f["session/kiro-log-20261101T0941.jsonl"]
+    assert b"sessionId=sess_e90c" in log and b"stream ended early" in log and b"another session" not in log
+    assert b"Failed to connect" in f["session/mcp-log-20261101T0941.jsonl"]
+    assert f["session/gateway.log"] == f"10:41 WARNING slot={slot} turn cut".encode()
+    assert "session/missing.txt" not in f
+    assert b"session_map.json" in kc_report.session_files(tmp_path / "nowhere", slot)["session/missing.txt"]
+
+
+def test_a_report_over_the_limit_keeps_the_end_of_the_biggest_file(sentry, monkeypatch):
+    import os
+    monkeypatch.setattr(kc_report, "BUG_REPORT_MAX", 600 * 1024)
+    big = os.urandom(2 * 1024 * 1024) + b"THE END"
+    res = kc_report.bug_report("big", {"session/kiro-messages.jsonl": big, "small": b"x"}, "button", wait=3)
+    assert res["ok"]
+    z = unzip(sentry.events()[0][1]["report.zip"])
+    assert z["session/kiro-messages.jsonl"].endswith(b"THE END") and z["small"] == b"x"

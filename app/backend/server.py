@@ -67,12 +67,12 @@ def save_settings(body: dict) -> dict:
 def app_bug_report(body: dict) -> dict:
     """The status page's "Send a bug report": for when the game window is not there to use. It
     holds the comment, every status check and the last log lines of this process (the backend and
-    the bridge it runs); the chat of a tab only comes from the game window (docs/sentry.md, T3)."""
+    the bridge it runs), and the whole raw sessions of the three Factorio chats written to last, so
+    one click also covers a bug met in a chat (docs/sentry.md, "Raw sessions")."""
     if not report:
         return {"ok": False, "error": "error reports are not installed (report/ is missing)"}
     comment = body.get("comment") if isinstance(body, dict) else None
-    if not isinstance(comment, str) or not comment.strip():
-        return {"ok": False, "error": "bad_request", "message": "write what went wrong first"}
+    comment = comment.strip() if isinstance(comment, str) and comment.strip() else "(no comment)"
     try:
         checks = status.status(STATE["config"], STATE["mods"], STATE["mod_note"], STATE.get("bridge_error"))
     except Exception as e:  # noqa: BLE001 - the report is most needed when a check breaks
@@ -80,7 +80,17 @@ def app_bug_report(body: dict) -> dict:
     files = {"status.json": json.dumps(checks, ensure_ascii=False, indent=1).encode(),
              "config.json": json.dumps(load_config(), ensure_ascii=False, indent=1).encode(),
              "backend.log": "\n".join(fb.RECENT.lines).encode()}
-    return report.bug_report(comment.strip()[:4000], files, "app", {"by": "app_page"})
+    home = kirocrew_home()
+    for i, slot in enumerate(report.recent_slots(home) if home else []):
+        files.update({f"chat{i + 1}-{slot}/{k.split('/', 1)[1]}": v for k, v in report.session_files(home, slot).items()})
+    return report.bug_report(comment[:4000], files, "app", {"by": "app_page"})
+
+
+def kirocrew_home() -> Path | None:
+    """<home>/apps/<app>/backend/server.py names the home; a dev stand exports it."""
+    if os.environ.get("KIROCREW_HOME"):
+        return Path(os.environ["KIROCREW_HOME"])
+    return ROOT.parent.parent if ROOT.parent.name == "apps" else None
 
 
 def factorio_mods_dir() -> Path | None:

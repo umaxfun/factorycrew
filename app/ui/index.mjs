@@ -91,7 +91,8 @@ function BugReport() {
     h('div', { className: 'text-sm font-semibold text-text-strong' }, 'Report a problem'),
     h('div', { className: 'text-[13px] text-muted mt-1' },
       'Best sent from Kira\'s window in the game: it adds that tab\'s chat and a screenshot. From here it ' +
-      'goes with your text, the checks above, the app\'s settings and its recent log.'),
+      'goes with your text (optional), the checks above, the app\'s settings and its recent log, and the whole raw ' +
+      'sessions of your three latest Kira chats: every question, answer, tool call and result, and their logs.'),
     h('textarea', {
       className: 'mt-2 w-full rounded border border-border bg-bg text-text p-2 text-sm', rows: 4,
       value: text, onChange: e => setText(e.target.value), placeholder: 'What went wrong? What did you expect?',
@@ -99,7 +100,7 @@ function BugReport() {
     }),
     h('button', {
       className: 'mt-2 px-3 py-1.5 rounded bg-accent text-white text-sm disabled:opacity-50',
-      disabled: busy || !text.trim(), onClick: send, 'data-testid': 'bug-send',
+      disabled: busy, onClick: send, 'data-testid': 'bug-send',
     }, busy ? 'Sending…' : 'Send to the developer'),
     said,
   )

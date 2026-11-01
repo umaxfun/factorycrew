@@ -164,8 +164,8 @@ end
 local BUG = "kc_bug"
 local BUG_TIMEOUT_TICKS = 60 * 60 -- no answer in a minute: Kiro Crew is probably not running
 local WHAT_GOES = "What goes: your comment, the versions of the app, the mod and the game, the state and recent " ..
-  "logs of the bridge and the dispatcher, this tab's chat with Kira (questions, answers, tool calls) and, if " ..
-  "ticked, a screenshot of the game. Only the developer can see it."
+  "logs of the bridge and the dispatcher, this tab's whole raw session with Kira (every question, answer, tool " ..
+  "call and result, and their logs) and, if ticked, a screenshot of the game. Only the developer can see it."
 
 local function bug_mode(v)
   if v.bug and v.bug.state == "sending" then return "sending" end
@@ -195,7 +195,7 @@ local function refresh_bug(player)
     return l
   end
   if mode == "form" then
-    text("What went wrong? What did you expect?")
+    text("What went wrong? (optional: Send works with an empty comment)")
     local c = box.add{ type = "text-box", name = "kc_bug_comment" }
     c.style.width = 390
     c.style.height = 100
@@ -408,6 +408,14 @@ local function refresh_feed(player, frame)
   end
   if #tab.feed == 0 then
     pane.add{ type = "label", caption = "[color=gray]Ask anything about this run.[/color]" }
+  end
+  -- a turn that went wrong (stopped, no answer, Kiro Crew gave up on it): the report is one click
+  -- away, right under it, with the tab's raw session (docs/sentry.md, "Raw sessions")
+  if tab.state ~= "thinking" and last and (last.from == "stopped" or tab.note == "no_reply"
+      or (last.from == "kira" and type(last.text) == "string"
+          and (last.text:find("^Kiro Crew could not finish") or last.text:find("^Kiro has no credits")))) then
+    pane.add{ type = "button", name = "kc_bug_open_feed", caption = "Report this to the developer",
+              tooltip = "Sends this tab's whole session so the developer can see what went wrong" }
   end
   pane.scroll_to_bottom()
 end
@@ -625,7 +633,7 @@ function M.on_click(e, send)
   elseif name == "kc_notice_ok" then
     v.reports_notice_seen = true
     M.refresh(player)
-  elseif name == "kc_bug_open" then
+  elseif name == "kc_bug_open" or name == "kc_bug_open_feed" then
     if not (v.bug and v.bug.state == "sending") then v.bug, v.bug_open = nil, true end
     M.refresh(player)
   elseif name == "kc_bug_cancel" or name == "kc_bug_close" then

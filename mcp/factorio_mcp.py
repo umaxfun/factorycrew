@@ -795,7 +795,8 @@ def library_get(name: str) -> dict:
 # re-exec itself between the two calls), and the send takes the draft as it was shown.
 
 FEEDBACK_GOES = ("the text above, the versions of the app, the mod and the game, the bridge's state and recent "
-                 "log, and this tab's chat with Kira (questions, answers, tool calls). Only the developers see it.")
+                 "log, and this tab's whole session with Kira as Kiro Crew keeps it (questions, answers, every tool "
+                 "call and result, and its logs). Only the developers see it.")
 DRAFT_MAX_AGE = 24 * 3600
 
 
@@ -804,23 +805,18 @@ def _drafts_dir() -> Path:
     return Path(home) / "factorio" / "feedback-drafts"
 
 
-def _tab_chat(home: str | None, chat: str) -> bytes | None:
-    """The end of the tab's chat transcript, found through the dispatcher's state."""
+def _tab_session(home: str | None, chat: str) -> dict:
+    """The tab's whole raw session (report.session_files), found through the dispatcher's state."""
     if not home:
-        return None
+        return {"session/missing.txt": b"not running under Kiro Crew"}
     try:
         st = json.loads((Path(home) / "factorio" / "dispatch-state.json").read_text())
-    except (OSError, ValueError):
-        return None
-    run = current_run_id()
-    slot = (st.get("slots") or {}).get(f"{run}\t{chat}")
+    except (OSError, ValueError) as e:
+        return {"session/missing.txt": f"dispatch-state.json: {e}".encode()}
+    slot = (st.get("slots") or {}).get(f"{current_run_id()}\t{chat}")
     if not slot:
-        return None
-    try:
-        data = (Path(home) / "sessions" / f"dashboard_{slot}.jsonl").read_bytes()
-    except OSError:
-        return None
-    return data[-2 * 1024 * 1024:]
+        return {"session/missing.txt": f"tab {chat!r} has no chat".encode()}
+    return report.session_files(Path(home), slot)
 
 
 def feedback(args: dict) -> dict:
@@ -852,7 +848,7 @@ def feedback(args: dict) -> dict:
         files = {"report.json": json.dumps(info, ensure_ascii=False, indent=1).encode(),
                  "bridge-health.json": json.dumps(health, ensure_ascii=False, indent=1).encode(),
                  "bridge.log": "\n".join(recent).encode(),
-                 "chat.jsonl": _tab_chat(kirocrew_home(), draft["chat"])}
+                 **_tab_session(kirocrew_home(), draft["chat"])}
         res = report.bug_report(f"[{draft['kind']}] {draft['text']}", files, "kira", {"kind": draft["kind"], "by": "kira"})
         if res.get("ok"):
             p.unlink(missing_ok=True)
