@@ -57,6 +57,7 @@ function M.refresh_data(p)
   local c = compile(p)
   if not c.fn then
     p.error, p.errors = "compile: " .. tostring(c.err), (p.errors or 0) + 1
+    if p.errors == 1 then protocol.queue_lua_error("panel", p.error, p.lua, p.name) end
   else
     -- the player may have moved to another surface since the panel was made
     local fresh = protocol.query_env()
@@ -69,6 +70,8 @@ function M.refresh_data(p)
     local blocks = ok and as_blocks(res)
     if not ok then
       p.error, p.errors = tostring(res), (p.errors or 0) + 1
+      -- the first failure in a row goes to the developer with the code; the rest repeat it
+      if p.errors == 1 then protocol.queue_lua_error("panel", p.error, p.lua, p.name) end
     elseif not blocks then
       p.error, p.errors = "the body must return a view: a list of blocks (text, {columns, rows}, {bar, max})", (p.errors or 0) + 1
     else
@@ -616,6 +619,7 @@ function M.run_action(player, name, action, args)
     p.action_error = nil
   else
     p.action_error = action .. ": " .. tostring(err)
+    protocol.queue_lua_error("panel_action", p.action_error, src, name)
     player.print("[KC] panel " .. (p.title or name) .. ", button " .. action .. " failed: " .. tostring(err))
   end
   M.refresh_data(p)

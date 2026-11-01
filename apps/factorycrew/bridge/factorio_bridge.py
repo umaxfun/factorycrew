@@ -14,6 +14,7 @@ import asyncio
 import itertools
 import json
 import logging
+import threading
 import time
 import urllib.parse
 from collections import deque
@@ -28,6 +29,68 @@ ACTIVITY_MAX = 80  # chars of a progress note shown in the window's status line
 TRACE_MAX = 240  # chars of one trace line (what Kira wrote / which tool she ran) for the window
 
 log = logging.getLogger("factorio-bridge")
+
+
+def _load_report():
+    """report/kc_report.py (docs/sentry.md): one level up, in the repo and in the app. None when
+    it is missing or broken: the bridge runs the same without error reports."""
+    import sys
+    from pathlib import Path
+    d = Path(__file__).resolve().parent.parent / "report"
+    if not (d / "kc_report.py").exists():
+        return None
+    sys.path.insert(0, str(d))
+    try:
+        import kc_report
+        return kc_report
+    except Exception:  # noqa: BLE001
+        return None
+
+
+report = _load_report()
+LOG_LINES = 400  # the bridge's last log lines, for a bug report
+
+
+class RecentLog(logging.Handler):
+    """Keeps the last LOG_LINES formatted log lines in memory (a bug report sends them)."""
+
+    def __init__(self):
+        super().__init__(logging.INFO)
+        self.lines: deque[str] = deque(maxlen=LOG_LINES)
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+
+    def emit(self, record) -> None:
+        try:
+            self.lines.append(self.format(record))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+RECENT = RecentLog()
+
+
+def report_exception(exc: BaseException, **tags) -> None:
+    if report:
+        report.capture_exception(exc, {"part": "bridge", **tags})
+
+
+BUG_FALLBACK_S = 15  # a bug report no dispatcher took by then is sent by the bridge
+
+
+def bug_tags(ask: dict, by: str) -> dict:
+    return {"by": by, "mod_version": ask.get("mod_version") or "?", "factorio": ask.get("factorio_version") or "?"}
+
+
+def bug_report_files(ask: dict, note: str = "") -> dict:
+    """What a bug report from the window holds, before the dispatcher adds the chat (the
+    dispatcher's own copy of this list is in dispatcher/factorio_dispatch.py, bug_report)."""
+    info = {k: ask.get(k) for k in ("id", "chat", "run_id", "run_name", "mod_version", "factorio_version", "tick")}
+    files = {"report.json": json.dumps({**info, "note": note or None}, ensure_ascii=False, indent=1).encode(),
+             "bridge-health.json": json.dumps(ask.get("health"), ensure_ascii=False, indent=1).encode(),
+             "bridge.log": (ask.get("bridge_log") or "").encode()}
+    if report:
+        files["screenshot.png"] = report.read_screenshot(ask.get("screenshot"))
+    return files
 
 
 class BridgeError(Exception):
@@ -268,8 +331,9 @@ class Bridge(asyncio.DatagramProtocol):
         if msg is not None:
             try:
                 self.on_game_message(msg)
-            except Exception:  # never let one bad packet kill the loop
+            except Exception as e:  # never let one bad packet kill the loop
                 log.exception("failed to handle %r", msg.get("type"))
+                report_exception(e, message_type=str(msg.get("type")))
 
     def send_game(self, msg: dict) -> None:
         if not self.transport:
@@ -336,12 +400,61 @@ class Bridge(asyncio.DatagramProtocol):
             parts = self.atlas_parts.get(str(msg.get("id")))
             if parts is not None and isinstance(msg.get("seq"), int) and isinstance(msg.get("text"), str):
                 parts[msg["seq"]] = msg["text"]
+        elif t == "bug_report":
+            # the window's "Report a problem" (docs/sentry.md, T3): the dispatcher adds the tab's
+            # chat and sends it; if no dispatcher takes it in BUG_FALLBACK_S, the bridge sends
+            # what it has itself, so a report still goes when the dispatcher is the broken part
+            self.game.last_seen = time.monotonic()
+            if msg.get("id") in self.seen_asks:
+                return
+            self.seen_asks.append(msg.get("id"))
+            ask = {"kind": "bug_report", **{k: msg.get(k) for k in (
+                "id", "chat", "comment", "screenshot", "run_id", "run_name", "mod_version", "factorio_version", "tick")},
+                "health": self.health(), "bridge_log": "\n".join(RECENT.lines)}
+            self.asks.append(ask)
+            self.ask_event.set()
+            log.info("bug report %s [%s]", msg.get("id"), msg.get("chat"))
+            asyncio.get_running_loop().call_later(BUG_FALLBACK_S, self.bug_fallback, ask)
+        elif t == "lua_error":
+            # Lua that failed inside the game with no request waiting for it: a panel's body or
+            # button, or the mod's own handler (docs/sentry.md, T2). It goes with the failing code.
+            self.game.last_seen = time.monotonic()
+            self.report_lua(str(msg.get("message") or "?"), str(msg.get("source") or "mod"),
+                            msg.get("lua") if isinstance(msg.get("lua"), str) else None,
+                            name=msg.get("name"))
         elif t == "result":
             fut = self.pending.pop(str(msg.get("id")), None)
             if fut and not fut.done():
                 fut.set_result(msg)
         else:
             log.debug("ignoring %r", t)
+
+    def bug_fallback(self, ask: dict) -> None:
+        """No dispatcher took the bug report: send it from here, without the chat."""
+        if ask not in self.asks:
+            return  # taken (leased, or done)
+        self.asks.remove(ask)
+        log.info("bug report %s: no dispatcher took it in %d s, sending it from the bridge", ask["id"], BUG_FALLBACK_S)
+        files = bug_report_files(ask, note=f"No dispatcher took this report in {BUG_FALLBACK_S} s, so the bridge "
+                                           "sent it without the tab's chat.")
+        loop = asyncio.get_running_loop()
+
+        def work():
+            res = report.bug_report(ask.get("comment") or "", files, "button", bug_tags(ask, "bridge")) if report \
+                else {"ok": False, "error": "error reports are not installed (report/ is missing)"}
+            loop.call_soon_threadsafe(self.deliver, {"type": "bug_report_result", "id": ask["id"],
+                                                     "run_id": ask.get("run_id"), **res})
+        threading.Thread(target=work, daemon=True).start()
+
+    def report_lua(self, message: str, source: str, lua: str | None, **tags) -> None:
+        """A Lua error goes to the developer with the code that failed (Michael, 2026-11-01)."""
+        if not report:
+            return
+        files = [("code.lua", lua.encode(), "text/x-lua")] if lua else None
+        report.capture_message("LuaError", message, {
+            "part": "bridge", "source": source, "mod_version": self.game.mod_version or "?",
+            "app_version": self.s.app_version or "?",
+            **{k: str(v) for k, v in tags.items() if v is not None}}, files)
 
     def flush_outbox(self) -> None:
         keep: deque[dict] = deque()
@@ -440,8 +553,9 @@ class Bridge(asyncio.DatagramProtocol):
             if self.online() and "" not in self.atlas_store:
                 await self.atlas("", False, None, ATLAS_TIMEOUT)
                 log.info("atlas prefetched: %d chunks", len(self.atlas_store[""].chunks))
-        except Exception:
+        except Exception as e:
             log.exception("atlas prefetch failed")
+            report_exception(e, where="atlas_prefetch")
 
     # ── asks / thinking ──
 
@@ -582,6 +696,7 @@ class Bridge(asyncio.DatagramProtocol):
         g = self.game
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
+            "mod_version": g.mod_version, "app_version": self.s.app_version,
             "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
             "mod_version": g.mod_version, "app_version": self.s.app_version,
             "atlas_cached": {k or "player": v.version for k, v in self.atlas_store.items() if v.run_id == g.run_id},
@@ -599,6 +714,9 @@ class Bridge(asyncio.DatagramProtocol):
             self.agent_seen = time.monotonic()
         if method == "GET" and path == "/health":
             return 200, self.health()
+        if method == "GET" and path == "/recent_log":
+            # the bridge's last log lines, for Kira's factorio_feedback (docs/sentry.md, T4)
+            return 200, {"ok": True, "lines": list(RECENT.lines)}
         if method == "GET" and path == "/asks":
             self.dispatcher_seen = time.monotonic()
             wait = min(float(q.get("wait", 0)), 60.0)
@@ -626,6 +744,13 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "id is required")
             msg = {k: v for k, v in body.items() if k not in ("type", "v", "_agent")}
             msg["type"] = "library_result"
+            return 200, {"ok": True, "delivered": self.deliver(msg)}
+        if method == "POST" and path == "/bug_report_result":
+            # the dispatcher sent (or saved) a bug report: tell the window its id
+            if not isinstance(body.get("id"), str):
+                raise BridgeError("bad_request", "id is required")
+            msg = {k: body.get(k) for k in ("id", "run_id", "ok", "report_id", "path", "sent", "error")}
+            msg["type"] = "bug_report_result"
             return 200, {"ok": True, "delivered": self.deliver(msg)}
         if method == "POST" and path == "/trace":
             # a step of a running turn, from the dispatcher following the chat transcript
@@ -673,7 +798,11 @@ class Bridge(asyncio.DatagramProtocol):
                 raise BridgeError("bad_request", "lua is required")
             if path in ("/mark", "/unmark") and not isinstance(body.get("chat"), str) and not body.get("all"):
                 raise BridgeError("bad_request", "chat is required")
-            return 200, await self.request(msg, body.get("timeout"))
+            res = await self.request(msg, body.get("timeout"))
+            if path == "/query" and body.get("_agent") and res.get("error") in ("compile_error", "runtime_error"):
+                self.report_lua(str(res.get("message") or res["error"]), "factorio_query", body["lua"],
+                                error=res["error"])
+            return 200, res
         return 404, {"ok": False, "error": "not_found", "message": f"{method} {path}"}
 
     async def handle_http(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -702,6 +831,7 @@ class Bridge(asyncio.DatagramProtocol):
             status, obj = 400, {"ok": False, "error": "bad_request", "message": str(e)}
         except Exception as e:
             log.exception("http handler failed")
+            report_exception(e, where="http", path=target.partition("?")[0] if "target" in locals() else "?")
             obj = {"ok": False, "error": "internal", "message": str(e)}
         data = json.dumps(obj, ensure_ascii=False).encode()
         reason = {200: "OK", 400: "Bad Request", 404: "Not Found"}.get(status, "Error")
@@ -720,6 +850,14 @@ class Bridge(asyncio.DatagramProtocol):
 
 async def serve(settings: Settings) -> None:
     loop = asyncio.get_running_loop()
+    if RECENT not in logging.getLogger().handlers:  # the app backend may have added it already
+        logging.getLogger().addHandler(RECENT)
+    if report:
+        # the app backend runs this in its own process and has set reports up already
+        if report.reporter() is None:
+            report.configure("bridge")
+            report.install_hooks()
+        loop.set_exception_handler(report.asyncio_handler)
     bridge = Bridge(settings)
     await loop.create_datagram_endpoint(lambda: bridge, local_addr=(settings.host, settings.udp_port))
     server = await asyncio.start_server(bridge.handle_http, settings.http_host, settings.http_port)

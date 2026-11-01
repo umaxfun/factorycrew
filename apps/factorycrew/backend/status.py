@@ -138,7 +138,7 @@ def installed_agent(home: Path) -> tuple[Path | None, dict | None]:
     return None, None
 
 
-def status(config: dict, mods_dir: Path | None, mod_note: str) -> dict:
+def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str | None = None) -> dict:
     home = kirocrew_home()
     port = int(config.get("http_port", 34198))
     game_port = int(config.get("game_port", 34200))
@@ -151,8 +151,14 @@ def status(config: dict, mods_dir: Path | None, mod_note: str) -> dict:
     else:
         checks.append(check("kirocrew", "Kiro Crew", "ok", f"version {v or 'unknown'}, home {home}"))
 
-    h = bridge_health(port)
-    if h is None:
+    # a bridge that could not take its ports: what answers on them is someone else's
+    h = None if bridge_error else bridge_health(port)
+    if bridge_error:
+        checks.append(check("bridge", "Bridge", "fail", bridge_error,
+                            "Another program holds the port, most likely Factorio Companion in another Kiro Crew "
+                            "on this machine. Disable the app there (or set other ports in this app's "
+                            "data/config.json), then disable and enable it here."))
+    elif h is None:
         checks.append(check("bridge", "Bridge", "fail", f"no answer on 127.0.0.1:{port}",
                             "Disable and enable the app; if it stays down, another program may hold the port."))
     else:

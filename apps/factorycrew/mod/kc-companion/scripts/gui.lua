@@ -81,6 +81,8 @@ local function build(player)
   local inner = frame.add{ type = "frame", name = "kc_inner", direction = "vertical", style = "inside_shallow_frame_with_padding" }
   inner.style.width = WIDTH
 
+  local kc_notice_row = inner.add{ type = "flow", name = "kc_notice_row", direction = "horizontal" }
+  kc_notice_row.style.vertical_align = "center"
   local kc_run_row = inner.add{ type = "flow", name = "kc_run_row", direction = "horizontal" }
   kc_run_row.style.vertical_align = "center"
   local kc_tabs_row = inner.add{ type = "flow", name = "kc_tabs_row", direction = "horizontal" }
@@ -134,7 +136,117 @@ local function refresh_run(player, frame)
   else
     row.add{ type = "label", caption = { "", "[font=default-bold]Run:[/font] ", storage.kc.run_name } }
     tool(row, "kc_run_rename", "utility/rename_icon", "Rename the run")
+    local filler = row.add{ type = "empty-widget" }
+    filler.style.horizontally_stretchable = true
+    row.add{ type = "button", name = "kc_bug_open", caption = "Report a problem",
+             tooltip = "Send the developer a bug report with what is needed to look into it" }
   end
+end
+
+-- Automatic error reports are on by default (docs/sentry.md): the window says so once.
+local function refresh_notice(player, frame)
+  local row = find(frame, "kc_notice_row")
+  row.clear()
+  local v = view(player)
+  row.visible = not v.reports_notice_seen
+  if v.reports_notice_seen then return end
+  local l = row.add{ type = "label", caption = "[color=gray]When something in Kira's app fails, it sends the developer " ..
+    "the error and the versions, never your questions or chats. Turn it off on the Factorio page in Kiro Crew.[/color]" }
+  l.style.single_line = false
+  l.style.maximal_width = WIDTH - 70
+  local filler = row.add{ type = "empty-widget" }
+  filler.style.horizontally_stretchable = true
+  row.add{ type = "button", name = "kc_notice_ok", caption = "OK" }
+end
+
+-- ── bug report dialog (docs/sentry.md, T3) ───────────────────────────────
+
+local BUG = "kc_bug"
+local BUG_TIMEOUT_TICKS = 60 * 60 -- no answer in a minute: Kiro Crew is probably not running
+local WHAT_GOES = "What goes: your comment, the versions of the app, the mod and the game, the state and recent " ..
+  "logs of the bridge and the dispatcher, this tab's whole raw session with Kira (every question, answer, tool " ..
+  "call and result, and their logs) and, if ticked, a screenshot of the game. Only the developer can see it."
+
+local function bug_mode(v)
+  if v.bug and v.bug.state == "sending" then return "sending" end
+  if v.bug and v.bug.state == "done" then return "done" end
+  return v.bug_open and "form" or nil
+end
+
+local function refresh_bug(player)
+  local v = view(player)
+  local mode = bug_mode(v)
+  local fr = player.gui.screen[BUG]
+  if not mode then
+    if fr then fr.destroy() end
+    return
+  end
+  if fr and fr.tags.mode == mode then return end -- unchanged: keep what the player typed
+  if fr then fr.destroy() end
+  fr = player.gui.screen.add{ type = "frame", name = BUG, direction = "vertical", caption = "Report a problem",
+                              tags = { mode = mode } }
+  fr.auto_center = true
+  local box = fr.add{ type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding" }
+  box.style.width = 420
+  local function text(s)
+    local l = box.add{ type = "label", caption = s }
+    l.style.single_line = false
+    l.style.maximal_width = 390
+    return l
+  end
+  if mode == "form" then
+    text("What went wrong? (optional: Send works with an empty comment)")
+    local c = box.add{ type = "text-box", name = "kc_bug_comment" }
+    c.style.width = 390
+    c.style.height = 100
+    c.word_wrap = true
+    box.add{ type = "checkbox", name = "kc_bug_shot", caption = "Include a screenshot", state = true }
+    text("[color=gray]" .. WHAT_GOES .. "[/color]")
+    local buttons = fr.add{ type = "flow", direction = "horizontal" }
+    buttons.add{ type = "button", name = "kc_bug_cancel", caption = "Cancel", style = "back_button" }
+    local filler = buttons.add{ type = "empty-widget" }
+    filler.style.horizontally_stretchable = true
+    buttons.add{ type = "button", name = "kc_bug_send", caption = "Send", style = "confirm_button" }
+    c.focus()
+  else
+    local b = v.bug
+    if mode == "sending" then
+      text("Collecting and sending the report…")
+    elseif b.ok and b.sent then
+      text("Sent. Report id: [font=default-bold]" .. tostring(b.report_id) .. "[/font]. Give it to the developer " ..
+        "if you talk to them.")
+    elseif b.ok then
+      text("Saved: it will be sent when the network is back. Report id: [font=default-bold]" ..
+        tostring(b.report_id) .. "[/font].")
+      if b.path then text("[color=gray]A copy is in " .. tostring(b.path) .. "[/color]") end
+    else
+      text("[color=red]Could not send the report: " .. tostring(b.error) .. "[/color]")
+    end
+    if mode == "done" then
+      local buttons = fr.add{ type = "flow", direction = "horizontal" }
+      local filler = buttons.add{ type = "empty-widget" }
+      filler.style.horizontally_stretchable = true
+      buttons.add{ type = "button", name = "kc_bug_close", caption = "Close" }
+    end
+  end
+end
+
+local function send_bug_report(player, send)
+  local fr = player.gui.screen[BUG]
+  local comment = fr and find(fr, "kc_bug_comment") and find(fr, "kc_bug_comment").text or ""
+  local shot = fr and find(fr, "kc_bug_shot") and find(fr, "kc_bug_shot").state
+  local v = view(player)
+  v.bug_open = false
+  local msg = protocol.bug_report_request(player, v.tab, comment, nil)
+  if shot then
+    local path = "kc-bug/" .. msg.id .. ".png"
+    -- by_player: only the reporting player's game writes the file; fails headless, which is fine
+    if pcall(game.take_screenshot, { player = player, by_player = player, path = path, show_gui = true,
+                                      resolution = { 1600, 900 } }) then
+      msg.screenshot = path
+    end
+  end
+  send(msg)
 end
 
 -- Tabs wrap into a grid of fixed-width buttons, so any number of tabs stays inside the window:
@@ -297,6 +409,14 @@ local function refresh_feed(player, frame)
   if #tab.feed == 0 then
     pane.add{ type = "label", caption = "[color=gray]Ask anything about this run.[/color]" }
   end
+  -- a turn that went wrong (stopped, no answer, Kiro Crew gave up on it): the report is one click
+  -- away, right under it, with the tab's raw session (docs/sentry.md, "Raw sessions")
+  if tab.state ~= "thinking" and last and (last.from == "stopped" or tab.note == "no_reply"
+      or (last.from == "kira" and type(last.text) == "string"
+          and (last.text:find("^Kiro Crew could not finish") or last.text:find("^Kiro has no credits")))) then
+    pane.add{ type = "button", name = "kc_bug_open_feed", caption = "Report this to the developer",
+              tooltip = "Sends this tab's whole session so the developer can see what went wrong" }
+  end
   pane.scroll_to_bottom()
 end
 
@@ -421,8 +541,10 @@ end
 
 function M.refresh(player)
   refresh_library(player)
+  refresh_bug(player)
   local frame = root(player)
   if not frame then return end
+  if frame.kc_inner.kc_notice_row then refresh_notice(player, frame) end -- a window built before 0.3.8 has no row
   refresh_run(player, frame)
   refresh_tabs(player, frame)
   refresh_status(player, frame)
@@ -439,6 +561,12 @@ end
 --- Cheap periodic update: connection indicator and unacked warnings only.
 function M.tick()
   for _, p in pairs(game.connected_players) do
+    local b = view(p).bug
+    if b and b.state == "sending" and game.tick - b.tick > BUG_TIMEOUT_TICKS then
+      view(p).bug = { id = b.id, state = "done", ok = false, tick = game.tick,
+                      error = "no answer from Kiro Crew in a minute. Is it running, with the Factorio app enabled?" }
+      refresh_bug(p)
+    end
     local frame = root(p)
     if frame then
       refresh_status(p, frame)
@@ -501,6 +629,18 @@ function M.on_click(e, send)
     submit(player, send)
   elseif name == "kc_stop" then
     send(protocol.stop_request(v.tab))
+    M.refresh(player)
+  elseif name == "kc_notice_ok" then
+    v.reports_notice_seen = true
+    M.refresh(player)
+  elseif name == "kc_bug_open" or name == "kc_bug_open_feed" then
+    if not (v.bug and v.bug.state == "sending") then v.bug, v.bug_open = nil, true end
+    M.refresh(player)
+  elseif name == "kc_bug_cancel" or name == "kc_bug_close" then
+    v.bug, v.bug_open = nil, false
+    M.refresh(player)
+  elseif name == "kc_bug_send" then
+    send_bug_report(player, send)
     M.refresh(player)
   elseif el.tags and el.tags.kc_option then
     submit(player, send, el.tags.kc_option)
@@ -611,10 +751,38 @@ function M.click(name, send, index)
   local player = player_of(index)
   local frame = root(player)
   local lib = player.gui.left.kc_library
-  local el = (frame and find(frame, name)) or (lib and find(lib, name)) or mod_gui.get_button_flow(player)[name]
+  local bug = player.gui.screen[BUG]
+  local el = (frame and find(frame, name)) or (lib and find(lib, name)) or (bug and find(bug, name))
+    or mod_gui.get_button_flow(player)[name]
   if not el then return false end
   M.on_click({ element = el, player_index = player.index }, send)
   return true
+end
+
+--- Type into a field or set a checkbox of the window or the bug report dialog (tests, ui_dev).
+function M.set_field(name, value, index)
+  local player = player_of(index)
+  for _, fr in ipairs({ root(player), player.gui.screen[BUG] }) do
+    local el = fr and find(fr, name)
+    if el then
+      if el.type == "checkbox" then el.state = value and true or false else el.text = tostring(value) end
+      return true
+    end
+  end
+  return false
+end
+
+--- What the bug report dialog shows now: {mode, text} or nil (tests).
+function M.bug_dialog(index)
+  local fr = player_of(index).gui.screen[BUG]
+  if not fr then return nil end
+  local out = {}
+  local function walk(el)
+    if el.type == "label" then out[#out + 1] = tostring(el.caption) end
+    for _, c in pairs(el.children) do walk(c) end
+  end
+  walk(fr)
+  return { mode = fr.tags.mode, text = table.concat(out, "\n") }
 end
 
 --- Type into a text field and press Enter.

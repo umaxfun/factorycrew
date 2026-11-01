@@ -19,6 +19,36 @@ local function init_players()
   for _, p in pairs(game.players) do gui.ensure_button(p) end
 end
 
+-- Lua errors queued by panels and by guarded() go to the bridge, which reports them with the
+-- code (docs/sentry.md).
+local function flush_lua_errors()
+  for _, m in ipairs(protocol.take_lua_errors()) do send(m) end
+end
+
+-- An error in the mod's own handler would stop the game with Factorio's error screen. It is
+-- caught instead, sent to the developer with its traceback, and the player is told once per
+-- session; the game goes on.
+local told = false
+local function report_mod_error(where, err)
+  protocol.queue_lua_error("mod", where .. ": " .. tostring(err))
+  flush_lua_errors()
+  if not told then
+    told = true
+    game.print("[KC] Kira's mod hit an internal error (" .. where .. ") and sent a report to the developer. " ..
+      "You can keep playing.")
+  end
+end
+
+local function guarded(where, fn)
+  return function(e)
+    local ok, err = xpcall(fn, debug.traceback, e)
+    if not ok then report_mod_error(where, err) end
+  end
+end
+
+-- what the bridge waits on: a failed handler still answers, so the tool call does not time out
+local REQUESTS = { query = true, atlas = true, mark = true, unmark = true, list_marks = true }
+
 script.on_init(function()
   protocol.init_storage()
   init_players()
@@ -51,11 +81,12 @@ script.on_nth_tick(protocol.HEARTBEAT_TICKS, function()
   send(protocol.heartbeat())
 end)
 
-script.on_nth_tick(60, function()
+script.on_nth_tick(60, guarded("tick", function()
   gui.tick()
   panels.tick()
   if panels.library_tick() then gui.refresh_all() end
-end)
+  flush_lua_errors()
+end))
 
 -- the base changed: the atlas's cached structure is stale (the MCP server compares atlas_version)
 local function changed(e)
@@ -81,24 +112,34 @@ end)
 
 -- what changes the window when it arrives from the bridge
 local REFRESH = { reply = true, status = true, ack = true, mark = true, unmark = true, trace = true,
-                  library_result = true }
+                  library_result = true, bug_report_result = true }
 
-script.on_event(defines.events.on_udp_packet_received, function(e)
+local function on_packet(e)
   local msg = protocol.decode(e.payload)
   if not msg then return end
-  local was_connected = protocol.connected()
-  local update_to = protocol.update_to
-  if msg.type == "library_result" then
-    if not msg.run_id or msg.run_id == storage.kc.run_id then panels.on_library(msg) end
-  else
-    for _, reply in ipairs(protocol.handle(msg)) do
-      send(reply)
+  local ok, err = xpcall(function()
+    local was_connected = protocol.connected()
+    local update_to = protocol.update_to
+    if msg.type == "library_result" then
+      if not msg.run_id or msg.run_id == storage.kc.run_id then panels.on_library(msg) end
+    else
+      for _, reply in ipairs(protocol.handle(msg)) do
+        send(reply)
+      end
     end
+    if REFRESH[msg.type] or (msg.type == "pong" and (not was_connected or protocol.update_to ~= update_to)) then
+      gui.refresh_all()
+    end
+  end, debug.traceback)
+  if not ok then
+    if REQUESTS[msg.type] and msg.id then
+      send({ type = "result", id = msg.id, ok = false, error = "mod_error", message = string.sub(tostring(err), 1, 500) })
+    end
+    report_mod_error("handling " .. tostring(msg.type), err)
   end
-  if REFRESH[msg.type] or (msg.type == "pong" and (not was_connected or protocol.update_to ~= update_to)) then
-    gui.refresh_all()
-  end
-end)
+end
+
+script.on_event(defines.events.on_udp_packet_received, on_packet)
 
 script.on_event(defines.events.on_chart_tag_removed, function(e)
   protocol.on_tag_removed(e.tag)
@@ -134,21 +175,22 @@ script.on_event("kc-clear-cursor", function(e)
   pointers.drop_tool(game.get_player(e.player_index))
 end)
 
-script.on_event(defines.events.on_gui_click, function(e)
+script.on_event(defines.events.on_gui_click, guarded("click", function(e)
   if panels.on_click(e) then
     gui.refresh(game.get_player(e.player_index)) -- the Panels row shows which are open
+    flush_lua_errors() -- a panel button that failed
     return
   end
   gui.on_click(e, send)
-end)
+end))
 
-script.on_event(defines.events.on_gui_selection_state_changed, function(e)
+script.on_event(defines.events.on_gui_selection_state_changed, guarded("selection", function(e)
   panels.on_selection(e)
-end)
+end))
 
-script.on_event(defines.events.on_gui_confirmed, function(e)
+script.on_event(defines.events.on_gui_confirmed, guarded("confirm", function(e)
   gui.on_confirmed(e, send)
-end)
+end))
 
 -- Entry points for level 2/3 tests over RCON (they act as the player).
 remote.add_interface("kc", {
@@ -171,6 +213,15 @@ remote.add_interface("kc", {
   ui_close = function(index) gui.close(index) end,
   ui_click = function(name, index) return gui.click(name, send, index) end,
   ui_confirm = function(name, text, index) return gui.confirm(name, text, send, index) end,
+  ui_set = function(name, value, index) return gui.set_field(name, value, index) end,
+  -- a bug report as the window sends it, for a server with no player (level 2)
+  bug_report = function(chat, comment)
+    local m = protocol.bug_report_request(game.connected_players[1], chat, comment, nil)
+    send(m)
+    return m.id
+  end,
+  last_bug_result = function() return protocol.last_bug_result or false end, -- nil would drop the key in JSON
+  bug_dialog = function(index) return gui.bug_dialog(index) end,
   -- pointers as if made with the tool: {x, y} is a click, {{x0, y0}, {x1, y1}} a drag
   point = function(where, index)
     local player = game.get_player(index or 1)
