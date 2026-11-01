@@ -88,6 +88,7 @@ After an update everything else picks up the new code by itself, with no Kiro Cr
 - the bridge and the status page run in the app backend, which Kiro Crew restarts on update;
 - the dispatcher's wake exits when its file changes, and the next wake (within 30 s) runs the new code;
 - Kira's MCP server: each open chat keeps its own server process, so before every tool call the server compares the installed `app.json` version with the one it started with and, on a change, re-executes itself in the same process (same pid and stdio, the chat keeps its connection) and handles that call with the new code. A tool added by the update shows in an open chat only after the chat restarts: the client reads the tool list once;
+- the app always talks to the Kiro Crew it is installed in, also when another gateway runs on the same machine (a second install, another user's gateway on the default port 5476); the status page's "Panel library" line shows whether saving works;
 - panels that were in the game before the update but have no artifact (up to 0.3.5 an installed app saved none) are saved once per run by the dispatcher.
 
 Verified 2026-10-31 on a dev gateway through the real update route (`POST /api/apps/factorycrew/update`, 0.3.5 to a build marked 0.3.6) with a stand-in game on UDP: Kira's MCP server kept its pid, re-executed with the new code, and her next `factorio_saved_panels` call answered; the bridge's `pong` carried the new version.

@@ -235,3 +235,58 @@ def test_dispatcher_saves_panels_the_game_has_but_no_artifact(fake_crew, monkeyp
     assert "| iron-plate | 5000 |" in (fake_crew / f"{slug}.json").read_text()
     assert len(json.loads((fake_crew / f"{SLUG}.json").read_text())["versions"]) == 1
     assert d.save_unsaved_panels({}, "d988dac8-0", "Run 1", m=m) == []
+
+
+def test_cyrillic_panel_names_get_their_own_artifacts():
+    a, b = m.artifact_slug("Нехватка в логистике", "r1"), m.artifact_slug("Наука в час", "r1")
+    assert a != b and a.startswith("factorio-panel-r1-panel-") and d.LIST_LINE.match(a + "  v1  markdown  [x]  t")
+    assert m.artifact_slug("Science made", "r1") == "factorio-panel-r1-science-made"  # ASCII names keep their slug
+    assert m.artifact_slug("Iron плиты", "r1").startswith("factorio-panel-r1-iron-")
+
+
+def test_the_cli_dials_our_gateway_not_the_default_port(fake_crew, tmp_path, monkeypatch):
+    # a second gateway on 5476 (another install or user) answered "gateway ownership not verified"
+    seen = tmp_path / "port"
+    cli = Path(os.environ["PATH"].split(":")[0]) / "kirocrew"
+    cli.write_text(cli.read_text().replace("a = sys.argv[1:]", f"open({str(seen)!r}, 'w').write(os.environ.get('KIROCREW_PORT', ''))\na = sys.argv[1:]", 1))
+    monkeypatch.setattr(m, "GATEWAY_PORT_FILE", tmp_path / "gateway_port")
+    monkeypatch.delenv("KIROCREW_BOUND_PORT", raising=False)
+    monkeypatch.setenv("KIROCREW_PORT", "5476")
+    m._kc("list", "--tag", "x")
+    assert seen.read_text() == "5476"
+    (tmp_path / "gateway_port").write_text("12345\n")  # what the dispatcher saw
+    m._kc("list", "--tag", "x")
+    assert seen.read_text() == "12345"
+    monkeypatch.setenv("KIROCREW_BOUND_PORT", "12346")  # the gateway's own export wins
+    m._kc("list", "--tag", "x")
+    assert seen.read_text() == "12346"
+
+
+def test_dispatcher_records_the_port_of_its_gateway(tmp_path, monkeypatch):
+    app = tmp_path / "apps" / "factorycrew"
+    (app / "dispatcher").mkdir(parents=True)
+    (app / "app.json").write_text("{}")
+    monkeypatch.setattr(d, "__file__", str(app / "dispatcher" / "factorio_dispatch.py"))
+    monkeypatch.delenv("KIROCREW_PORT", raising=False)
+
+    class Ctx:
+        _port = 12345
+    d.remember_gateway_port(Ctx())
+    assert (app / "data" / "gateway_port").read_text().strip() == "12345" and os.environ["KIROCREW_PORT"] == "12345"
+
+
+def test_a_failed_backfill_is_tried_again(monkeypatch):
+    class M:
+        artifact_slug = staticmethod(m.artifact_slug)
+        lua_long_string = staticmethod(m.lua_long_string)
+
+        @staticmethod
+        def library_save(spec, res):
+            return {"ok": False, "reason": "gateway ownership not verified"}
+    monkeypatch.setattr(d, "library_list", lambda run_id: [])
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: {"ok": True, "data": (
+        ["p"] if body["lua"] == d.PANEL_NAMES_LUA else {"name": "p", "lua": "return {}"})})
+    monkeypatch.setattr(d, "_mcp_module", lambda: M)
+    done = []
+    d.panel_sync({}, "r1", "Run 1", done)
+    assert done == [], "a run whose panels were not saved must not be marked as done"

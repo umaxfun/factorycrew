@@ -34,6 +34,11 @@ CLEAN=(env -i HOME="$HOME" USER="${USER:-}" LOGNAME="${LOGNAME:-}" SHELL="${SHEL
        KIROCREW_HOME="$KIROCREW_HOME" KIRO_HOME="$KIRO_HOME" KIROCREW_PORT="$KIROCREW_PORT"
        KIROCREW_SKIP_MODEL_DOWNLOAD=1 KIRO_NO_AUTO_UPDATE=1
        ${KIROCREW_BUNDLED_KIRO_DIR:+KIROCREW_BUNDLED_KIRO_DIR="$KIROCREW_BUNDLED_KIRO_DIR"})
+# The gateway itself starts without KIROCREW_PORT, only with --port, the way the desktop app starts
+# a player's gateway: inherited by crons and MCP servers, the variable hid that their CLI calls
+# dialed 5476 (another gateway on a machine with two), and players' panels went unsaved.
+GATEWAY=()
+for a in "${CLEAN[@]}"; do [[ "$a" == KIROCREW_PORT=* ]] || GATEWAY+=("$a"); done
 
 up() { curl -fsS -o /dev/null --max-time 2 "$URL/api/health" 2>/dev/null; }
 
@@ -62,14 +67,14 @@ case "${1:-status}" in
     # foreground, for launchd (scripts/services.sh)
     mkdir -p "$KIROCREW_HOME" "$KIRO_HOME" "$KIROCREW_HOME/tmp"
     [ -f "$KIRO_HOME/agents/kirocrew.json" ] || "${CLEAN[@]}" kirocrew setup --agent-only || true
-    exec "${CLEAN[@]}" kirocrew gateway --no-open --no-tunnel --port "$KIROCREW_PORT"
+    exec "${GATEWAY[@]}" kirocrew gateway --no-open --no-tunnel --port "$KIROCREW_PORT"
     ;;
   start)
     if up; then echo "already up: $URL"; exit 0; fi
     mkdir -p "$KIROCREW_HOME" "$KIRO_HOME" "$KIROCREW_HOME/tmp"
     [ -f "$KIRO_HOME/agents/kirocrew.json" ] || "${CLEAN[@]}" kirocrew setup --agent-only >>"$LOG" 2>&1 || true
     # detached: survives this shell; stop with `scripts/kc.sh stop`
-    nohup "${CLEAN[@]}" kirocrew gateway --no-open --no-tunnel --port "$KIROCREW_PORT" >>"$LOG" 2>&1 < /dev/null &
+    nohup "${GATEWAY[@]}" kirocrew gateway --no-open --no-tunnel --port "$KIROCREW_PORT" >>"$LOG" 2>&1 < /dev/null &
     for _ in $(seq 1 120); do up && { echo "up: $URL"; exit 0; }; sleep 1; done
     echo "gateway did not come up in 120 s, see $LOG" >&2; exit 1
     ;;

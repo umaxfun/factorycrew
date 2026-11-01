@@ -36,7 +36,7 @@ The bridge counts every call flagged `_agent` as a step of Kira's turn (`bridge/
 ## Talks to
 
 - Uses: [Bridge](bridge.md), its HTTP API on 127.0.0.1 (`bridge_post` :265, `bridge_health` :530; routes in `bridge/factorio_bridge.py:538-615`).
-- Uses: the `kirocrew artifact` CLI of the gateway it runs under, only when it knows the home (`KIROCREW_HOME`, else the install path `<home>/apps/<app>/mcp/`, `kirocrew_home` :468) and `FC_NO_ARTIFACTS` is not set (`_kirocrew` :481).
+- Uses: the `kirocrew artifact` CLI of the gateway it runs under, only when it knows the home (`KIROCREW_HOME`, else the install path `<home>/apps/<app>/mcp/`, `kirocrew_home` :468) and `FC_NO_ARTIFACTS` is not set (`_kirocrew` :481). It passes the CLI its gateway's port (`gateway_port`): `KIROCREW_BOUND_PORT` from the env, else `<app>/data/gateway_port` written by the dispatcher, else `KIROCREW_PORT` (`test_panel_tool.py::test_the_cli_dials_our_gateway_not_the_default_port`).
 - Uses: [kc library](kc-library.md) and [Skills](skills.md) (`mcp/kc`, `skills/*/lib`), copied into each compute run (:361-369); [Atlas](atlas.md) (`mcp/kc/atlas.py`) is imported in-process (:704); the mod side of panels is [Panels](panels.md).
 - Used by: [Kira agent](kira-agent.md), through kiro-cli for each chat, over newline-delimited JSON-RPC on stdio (`agent/factorio-companion.json`, `app/app.json`).
 - Used by: the dispatcher, which shares the artifact naming (`dispatcher/factorio_dispatch.py:382-386`, `tests/unit/test_panel_tool.py::test_dispatcher_and_mcp_agree_on_names`).

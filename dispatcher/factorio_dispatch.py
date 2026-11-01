@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -458,10 +459,20 @@ def run_tag(run_id):
     return "factorio-run-" + (re.sub(r"[^a-z0-9]+", "-", str(run_id).lower()).strip("-") or "unknown")
 
 
+def kirocrew_exe():
+    """The CLI of the gateway running this cron (its Python's own launcher), then PATH: a stale
+    ~/.local/bin/kirocrew can belong to another, older install."""
+    sibling = os.path.join(os.path.dirname(sys.executable), "kirocrew")
+    if os.access(sibling, os.X_OK):
+        return sibling
+    return shutil.which("kirocrew") or os.path.expanduser("~/.local/bin/kirocrew")
+
+
 def artifact_cli(*argv, timeout=30):
-    exe = shutil.which("kirocrew") or os.path.expanduser("~/.local/bin/kirocrew")
+    """`kirocrew artifact ...` against this gateway: KIROCREW_PORT is the cron's own port, set by
+    remember_gateway_port, so a second gateway on the default port is never asked."""
     try:
-        p = subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
+        p = subprocess.run([kirocrew_exe(), "artifact", *argv], capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError) as exc:
         raise LibraryError(f"kirocrew artifact {argv[0]}: {exc}") from exc
@@ -514,8 +525,8 @@ def library(cfg, ask):
                 res["panels"] = [p for p in listed if p["slug"] != slug]
         else:
             res["panels"] = library_list(run_id)
-    except LibraryError as exc:
-        res.update(ok=False, error=str(exc))
+    except Exception as exc:  # the window waits for an answer: always send one
+        res.update(ok=False, error=str(exc)[-300:] or type(exc).__name__)
     try:
         bridge(cfg, "POST", "/library_result", res, timeout=10)
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -530,14 +541,20 @@ PANEL_NAMES_LUA = ("local out = {} for _, p in ipairs(remote.call('kc', 'panels'
 PANEL_LUA = "for _, p in ipairs(remote.call('kc', 'panels')) do if p.name == %s then return p end end"
 
 
+_MCP = []
+
+
 def _mcp_module():
-    """The MCP server's code beside this script: one place builds and saves a panel's artifact."""
-    import importlib.util
-    path = Path(__file__).resolve().parents[1] / "mcp" / "factorio_mcp.py"
-    spec = importlib.util.spec_from_file_location("factorio_mcp_for_dispatch", path)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    """The MCP server's code beside this script, loaded once: one place builds and saves a panel's
+    artifact and calls the CLI."""
+    if not _MCP:
+        import importlib.util
+        path = Path(__file__).parents[1] / "mcp" / "factorio_mcp.py"
+        spec = importlib.util.spec_from_file_location("factorio_mcp_for_dispatch", path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _MCP.append(m)
+    return _MCP[0]
 
 
 def save_unsaved_panels(cfg, run_id, run_name, m=None):
@@ -561,10 +578,10 @@ def save_unsaved_panels(cfg, run_id, run_name, m=None):
         res = {"run_id": run_id, "run_name": run_name, "every": p.get("every"), "input": p.get("input"),
                "view": p.get("view")}
         out = m.library_save(spec, res)
-        if out.get("ok"):
-            saved.append(out["slug"])
-        else:
-            print(f"panel {name}: not saved: {out.get('reason')}")
+        if not out.get("ok"):
+            # not done: the run is tried again on the next wake instead of being marked as saved
+            raise LibraryError(f"panel {name}: not saved: {out.get('reason')}")
+        saved.append(out["slug"])
     return saved
 
 
@@ -572,7 +589,7 @@ def panel_sync(cfg, run_id, run_name, done):
     """Once per run (dispatcher state `panels_backfilled`); `done` gets the run_id on success."""
     try:
         saved = save_unsaved_panels(cfg, run_id, run_name)
-    except (LibraryError, urllib.error.URLError, OSError, ValueError) as exc:
+    except Exception as exc:  # a thread: anything uncaught would vanish (in a checkout there is no mcp/ beside it)
         print(f"saving the game's panels: {exc}")  # tried again on the next wake
         return
     if saved:
@@ -665,7 +682,25 @@ def app_config() -> dict:
     return out
 
 
+def remember_gateway_port(ctx):
+    """Tell the CLI calls which gateway is ours. A cron child's env names no port (the context pops
+    it), so the CLI would dial 5476, another gateway on a machine with two; the MCP server reads the
+    same file (its env may lack the port too)."""
+    port = getattr(ctx, "_port", None)
+    if not isinstance(port, int) or port <= 0:
+        return
+    os.environ["KIROCREW_PORT"] = str(port)
+    app = Path(__file__).parents[1]
+    if (app / "app.json").exists():  # an installed app, not a checkout
+        try:
+            (app / "data").mkdir(exist_ok=True)
+            (app / "data" / "gateway_port").write_text(f"{port}\n")
+        except OSError as exc:
+            print(f"could not write the gateway port: {exc}")
+
+
 def run(ctx):
+    remember_gateway_port(ctx)
     cfg = dict(CONFIG)
     cfg.update(app_config())
     if ctx.message.strip().startswith("{"):

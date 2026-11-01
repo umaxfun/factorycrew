@@ -5,7 +5,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 ## Main files
 
 - `scripts/stand.sh`: one stand per worktree: `up`, `claim`, `check`, `env`, `status`, `ui`, `kc`, `down`, `release`. Picks a slot by `mkdir` claim plus port ownership.
-- `scripts/kc.sh`: the factorycrew Kiro Crew gateway (default :5477, `~/.kirocrew-factorio`; `FC_KC_PORT`/`FC_KC_HOME` override). `install` writes the agent and the dispatcher; any other subcommand goes to `kirocrew`.
+- `scripts/kc.sh`: the factorycrew Kiro Crew gateway (default :5477, `~/.kirocrew-factorio`; `FC_KC_PORT`/`FC_KC_HOME` override). `install` writes the agent and the dispatcher; any other subcommand goes to `kirocrew`. The gateway itself starts with `--port` and no `KIROCREW_PORT` in its env (`GATEWAY`), as the desktop app starts a player's: the inherited variable once hid that crons dialed the default port.
 - `tools/ui_dev.py`: a real 2.0.77 client plus a bridge for one data dir: `start`, `stop`, `restart`, `shot`, `lua`, `steps`, `digest`. Writes `bridge.sha` and `game-mod.sha` for `stand.sh check`.
 - `scripts/check.sh`: the fast check: `unit`, `level1-2.0`, `level1-2.1`, `level2`; logs in `.test-data/check/<step>.log`.
 - `scripts/test-unit.sh`, `test-mod.sh`, `test-mod-2.1.sh`, `test-integration.sh`, `test-e2e.sh`: the levels. `test-app-e2e.sh` belongs to [the app](app.md).

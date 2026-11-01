@@ -40,6 +40,7 @@ def fake_install(tmp_path, monkeypatch, mcp_servers=True, version="0.11.0-rc.1")
     monkeypatch.setenv("KIROCREW_HOME", str(home))
     monkeypatch.setattr(st, "kirocrew_version", lambda: version)
     monkeypatch.setattr(st, "probe_mcp", lambda: {"tools": ["factorio_query", "factorio_reply"], "ms": 5, "stderr": ""})
+    monkeypatch.setattr(st, "probe_library", lambda: {"ok": True, "n": 0})
     mods = tmp_path / "mods"
     (mods / "kc-companion").mkdir(parents=True)
     shipped = json.loads((ROOT / "mod" / "kc-companion" / "info.json").read_text())["version"]
@@ -158,3 +159,13 @@ def test_a_mod_folder_the_app_did_not_put_there_is_left_alone(tmp_path, monkeypa
     monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.3.3"))
     assert "not managed by the app" in server.install_mod(mods)
     assert json.loads((mods / "kc-companion" / "info.json").read_text())["version"] == "9.9.9"
+
+
+def test_a_library_the_cli_cannot_reach_fails_the_page(tmp_path, monkeypatch):
+    mods = fake_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(st, "probe_library", lambda: {"ok": False, "error": "gateway ownership not verified"})
+    srv = fake_bridge(HEALTHY)
+    res = st.status({"http_port": srv.server_port}, mods, "")
+    srv.shutdown()
+    c = by_id(res)["library"]
+    assert res["state"] == "fail" and c["state"] == "fail" and "ownership not verified" in c["detail"], c

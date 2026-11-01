@@ -20,7 +20,7 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 - Uses: [Bridge](bridge.md), through `GET /asks?wait=<≤25>&lease=60`, `POST /asks/done`, `/reply` (the failure notice and the fallback copy), `/trace`, `/turn_end`, `/stopped`, `/library_result` (`dispatcher/factorio_dispatch.py:554`, `:495`, `:492`, `:327`, `:371`, `:460`).
 - Uses: Kiro Crew `ScriptContext`: `list_session_folders`, private `_post("/api/chat/folders")`, `_post("/api/chat/slots")` and `_post("/api/chat/slots/<slot>/stop")`, `set_session_mode(slot, "trust_reads")`, `send_to_session` (`dispatcher/factorio_dispatch.py:92-160`, `:471`).
 - Uses: the chat transcript `<KIROCREW_HOME>/sessions/dashboard_<slot>.jsonl`, read-only (`dispatcher/factorio_dispatch.py:261-263`).
-- Uses: the `kirocrew artifact` CLI for the library (`dispatcher/factorio_dispatch.py:401`), see [Panels](panels.md).
+- Uses: the `kirocrew artifact` CLI for the library (`artifact_cli`, `kirocrew_exe`: the launcher beside the gateway's Python first), see [Panels](panels.md). It sets `KIROCREW_PORT` to its own gateway's port from the cron context (`remember_gateway_port`) and, in an installed app, writes it to `<app>/data/gateway_port` for the MCP server and the status page.
 - Uses: `<app>/data/config.json` for `http_port`, `agent`, `state_file` when it runs as the app's cron (`dispatcher/factorio_dispatch.py:511-523`).
 - Used by: Kiro Crew, which runs `run(ctx)` as cron `factorio-dispatch`: from `app/app.json:29-38` in the [App](app.md), or registered by `scripts/test-e2e.sh:26-29` and `scripts/stand.sh:194-196` on a [dev stand](dev-stand.md) gateway.
 - Used by: [Kira](kira-agent.md) (agent `factorio-companion`), which reads the header it writes (`agent/factorio-companion.md:7`, `:22`).
@@ -44,6 +44,8 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 - Stdlib only, runs on the macOS system `python3` 3.9 (`README.md` "Layout", `docs/worktrees.md` "Requirements on the host").
 - Once per run (`panels_backfilled` in the dispatcher state) it saves the game's working panels that have no artifact, through the MCP server's own `library_save`, off the loop in a thread; a panel the player later deletes from the library is not saved again (`save_unsaved_panels`, `panel_sync`; `tests/unit/test_panel_tool.py::test_dispatcher_saves_panels_the_game_has_but_no_artifact`). It reads the game with plain `POST /query`, without `_agent`, so these are not Kira's steps.
 - A wake exits when its own file or the app config changes (`source_stamp`), so an app update reaches the dispatcher within one `every` (30 s).
+- Every CLI call goes to the gateway that runs this cron, never to the default port: a cron child's env names no port (Kiro Crew's `ScriptContext` pops `_KIROCREW_DIAL_PORT`), so without `remember_gateway_port` the CLI dialed 5476, which on a machine with a second gateway is someone else's and answers "gateway ownership not verified" (`test_panel_tool.py::test_dispatcher_records_the_port_of_its_gateway`). Up to 0.3.7 this left the gamer account's library and backfill empty.
+- A backfill whose save fails is not marked done and runs again on the next wake (`test_panel_tool.py::test_a_failed_backfill_is_tried_again`). The library answers the window on any error, not only `LibraryError`.
 
 ## Easy to break
 
