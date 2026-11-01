@@ -6,7 +6,8 @@ The bridge is the only process that talks UDP to the game. It gives the dispatch
 
 - `bridge/factorio_bridge.py`: the whole bridge, stdlib only, one asyncio loop (`bridge/factorio_bridge.py:1-9`).
   - `encode`, `Reassembler`: UDP framing into `part` packets and reassembly by `id` (`:77`, `:105`).
-  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`stop`/`atlas_part`/`result` from the game (`:276`).
+  - `Bridge.on_game_message`: `hello`/`heartbeat`/`ask`/`library`/`stop`/`atlas_part`/`lua_error`/`result` from the game.
+  - `report`, `report_exception`, `Bridge.report_lua`, `RECENT`, `bug_report_files`, `Bridge.bug_fallback`: error reports, the last log lines, and a window's bug report sent by the bridge when no dispatcher takes it in 15 s; see [Error and bug reports](../sentry.md).
   - `request`: one call to the game, waits for its `result` (`:344`).
   - `take_asks`, `confirm_asks`, `requeue_expired`: the ask queue and its lease (`:424-460`).
   - `set_thinking`, `activity`, `idle_timeout`, `end_turn`, `turn_end`, `stopped`, `reply`: the per-tab status and the idle clock (20 min, a backstop) (`:462-524`).
@@ -26,6 +27,8 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 | `POST /query`, `/mark`, `/unmark`, `/list_marks` | MCP | forwarded to the game, answer waited for |
 | `POST /atlas` | MCP `factorio_atlas` | see [Atlas](atlas.md) |
 | `POST /library_result` | dispatcher | panel library answer to the game, see [Panels](panels.md) |
+| `POST /bug_report_result` | dispatcher | a bug report's id (or error) to the game, see [Error and bug reports](../sentry.md) |
+| `GET /recent_log` | MCP server | the bridge's last 400 log lines, for `factorio_feedback` |
 | `POST /turn_end {chat, ask_id?}` | dispatcher | the turn ended in the transcript with no answer to the game: `idle`, `no_reply` |
 | `POST /stopped {chat, run_id, ok, error?}` | dispatcher | the window's Stop was carried out (`idle`, `stopped`) or failed (`thinking`, `stop_failed`) |
 

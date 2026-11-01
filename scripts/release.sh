@@ -48,7 +48,7 @@ fi
 git tag -a "v$NEW" -m "factorycrew $NEW"
 SRC="$(git rev-parse --short HEAD)"
 
-./scripts/build-app.sh >/dev/null
+FC_REPORT_ENV=prod ./scripts/build-app.sh >/dev/null  # players' reports go to Sentry environment `prod`
 
 # The release branch holds builds only (no source history): an orphan on first use.
 WT="$(mktemp -d)/release"

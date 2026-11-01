@@ -232,7 +232,22 @@ class Stack:
 
 
 @pytest.fixture(scope="session")
-def stack():
+def sentry():
+    """A fake Sentry for every part of the stack (docs/sentry.md): what the bridge and the MCP
+    server report lands here, and nothing a test plants reaches the real one."""
+    import sys
+    sys.path.insert(0, str(ROOT / "tests"))
+    from fake_sentry import FakeSentry
+    s = FakeSentry()
+    outbox = DATA / "outbox"
+    shutil.rmtree(outbox, ignore_errors=True)
+    os.environ.update(FC_SENTRY_DSN=s.dsn, FC_REPORT_OUTBOX=str(outbox), FC_REPORT_ENV="dev-l2")
+    yield s
+    s.close()
+
+
+@pytest.fixture(scope="session")
+def stack(sentry):
     s = Stack()
     s.prepare()
     s.start_bridge()

@@ -86,11 +86,20 @@ def revive(x0, y0, x1, y1):
     return r["revived"], ([] if r["failed"] == {} else r["failed"])
 
 
-def transcript(tab):
-    st = json.loads((KC_HOME / "factorio" / "dispatch-state.json").read_text())
-    slots = [v for k, v in st["slots"].items() if k.endswith(f"\t{tab}")]
-    assert slots, f"no chat for tab {tab}"
-    return (KC_HOME / "sessions" / f"dashboard_{slots[-1]}.jsonl").read_text(encoding="utf-8")
+def transcript(tab, needle="kc."):
+    """The tab's chat transcript. The answer reaches the game before the gateway writes the turn's
+    tool rows (2026-11-01: `kc.circuits` was missing at the check and present a second later), so
+    wait up to 30 s for `needle` to show up."""
+    text = ""
+    for _ in range(30):
+        st = json.loads((KC_HOME / "factorio" / "dispatch-state.json").read_text())
+        slots = [v for k, v in st["slots"].items() if k.endswith(f"\t{tab}")]
+        assert slots, f"no chat for tab {tab}"
+        text = (KC_HOME / "sessions" / f"dashboard_{slots[-1]}.jsonl").read_text(encoding="utf-8")
+        if needle in text:
+            break
+        time.sleep(1)
+    return text
 
 
 def teleport(x, y):
@@ -160,7 +169,7 @@ def test_explains_why_a_lamp_never_lights(kira):
     assert "green" in low and "red" in low, "the cause is the decider reading only the green wire"
     after = lua(DECIDER_NETS.replace("ID", "{%s, %s}" % tuple(ids["decider"])))
     assert after == {"red": False, "green": True, "constant": 100}, f"changed without consent: {after}"
-    assert "kc.circuits" in transcript(tab), "expected the diagnosis to read the network with kc.circuits"
+    assert "kc.circuits" in transcript(tab, "kc.circuits"), "expected the diagnosis to read the network with kc.circuits"
 
 
 # ── 2. the player's real bug: trains leave Unload with cargo ─────────────
@@ -240,7 +249,7 @@ def test_finds_why_trains_leave_with_cargo(kira):
     assert "400" in low, "cause 2: the unload inserters stop at 400 plates in the chests"
     after = lua(TRAIN_STATE.replace("TID", str(ids["train"])).replace("INS", lua_points(ids["inserters"])))
     assert after == before, f"changed without consent: {before} -> {after}"
-    log = transcript(tab)
+    log = transcript(tab, "kc.circuits")
     assert "kc.circuits" in log and ("get_schedule" in log or "schedule" in log), "expected network and schedule reads"
 
 
@@ -278,7 +287,7 @@ def test_powers_scattered_lamps_from_the_grid(kira):
     nets = lua(LAMP_NETS.replace("LAMPS", lua_points(ids["lamps"])).replace("GRID", "{%s, %s}" % tuple(ids["grid"])))
     print(f"revived {n}; networks {nets}")
     assert nets["grid"] and all(x == nets["grid"] for x in nets["lamps"]), nets
-    assert "kc.trial_start" in transcript(tab), "expected Kira to try the build before replying"
+    assert "kc.trial_start" in transcript(tab, "kc.trial_start"), "expected Kira to try the build before replying"
 
 
 # ── 4. a rate question answered from the save's own data ─────────────────
@@ -320,4 +329,4 @@ def test_moves_items_by_belt_around_a_wall(kira):
     print(f"revived {n}")
     got = lambda: lua(f"return game.surfaces[1].find_entity('wooden-chest', {{{ids['b'][0]}, {ids['b'][1]}}}).get_item_count('iron-plate')")  # noqa: E731
     wait_until(lambda: got() > 0, timeout=120, step=2, what="iron plates arriving in the target chest")
-    assert "kc.trial_start" in transcript(tab), "expected Kira to try the build before replying"
+    assert "kc.trial_start" in transcript(tab, "kc.trial_start"), "expected Kira to try the build before replying"

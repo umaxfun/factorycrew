@@ -5,6 +5,9 @@
 # client is not affected; UDP on 2.0.77 itself is checked in the live game (level 3).
 # Logs of the last run: .test-data/integration/{factorio,bridge,create}.log
 set -euo pipefail
+# Error reports (docs/sentry.md): tests send nothing to the real Sentry unless FC_SENTRY_DSN
+# is given; tests that check reports start their own fake one.
+export FC_SENTRY_DSN="${FC_SENTRY_DSN-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${FACTORIO_L2_VERSION:-2.1.23}"
 IMAGE="factorycrew-test:$VERSION"

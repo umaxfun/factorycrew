@@ -46,6 +46,43 @@ class DispatchError(RuntimeError):
     pass
 
 
+def _load_report():
+    """report/kc_report.py (docs/sentry.md): one level up in the repo and in the app, or next to
+    this file when scripts/kc.sh installed it into <home>/crons. None when missing: the
+    dispatcher runs the same without error reports."""
+    import sys
+    here = Path(__file__).resolve().parent
+    for d in (here.parent / "report", here / "report"):
+        if (d / "kc_report.py").exists():
+            sys.path.insert(0, str(d))
+            try:
+                import kc_report
+                return kc_report
+            except Exception:  # noqa: BLE001
+                return None
+    return None
+
+
+try:
+    report = _load_report()
+except NameError:  # no __file__ (exec'd source)
+    report = None
+LOG_LINES = 400
+RECENT_LOG: list = []  # this wake's last printed lines, for a bug report
+
+
+def note(line: str) -> None:
+    """print() for the cron's output, and a copy kept for a bug report."""
+    print(line)
+    RECENT_LOG.append(time.strftime("%H:%M:%S ") + line)
+    del RECENT_LOG[:-LOG_LINES]
+
+
+def report_exception(exc: BaseException, **tags) -> None:
+    if report:
+        report.capture_exception(exc, {"part": "dispatcher", **tags})
+
+
 # ── bridge ───────────────────────────────────────────────────────────────
 
 
@@ -362,7 +399,7 @@ class Tracer:
         try:
             bridge(self.cfg, "POST", "/turn_end", {"chat": w["chat"], "ask_id": w.get("ask_id")}, timeout=10)
         except (urllib.error.URLError, OSError, ValueError) as exc:
-            print(f"could not report the end of the turn for [{w['chat']}]: {exc}")
+            note(f"could not report the end of the turn for [{w['chat']}]: {exc}")
 
     def forward(self, w):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
@@ -378,9 +415,9 @@ class Tracer:
                                                     "ask_id": w.get("ask_id")}, timeout=10)
             if r.get("skipped"):
                 return
-            print(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
+            note(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
         except (urllib.error.URLError, OSError, ValueError) as exc:
-            print(f"could not forward the answer for [{w['chat']}]: {exc}")
+            note(f"could not forward the answer for [{w['chat']}]: {exc}")
 
     def poll(self):
         for slot, w in list(self.watch.items()):
@@ -409,7 +446,15 @@ class Tracer:
                 failure = turn_failed(row)
                 if failure:
                     # the turn died in Kiro Crew: its half-written text is no answer, the error is
-                    print(f"turn for [{w['chat']}] failed in Kiro Crew: {str(row.get('content'))[:160]}")
+                    note(f"turn for [{w['chat']}] failed in Kiro Crew: {str(row.get('content'))[:160]}")
+                    if report:
+                        # Kiro Crew's own error text (credits spent, model refused, ...), not the
+                        # player's: the developer sees how often turns die and why
+                        report.capture_message(
+                            "KiroCrewTurnError", " ".join(str(row.get("content") or "").split())[:300],
+                            {"part": "dispatcher",
+                             "usage_limit": str(USAGE_LIMIT.search(str(row.get("content") or "")) is not None)},
+                            level="warning")
                     w["last_text"] = failure
                     self.ended(w)
                     done = True
@@ -530,7 +575,7 @@ def library(cfg, ask):
     try:
         bridge(cfg, "POST", "/library_result", res, timeout=10)
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        print(f"library {op}: could not answer the game: {exc}")
+        note(f"library {op}: could not answer the game: {exc}")
     return res
 
 
@@ -590,10 +635,12 @@ def panel_sync(cfg, run_id, run_name, done):
     try:
         saved = save_unsaved_panels(cfg, run_id, run_name)
     except Exception as exc:  # a thread: anything uncaught would vanish (in a checkout there is no mcp/ beside it)
-        print(f"saving the game's panels: {exc}")  # tried again on the next wake
+        note(f"saving the game's panels: {exc}")  # tried again on the next wake
+        if not isinstance(exc, (LibraryError, urllib.error.URLError, OSError, ValueError)):
+            report_exception(exc, where="panel_sync")  # a bug, not a gateway or network hiccup
         return
     if saved:
-        print(f"saved {len(saved)} panels made before they were saved: {', '.join(saved)}")
+        note(f"saved {len(saved)} panels made before they were saved: {', '.join(saved)}")
     done.append(run_id)
 
 
@@ -611,7 +658,7 @@ def handle(ctx, cfg, st, ask, tracer=None):
             # new id on every reinstall or off/on. That chat belongs to a previous install: open
             # a fresh one for this tab (next key generation, same title and folder) and resend.
             k = f"{ask['run_id']}\t{ask['chat']}"
-            print(f"chat {slot} was opened by an earlier cron job; opening a new one for [{ask['chat']}]")
+            note(f"chat {slot} was opened by an earlier cron job; opening a new one for [{ask['chat']}]")
             st["slots"].pop(k, None)
             st["gen"][k] = st["gen"].get(k, 0) + 1
             slot = open_chat(ctx, cfg, st, ask)
@@ -622,14 +669,72 @@ def handle(ctx, cfg, st, ask, tracer=None):
     except Exception as exc:  # noqa: BLE001 - every failure is retried, then reported
         n = st["attempts"].get(ask["id"], 0) + 1
         st["attempts"][ask["id"]] = n
-        print(f"ask {ask['id']} attempt {n} failed: {exc}")
+        note(f"ask {ask['id']} attempt {n} failed: {exc}")
         if n < cfg["max_attempts"]:
             return False  # not confirmed: the lease puts it back
+        report_exception(exc, where="pass_question", attempts=n)
         bridge(cfg, "POST", "/reply", {
             "chat": ask["chat"], "text": f"Could not pass the question to Kiro Crew: {str(exc)[:200]}"})
     st["attempts"].pop(ask["id"], None)
     bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
     return True
+
+
+TRANSCRIPT_MAX = 2 * 1024 * 1024  # the end of a long chat is what matters
+
+
+def tab_transcript(st, run_id, chat) -> bytes | None:
+    """The end of the tab's chat transcript: what the player asked, what Kira did and answered."""
+    slot = st.get("slots", {}).get(f"{run_id}\t{chat}")
+    if not slot:
+        return None
+    try:
+        with open(transcript_path(slot), "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - TRANSCRIPT_MAX))
+            data = f.read()
+    except OSError:
+        return None
+    return data[data.find(b"\n") + 1:] if size > TRANSCRIPT_MAX else data
+
+
+def bug_report_files(st, ask) -> dict:
+    """{name: bytes} of a report from the window: the bridge's part (report.json, its health and
+    log; bridge/factorio_bridge.py, bug_report_files) plus this dispatcher's log, its state and
+    the tab's chat. The player saw this list in the dialog (mod/kc-companion/scripts/gui.lua)."""
+    info = {k: ask.get(k) for k in ("id", "chat", "run_id", "run_name", "mod_version", "factorio_version", "tick")}
+    info["dispatcher"] = {"file": __file__, "stamp": source_stamp()}
+    files = {
+        "report.json": json.dumps(info, ensure_ascii=False, indent=1).encode(),
+        "bridge-health.json": json.dumps(ask.get("health"), ensure_ascii=False, indent=1).encode(),
+        "bridge.log": (ask.get("bridge_log") or "").encode(),
+        "dispatcher.log": "\n".join(RECENT_LOG).encode(),
+        "dispatch-state.json": json.dumps({k: st.get(k) for k in ("slots", "gen", "runs")}, ensure_ascii=False,
+                                          indent=1).encode(),
+        "chat.jsonl": tab_transcript(st, ask.get("run_id"), ask.get("chat")),
+    }
+    if report:
+        files["screenshot.png"] = report.read_screenshot(ask.get("screenshot"))
+    return files
+
+
+def bug_report(cfg, st, ask):
+    """The window's "Report a problem": build the report, send it (or keep it for later) and tell
+    the window its id."""
+    if report:
+        res = report.bug_report(ask.get("comment") or "", bug_report_files(st, ask), "button",
+                                {"by": "dispatcher", "mod_version": ask.get("mod_version") or "?",
+                                 "factorio": ask.get("factorio_version") or "?"})
+    else:
+        res = {"ok": False, "error": "error reports are not installed (report/ is missing)"}
+    note(f"bug report {ask.get('id')}: {res.get('report_id') or res.get('error')}"
+         f"{' sent' if res.get('sent') else ' kept for later' if res.get('ok') else ''}")
+    try:
+        bridge(cfg, "POST", "/bug_report_result", {"id": ask["id"], "run_id": ask.get("run_id"), **res}, timeout=10)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        note(f"bug report {ask.get('id')}: could not tell the game: {exc}")
+    return res
 
 
 def stop_turn(ctx, cfg, st, ask, tracer=None):
@@ -647,11 +752,11 @@ def stop_turn(ctx, cfg, st, ask, tracer=None):
                 tracer.watch.pop(slot, None)
         except DispatchError as exc:
             res.update(ok=False, error=str(exc)[:160])
-    print(f"stop [{ask['chat']}]: {'stopped' if res['ok'] else res['error']}")
+    note(f"stop [{ask['chat']}]: {'stopped' if res['ok'] else res['error']}")
     try:
         bridge(cfg, "POST", "/stopped", res, timeout=10)
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        print(f"stop [{ask['chat']}]: could not tell the bridge: {exc}")
+        note(f"stop [{ask['chat']}]: could not tell the bridge: {exc}")
     return res
 
 
@@ -696,10 +801,24 @@ def remember_gateway_port(ctx):
             (app / "data").mkdir(exist_ok=True)
             (app / "data" / "gateway_port").write_text(f"{port}\n")
         except OSError as exc:
-            print(f"could not write the gateway port: {exc}")
+            note(f"could not write the gateway port: {exc}")
 
 
 def run(ctx):
+    """The cron's entry point: one wake. A crash is reported, then raised as before."""
+    if report:
+        report.configure("dispatcher")
+        report.install_hooks()  # threads (library, panel sync) that die uncaught
+    try:
+        return wake(ctx)
+    except Exception as exc:
+        report_exception(exc, where="wake")
+        if report:
+            report._drain()
+        raise
+
+
+def wake(ctx):
     remember_gateway_port(ctx)
     cfg = dict(CONFIG)
     cfg.update(app_config())
@@ -719,12 +838,12 @@ def run(ctx):
         if os.getppid() != parent:
             # The gateway that started this wake is gone (stopped or restarted) and does not
             # reap script children: exit, or two dispatchers end up sharing the queue.
-            print("gateway gone, dispatcher exiting")
+            note("gateway gone, dispatcher exiting")
             return
         if source_stamp() != stamp:
             # scripts/kc.sh install put a new version in place: without this the old code
             # keeps serving for up to run_seconds (it once sent a stale chat header).
-            print("dispatcher script updated, exiting so the next wake runs the new code")
+            note("dispatcher script updated, exiting so the next wake runs the new code")
             return
         # once per wake and loaded run: panels in the game that have no artifact get one
         # (each CLI call takes ~2 s, so off the loop like the library)
@@ -747,7 +866,7 @@ def run(ctx):
             # lease shorter than our retry path, so a crash mid-ask returns it quickly
             asks = bridge(cfg, "GET", f"/asks?wait={wait}&lease=60", timeout=wait + 15)["asks"]
         except (urllib.error.URLError, OSError, ValueError) as exc:
-            print(f"bridge unreachable: {exc}")
+            note(f"bridge unreachable: {exc}")
             time.sleep(5)
             continue
         for ask in asks:
@@ -760,7 +879,12 @@ def run(ctx):
                 bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
                 stop_turn(ctx, cfg, st, ask, tracer)
                 continue
+            if ask.get("kind") == "bug_report":
+                # reading the chat, a screenshot and sending take seconds: off the loop
+                bridge(cfg, "POST", "/asks/done", {"ids": [ask["id"]]})
+                threading.Thread(target=bug_report, args=(cfg, dict(st), ask), daemon=True).start()
+                continue
             if handle(ctx, cfg, st, ask, tracer):
                 handled += 1
             save_state(path, st)
-    print(f"dispatcher wake done, {handled} asks")
+    note(f"dispatcher wake done, {handled} asks")

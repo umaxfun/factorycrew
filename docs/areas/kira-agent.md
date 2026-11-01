@@ -22,6 +22,7 @@ The Kiro Crew agent `factorio-companion` that answers questions from the game: a
 
 ## Must stay true
 
+- "Bug reports and ideas for the developers": `factorio_feedback` makes a draft that sends nothing, she shows it with what goes and asks; only after a yes does she send it and give the report id (`tests/e2e/test_reports_e2e.py::test_kira_drafts_a_bug_report_and_sends_it_only_after_yes`). See [Error and bug reports](../sentry.md).
 - Every turn started by a game question ends with `factorio_reply(chat=<tab>)` (prompt in `agent/factorio-companion.json`; `agent/factorio-companion.md:7`). When it does not, the dispatcher forwards the turn's last text to the tab (`dispatcher/factorio_dispatch.py:317-333`; `tests/unit/test_dispatch.py::test_forwards_the_last_text_when_the_turn_skipped_factorio_reply`).
 - The answer is in the language the header names, not the run name's (`tests/unit/test_dispatch.py::test_header_says_the_language_and_not_the_run_name`; `tests/e2e/test_e2e.py::test_answers_in_the_players_language`; `tests/app_e2e/test_app_e2e.py::test_answers_in_the_players_language`).
 - Kira has only the `factorio` tools: `allowedTools` lists only that server and `includeMcpJson` is false (`agent/factorio-companion.json`; `tests/app_e2e/test_app_e2e.py::test_it_was_the_apps_agent` checks the app's turns call `@factorycrew:factorio/...`).

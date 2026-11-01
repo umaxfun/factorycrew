@@ -68,6 +68,7 @@
   "skills": [
     "skills/beacons",
     "skills/belts",
+    "skills/feedback",
     "skills/mining",
     "skills/pipes",
     "skills/power",

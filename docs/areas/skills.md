@@ -19,6 +19,7 @@ Seven pure-Python planners Kira imports inside `factorio_compute` (`import belts
 
 ## Must stay true
 
+- `skills/feedback` is a text skill: `SKILL.md` only, no `lib/`, a procedure around the `factorio_feedback` tool; Kira's rules carry the same steps and name it as "skill `feedback`" (`tests/unit/test_skills_listed.py::test_kiras_rules_name_every_text_skill`).
 - Stdlib only, and importable on `/usr/bin/python3` (3.9.6 here), the interpreter the repo agent's MCP server runs under (`agent/factorio-companion.json`, `mcpServers.factorio.command`; `factorio_compute` runs `sys.executable -I main.py`, `mcp/factorio_mcp.py:370`). Checked with `/usr/bin/python3 -c "import sys; sys.path[:0]=['skills/<s>/lib','mcp']; import <s>"` for all seven. The unit tests run on 3.12 (`scripts/test-unit.sh`), so they do not catch 3.10+ syntax.
 - No game access and no file or network access: the code runs in a seatbelt sandbox with no network, writes only in its temp dir, no reading the home dir (`mcp/factorio_mcp.py:302-313`; `tests/unit/test_compute.py::test_sandbox_blocks_network_home_and_writes`).
 - `import <skill>` works inside `factorio_compute` (`tests/unit/test_compute.py::test_skill_code_is_importable_in_compute`, for `belts` only).

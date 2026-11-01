@@ -21,6 +21,10 @@ BRIDGE="http://127.0.0.1:$FC_E2E_HTTP"
 K="$ROOT/scripts/kc.sh"
 
 "$K" install # before start: a gateway sees only the agents present when it starts
+# Error reports (docs/sentry.md): the stand's parts send nothing to the real Sentry. The gateway
+# may not pass env on to the dispatcher and Kira's MCP server, so it is this home's own setting;
+# tests/e2e/test_reports_e2e.py points it at a fake Sentry while it runs.
+mkdir -p "$FC_KC_HOME/factorio" && echo '{"dsn": ""}' > "$FC_KC_HOME/factorio/report.json"
 "$K" status >/dev/null 2>&1 || "$K" start
 "$K" config set agent.session_control true >/dev/null
 if ! "$K" cron list 2>/dev/null | grep -q factorio-dispatch; then
@@ -65,7 +69,7 @@ trap cleanup EXIT
 # Published to host loopback only: the bridge API has no auth.
 timeout -k 3 "$FC_DOCKER_START_S" docker run -d --name "$FC_E2E_CONTAINER" --platform linux/amd64 \
   -p "127.0.0.1:$FC_E2E_HTTP:34198" -p "127.0.0.1:$FC_E2E_RCON:27015" \
-  -e FC_INT_DATA=/work/.test-data/e2e -v "$ROOT:/work" "$IMAGE" \
+  -e FC_INT_DATA=/work/.test-data/e2e -e FC_SENTRY_DSN= -v "$ROOT:/work" "$IMAGE" \
   python3 -u /work/tests/e2e/stand.py >/dev/null
 # the stand must reach STAND_READY, and must still be running while we wait
 for _ in $(seq 1 120); do

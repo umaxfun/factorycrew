@@ -28,6 +28,8 @@ import factorio_bridge as fb  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import status  # noqa: E402  (status page checks)
 
+report = fb.report  # report/kc_report.py, loaded by the bridge module; None if missing
+
 log = logging.getLogger("factorycrew")
 MOD = "kc-companion"
 MANAGED_MARK = ".factorycrew-managed"  # a mod folder we installed and may replace
@@ -38,6 +40,47 @@ def load_config() -> dict:
         return json.loads((ROOT / "data" / "config.json").read_text())
     except (OSError, ValueError):
         return {}
+
+
+def settings() -> dict:
+    """What the status page can switch. `telemetry`: automatic error reports to the developer
+    (docs/sentry.md), on unless the player turned it off."""
+    return {"ok": True, "telemetry": load_config().get("telemetry", True) is not False}
+
+
+def save_settings(body: dict) -> dict:
+    """Only known keys with the right type; the rest of data/config.json is kept as it is.
+    Every part reads `telemetry` from the file on each report, so no restart is needed."""
+    if not isinstance(body, dict) or not isinstance(body.get("telemetry"), bool):
+        return {"ok": False, "error": "bad_request", "message": "expected {\"telemetry\": true|false}"}
+    cfg = load_config()
+    cfg["telemetry"] = body["telemetry"]
+    path = ROOT / "data" / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+    os.replace(tmp, path)
+    log.info("error reports %s", "on" if body["telemetry"] else "off")
+    return settings()
+
+
+def app_bug_report(body: dict) -> dict:
+    """The status page's "Send a bug report": for when the game window is not there to use. It
+    holds the comment, every status check and the last log lines of this process (the backend and
+    the bridge it runs); the chat of a tab only comes from the game window (docs/sentry.md, T3)."""
+    if not report:
+        return {"ok": False, "error": "error reports are not installed (report/ is missing)"}
+    comment = body.get("comment") if isinstance(body, dict) else None
+    if not isinstance(comment, str) or not comment.strip():
+        return {"ok": False, "error": "bad_request", "message": "write what went wrong first"}
+    try:
+        checks = status.status(STATE["config"], STATE["mods"], STATE["mod_note"], STATE.get("bridge_error"))
+    except Exception as e:  # noqa: BLE001 - the report is most needed when a check breaks
+        checks = {"error": f"{type(e).__name__}: {e}"}
+    files = {"status.json": json.dumps(checks, ensure_ascii=False, indent=1).encode(),
+             "config.json": json.dumps(load_config(), ensure_ascii=False, indent=1).encode(),
+             "backend.log": "\n".join(fb.RECENT.lines).encode()}
+    return report.bug_report(comment.strip()[:4000], files, "app", {"by": "app_page"})
 
 
 def factorio_mods_dir() -> Path | None:
@@ -81,12 +124,24 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
     /apps/factorycrew/api/status) for the liveness of every piece."""
     try:
         line = await asyncio.wait_for(reader.readline(), 5)
-        while (await asyncio.wait_for(reader.readline(), 5)) not in (b"\r\n", b"\n", b""):
-            pass  # headers: nothing here needs them
+        length = 0
+        while (h := await asyncio.wait_for(reader.readline(), 5)) not in (b"\r\n", b"\n", b""):
+            name, _, value = h.decode("latin-1").partition(":")
+            if name.strip().lower() == "content-length":
+                length = min(int(value.strip() or 0), 64 * 1024)  # a settings flip or a bug report comment
+        body_in = await asyncio.wait_for(reader.readexactly(length), 5) if length else b""
         parts = line.decode("latin-1").split(" ")
+        method = parts[0]
         path = parts[1].split("?", 1)[0] if len(parts) > 1 else "/"
         status_code = "200 OK"
-        if path == "/api/status":
+        if path == "/api/settings":
+            if method == "POST":
+                obj = save_settings(json.loads(body_in or b"{}"))
+            else:
+                obj = settings()
+        elif path == "/api/bug_report" and method == "POST":
+            obj = await asyncio.to_thread(app_bug_report, json.loads(body_in or b"{}"))
+        elif path == "/api/status":
             obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"],
                                           STATE["bridge_error"])
         elif path in ("/health", "/api/health"):
@@ -100,14 +155,21 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
         await writer.drain()
     except (asyncio.TimeoutError, ConnectionError):
         pass
-    except Exception:  # a broken check must not take the backend down
+    except Exception as e:  # a broken check must not take the backend down
         log.exception("request failed")
+        if report:
+            report.capture_exception(e, {"part": "backend", "where": "http"})
     finally:
         writer.close()
 
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if fb.RECENT not in logging.getLogger().handlers:  # the last lines, for a bug report from the status page
+        logging.getLogger().addHandler(fb.RECENT)
+    if report:
+        report.configure("backend")  # the bridge in this process reports through it too
+        report.install_hooks()
     cfg = load_config()
     mods = factorio_mods_dir()
     STATE.update(config=cfg, mods=mods)
@@ -117,6 +179,8 @@ async def main() -> None:
     except Exception as e:  # a failed mod copy must not keep the bridge down
         STATE["mod_note"] = f"mod install failed: {e}"
         log.exception("mod install failed")
+        if report:
+            report.capture_exception(e, {"part": "backend", "where": "install_mod"})
     s = fb.Settings(udp_port=int(cfg.get("udp_port", 34199)), game_port=int(cfg.get("game_port", 34200)),
                     http_port=int(cfg.get("http_port", 34198)), app_version=status._app_version())
     port = int(os.environ.get("PORT", "0"))

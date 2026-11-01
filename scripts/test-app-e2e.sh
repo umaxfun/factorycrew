@@ -12,6 +12,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 checkout_readable_by_gateway "$ROOT"
 eval "$("$ROOT/scripts/stand.sh" claim)"
 export FC_KC_HOME="$FC_APP_HOME" FC_KC_PORT="$FC_APP_PORT"
+# Error reports (docs/sentry.md): the installed app sends nothing to the real Sentry during the
+# run. A setting of this home, read by every part on each send (the gateway may not pass env on).
+mkdir -p "$FC_KC_HOME/factorio" && echo '{"dsn": ""}' > "$FC_KC_HOME/factorio/report.json"
 BRIDGE="http://127.0.0.1:$FC_APP_HTTP"
 
 "$ROOT/scripts/app-dev.sh" ports "$FC_APP_HTTP" "$FC_APP_UDP" "$FC_APP_GAME" >/dev/null
