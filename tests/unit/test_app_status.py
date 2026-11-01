@@ -169,3 +169,34 @@ def test_a_library_the_cli_cannot_reach_fails_the_page(tmp_path, monkeypatch):
     srv.shutdown()
     c = by_id(res)["library"]
     assert res["state"] == "fail" and c["state"] == "fail" and "ownership not verified" in c["detail"], c
+
+
+def test_a_bridge_that_lost_its_port_is_named_and_the_other_one_is_not_read(tmp_path, monkeypatch):
+    # the app in a second Kiro Crew: the first one's bridge answers on the port, healthy
+    mods = fake_install(tmp_path, monkeypatch)
+    srv = fake_bridge(HEALTHY)
+    res = st.status({"http_port": srv.server_port}, mods, "", "cannot open UDP :34199 / HTTP :34198: Address already in use")
+    srv.shutdown()
+    c = by_id(res)
+    assert res["state"] == "fail" and c["bridge"]["state"] == "fail" and "already in use" in c["bridge"]["detail"]
+    assert "another Kiro Crew" in c["bridge"]["fix"]
+    assert c["game"]["state"] == "idle" and c["dispatcher"]["state"] == "idle"  # not the other bridge's game
+
+
+def test_the_backend_survives_a_taken_bridge_port():
+    import asyncio
+    import socket
+    sys.path.insert(0, str(ROOT / "app" / "backend"))
+    import server
+    tcp = socket.socket()
+    tcp.bind(("127.0.0.1", 0))
+    tcp.listen()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    try:
+        s = server.fb.Settings(udp_port=udp.getsockname()[1], http_port=tcp.getsockname()[1], atlas_prefetch=False)
+        asyncio.run(asyncio.wait_for(server.run_bridge(s), 5))  # returns instead of raising
+    finally:
+        tcp.close()
+        udp.close()
+    assert "cannot open UDP" in server.STATE["bridge_error"], server.STATE

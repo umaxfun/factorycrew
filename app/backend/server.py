@@ -73,7 +73,7 @@ def install_mod(mods: Path | None) -> str:
     return f"mod {version} installed into {dst} (restart Factorio to load it)"
 
 
-STATE = {"config": {}, "mods": None, "mod_note": ""}
+STATE = {"config": {}, "mods": None, "mod_note": "", "bridge_error": None}
 
 
 async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -87,7 +87,8 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
         path = parts[1].split("?", 1)[0] if len(parts) > 1 else "/"
         status_code = "200 OK"
         if path == "/api/status":
-            obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"])
+            obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"],
+                                          STATE["bridge_error"])
         elif path in ("/health", "/api/health"):
             obj = {"status": "ok", "app": "factorycrew"}
         else:
@@ -123,7 +124,17 @@ async def main() -> None:
     hs = await asyncio.start_server(handle, "127.0.0.1", port)
     log.info("health on 127.0.0.1:%d", port)
     async with hs:
-        await asyncio.gather(hs.serve_forever(), fb.serve(s))
+        await asyncio.gather(hs.serve_forever(), run_bridge(s))
+
+
+async def run_bridge(s) -> None:
+    """The bridge; a port it cannot take is shown on the status page instead of killing the backend
+    (and the page with it). The usual cause: the app installed in a second Kiro Crew on this machine."""
+    try:
+        await fb.serve(s)
+    except OSError as e:
+        STATE["bridge_error"] = (f"cannot open UDP :{s.udp_port} / HTTP :{s.http_port}: {e.strerror or e}")
+        log.error("bridge not started: %s", STATE["bridge_error"])
 
 
 if __name__ == "__main__":
