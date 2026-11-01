@@ -21,6 +21,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 
 ## Must stay true
 
+- A thinking tab missing from the bridge's `pong.working` for `LOST_TICKS` (30 s) becomes idle, note `lost`; with no `working` in the pong nothing changes (`mod/kc-companion/tests/test-protocol.lua::drops a thinking tab the bridge no longer has a turn for, after half a minute`).
 - The UDP handler, the 60-tick handler and the GUI handlers run under `xpcall`: an error in the mod's own code is sent as `lua_error` (source `mod`, with the traceback), a request the bridge waits on is answered `mod_error`, the game prints one line per session and goes on (`mod/kc-companion/control.lua` `guarded`, `on_packet`; `tests/integration/test_reports_game.py::test_an_error_in_the_mods_own_handler_answers_and_is_reported`). See [Error and bug reports](../sentry.md).
 - The bridge's port is the literal line `M.BRIDGE_PORT = 34199` in protocol.lua; the dev stand finds and replaces that exact text (`tools/ui_dev.py:148`) and the mod digest skips it (`tools/ui_dev.py:106`)
 - `run_id` is minted once per map and never changes on later loads (`mod/kc-companion/tests/test-protocol.lua::run_id is minted once and stays stable`)

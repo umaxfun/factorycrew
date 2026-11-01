@@ -355,7 +355,10 @@ class Bridge(asyncio.DatagramProtocol):
             g.atlas_version = msg.get("atlas_version")
             g.atlas_dirty = msg.get("atlas_dirty")
             g.mod_version = msg.get("mod_version")
-            pong = {"type": "pong", "id": msg.get("id")}
+            # the tabs this bridge has a turn for (working, or a question still queued or leased):
+            # a tab "thinking" in the save that is not here lost its turn (a bridge or game
+            # restart), and the mod clears it instead of thinking forever
+            pong = {"type": "pong", "id": msg.get("id"), "working": self.live_chats(g.run_id)}
             if self.s.app_version:
                 pong["app_version"] = self.s.app_version
             self.send_game(pong)
@@ -455,6 +458,12 @@ class Bridge(asyncio.DatagramProtocol):
             "part": "bridge", "source": source, "mod_version": self.game.mod_version or "?",
             "app_version": self.s.app_version or "?",
             **{k: str(v) for k, v in tags.items() if v is not None}}, files)
+
+    def live_chats(self, run_id) -> list:
+        chats = {chat for (r, chat) in self.working if r == run_id}
+        chats |= {a.get("chat") for a in self.asks if not a.get("kind") and a.get("run_id") == run_id}
+        chats |= {a.get("chat") for a, _ in self.leased.values() if not a.get("kind") and a.get("run_id") == run_id}
+        return sorted(c for c in chats if isinstance(c, str))
 
     def flush_outbox(self) -> None:
         keep: deque[dict] = deque()

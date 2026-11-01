@@ -2,7 +2,7 @@
 
 ## How a turn works
 
-Calling tools: when a tool is called through `tool_call`, every parameter goes INSIDE `arguments` (`{"tool_id": "...factorio_query", "arguments": {"lua": "..."}}`). Parameters next to `arguments` are dropped and the tool sees an empty call (it answers "lua is required" / "chat and text are required").
+Calling tools: when a tool is called through `tool_call`, every parameter goes INSIDE `arguments` (`{"tool_id": "...factorio_query", "arguments": {"lua": "..."}}`). Parameters next to `arguments` are dropped and the tool sees an empty call (it answers "lua is required" / "chat and text are required"). `arguments` is a JSON OBJECT, never a string holding JSON: `"arguments": {"lua": "return 1"}`, not `"arguments": "{\"lua\": \"return 1\"}"`. The answer "Invalid input for tool_call — arguments: expected object, received string" means only that: the tool works, call it again with an object. Never conclude from it that the game's tools are broken or unavailable, and still end the turn with `factorio_reply` (2026-11-01: a turn took ten of these for broken tools and the player never got an answer).
 
 A message that starts with `[Factorio · run "R" · tab "T" · tick N · player P at (x, y) on S · reply in L]` is a question the player typed in the in-game tab `T`. Answer it, then END THE TURN WITH `factorio_reply(chat="T", text=...)`: that is the only way the answer reaches the game. `chat` is always the tab name from the header, verbatim.
 

@@ -511,6 +511,7 @@ function M.handle(msg)
     kc.last_pong_tick = game.tick
     local app = msg.app_version
     M.update_to = (type(app) == "string" and app ~= script.active_mods["kc-companion"]) and app or nil
+    if type(msg.working) == "table" and M.drop_lost_turns(msg.working) then M.dropped_turns = true end
   elseif t == "ack" then
     local e = find_feed_entry(msg.id)
     if e then e.acked = true end
@@ -560,6 +561,32 @@ function M.handle(msg)
     tab.state, tab.note = msg.state, msg.note
   end
   return {}
+end
+
+M.LOST_TICKS = 30 * 60 -- a thinking tab the bridge has not listed for this long lost its turn
+
+--- `working`: the chats the bridge has a turn for (its pong). A tab thinking here that the bridge
+--- does not know about lost its turn: the bridge or the game restarted under it, and no `idle`
+--- would ever come (gamer, 2026-11-01: "thinking… 1852 s" after an app update). It becomes idle
+--- with note "lost". Bridges before 0.3.10 send no `working`, and nothing changes then.
+function M.drop_lost_turns(working)
+  local listed = {}
+  for _, c in pairs(working) do listed[c] = true end
+  local changed = false
+  for chat, tab in pairs(storage.kc.tabs) do
+    if tab.state == "thinking" and not listed[chat] then
+      tab.unlisted_since = tab.unlisted_since or game.tick
+      if game.tick - tab.unlisted_since >= M.LOST_TICKS then
+        tab.state, tab.note = "idle", "lost"
+        tab.thinking_since, tab.steps, tab.activity, tab.trace, tab.stopping, tab.last_sign = nil, nil, nil, nil, nil, nil
+        tab.unlisted_since = nil
+        changed = true
+      end
+    else
+      tab.unlisted_since = nil
+    end
+  end
+  return changed
 end
 
 function M.connected()

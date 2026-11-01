@@ -7,6 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dispatcher"))
 import factorio_dispatch as d  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _own_home(tmp_path, monkeypatch):
+    """note() writes <home>/factorio/dispatcher.log: never the real one."""
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
 
 
 def test_reply_language_from_the_question_text():
@@ -288,3 +295,30 @@ def test_trace_lines_carry_kiras_text_and_tool_labels():
     (kind, label, _), = d.trace_lines({"role": "tool", "content": "🔧 @factorycrew:factorio/factorio_atlas"})
     assert kind == "tool" and label
     assert d.trace_lines({"role": "assistant", "content": "   "}) == []
+
+
+def test_a_turn_that_ends_under_the_next_wake_still_reaches_the_game(tmp_path, monkeypatch):
+    # gamer, 2026-11-01: the wake that sent the question ended, the turn finished in the chat,
+    # and the next wake knew nothing of it: no answer in the game, the tab "thinking" for good.
+    posted, t = _turn(tmp_path, monkeypatch, [{"role": "user", "content": "[Factorio ...]\nlubricant chain?"},
+                                              {"role": "assistant", "content": "Reading recipes."}])
+    st = d.load_state(tmp_path / "state.json")
+    st["watch"] = t.snapshot()
+    d.save_state(tmp_path / "state.json", st)  # what the loop writes after each poll
+    with open(d.transcript_path("s1"), "a", encoding="utf-8") as f:  # the turn ends between wakes
+        f.write(json.dumps({"role": "assistant", "content": "Use heavy oil cracking.",
+                            "meta": {"turn_stats": {"credits": 2}}}) + "\n")
+    nxt = d.Tracer({})
+    nxt.restore(d.load_state(tmp_path / "state.json")["watch"])
+    assert nxt.watch["s1"]["asked"] is True and nxt.watch["s1"]["chat"] == "General"
+    nxt.poll()
+    assert ("/reply", {"chat": "General", "text": "Use heavy oil cracking.", "fallback": True, "ask_id": None}) in posted
+    assert ("/turn_end", {"chat": "General", "ask_id": None}) in posted and nxt.watch == {}
+
+
+def test_the_dispatcher_log_outlives_a_wake(tmp_path):
+    d.note("first wake: asked")
+    d.RECENT_LOG.clear()  # a new wake starts with an empty memory
+    d.note("second wake: started")
+    tail = d.log_tail()
+    assert b"first wake: asked" in tail and b"second wake: started" in tail

@@ -101,6 +101,21 @@ describe("handle", function()
     assert(protocol.connected())
   end)
 
+  it("drops a thinking tab the bridge no longer has a turn for, after half a minute", function()
+    protocol.handle({ type = "status", chat = "lost-tab", state = "thinking" })
+    protocol.handle({ type = "status", chat = "live-tab", state = "thinking" })
+    local lost, live = protocol.tab("lost-tab"), protocol.tab("live-tab")
+    protocol.handle({ type = "pong", id = "p", working = { "live-tab" } })
+    assert(lost.state == "thinking", "dropped at the first pong: a queued question races it")
+    lost.unlisted_since = game.tick - protocol.LOST_TICKS
+    protocol.handle({ type = "pong", id = "p", working = { "live-tab" } })
+    assert(lost.state == "idle" and lost.note == "lost" and lost.thinking_since == nil, serpent.line(lost))
+    assert(live.state == "thinking" and live.unlisted_since == nil, serpent.line(live))
+    protocol.handle({ type = "pong", id = "p" }) -- an older bridge sends no list: nothing changes
+    assert(live.state == "thinking")
+    protocol.handle({ type = "status", chat = "live-tab", state = "idle" })
+  end)
+
   it("reports its version and learns from the pong that the app has a newer one", function()
     local mine = script.active_mods["kc-companion"]
     assert(mine and protocol.heartbeat().mod_version == mine, serpent.line(protocol.heartbeat()))

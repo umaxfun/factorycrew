@@ -1,9 +1,10 @@
 """Level 2: mod + bridge + MCP integration (SPEC.md, "Tests", level 2). Not e2e: Kiro Crew is not in the loop."""
 from __future__ import annotations
 
+import subprocess
 import time
 
-from conftest import ROOT, http, wait_until
+from conftest import DATA, ROOT, http, wait_until
 
 CHAT = "Logistics"
 
@@ -151,6 +152,37 @@ def test_idle_after_timeout_without_reply(stack):
     t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Trains")),
                    timeout=10, what="idle after timeout")
     assert t["note"] == "no_reply"
+
+
+def test_a_turn_lost_in_a_bridge_restart_stops_thinking(stack):
+    """gamer, 2026-11-01: an app update restarted the bridge mid-turn; the new bridge knew nothing
+    of the turn and the tab said "thinking" for good. Its pong now lists live turns, and the mod
+    drops a thinking tab that is not listed for 30 s of game time."""
+    def real_bridge():  # the real 20 min idle backstop, so only the pong can end the turn
+        log = open(DATA / "bridge.log", "a")
+        stack.bridge = subprocess.Popen(["python3", str(ROOT / "bridge" / "factorio_bridge.py"), "--offline-after", "3",
+                                         "--idle-after", "1200", "--request-timeout", "5"],
+                                        stdout=log, stderr=subprocess.STDOUT)
+        wait_until(lambda: http("GET", "/health")["ok"], timeout=10, what="bridge http")
+        stack.wait_online()
+    try:
+        stack.stop_bridge()
+        real_bridge()
+        ask_id = stack.ask("Lost", "lubricant chain?")
+        assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+        http("POST", "/asks/done", {"ids": [ask_id]})
+        wait_until(lambda: stack.tab("Lost")["state"] == "thinking", what="thinking")
+        time.sleep(3)
+        assert stack.tab("Lost")["state"] == "thinking", "a live turn was dropped"
+        stack.stop_bridge()
+        real_bridge()  # a new bridge: it knows no turn
+        t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Lost")),
+                       timeout=30, what="the lost turn to stop thinking")
+        assert t["note"] == "lost", t
+    finally:
+        stack.stop_bridge()
+        stack.start_bridge()
+        stack.wait_online()
 
 
 def test_turn_end_from_the_dispatcher_ends_thinking(stack):

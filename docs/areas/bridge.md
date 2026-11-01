@@ -42,6 +42,7 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 
 ## Must stay true
 
+- `pong` lists `working`, the chats with a live turn, queued or leased question (`Bridge.live_chats`); a new bridge lists none, so the mod drops the tabs a restart orphaned (`tests/integration/test_bridge.py::test_a_turn_lost_in_a_bridge_restart_stops_thinking`).
 - Every UDP packet to the game is at most `PACKET_MAX` = 4000 bytes, escapes included, and reassembles to the original message (`tests/integration/test_bridge.py::test_bridge_packets_fit_the_games_initial_buffer`).
 - Large messages both ways survive chunking with Cyrillic text (`tests/integration/test_bridge.py::test_query_errors_and_large_results`, `::test_large_reply_reaches_the_tab`).
 - The HTTP API binds 127.0.0.1 by default; `--http-host 0.0.0.0` is used only inside a test container published on host loopback (`bridge/factorio_bridge.py:43`, `tests/e2e/stand.py:15`, `scripts/test-e2e.sh:64-67`; no test checks the default).
