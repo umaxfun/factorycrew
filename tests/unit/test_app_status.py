@@ -158,3 +158,43 @@ def test_a_mod_folder_the_app_did_not_put_there_is_left_alone(tmp_path, monkeypa
     monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.3.3"))
     assert "not managed by the app" in server.install_mod(mods)
     assert json.loads((mods / "kc-companion" / "info.json").read_text())["version"] == "9.9.9"
+
+
+# ── the error-report switch on the status page (docs/sentry.md) ──
+
+def test_error_reports_are_on_by_default_and_the_switch_keeps_the_rest_of_the_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    assert server.settings() == {"ok": True, "telemetry": True}  # no config file yet
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "config.json").write_text(json.dumps({"http_port": 40001}))
+    assert server.save_settings({"telemetry": False}) == {"ok": True, "telemetry": False}
+    assert json.loads((tmp_path / "data" / "config.json").read_text()) == {"http_port": 40001, "telemetry": False}
+    assert server.save_settings({"telemetry": "no"})["ok"] is False
+    assert server.settings()["telemetry"] is False
+
+
+def test_the_switch_is_reachable_over_http(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+
+    async def go():
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+
+        async def call(raw):
+            r, w = await asyncio.open_connection("127.0.0.1", port)
+            w.write(raw)
+            await w.drain()
+            data = await r.read()
+            w.close()
+            return json.loads(data.split(b"\r\n\r\n", 1)[1])
+
+        body = b'{"telemetry": false}'
+        posted = await call(b"POST /api/settings HTTP/1.1\r\nContent-Type: application/json\r\n"
+                            b"Content-Length: %d\r\n\r\n%s" % (len(body), body))
+        got = await call(b"GET /api/settings HTTP/1.1\r\n\r\n")
+        srv.close()
+        return posted, got
+
+    posted, got = asyncio.run(go())
+    assert posted == got == {"ok": True, "telemetry": False}

@@ -40,6 +40,28 @@ def load_config() -> dict:
         return {}
 
 
+def settings() -> dict:
+    """What the status page can switch. `telemetry`: automatic error reports to the developer
+    (docs/sentry.md), on unless the player turned it off."""
+    return {"ok": True, "telemetry": load_config().get("telemetry", True) is not False}
+
+
+def save_settings(body: dict) -> dict:
+    """Only known keys with the right type; the rest of data/config.json is kept as it is.
+    Every part reads `telemetry` from the file on each report, so no restart is needed."""
+    if not isinstance(body, dict) or not isinstance(body.get("telemetry"), bool):
+        return {"ok": False, "error": "bad_request", "message": "expected {\"telemetry\": true|false}"}
+    cfg = load_config()
+    cfg["telemetry"] = body["telemetry"]
+    path = ROOT / "data" / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n")
+    os.replace(tmp, path)
+    log.info("error reports %s", "on" if body["telemetry"] else "off")
+    return settings()
+
+
 def factorio_mods_dir() -> Path | None:
     home = Path.home()
     if sys.platform == "darwin":
@@ -81,12 +103,22 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
     /apps/factorycrew/api/status) for the liveness of every piece."""
     try:
         line = await asyncio.wait_for(reader.readline(), 5)
-        while (await asyncio.wait_for(reader.readline(), 5)) not in (b"\r\n", b"\n", b""):
-            pass  # headers: nothing here needs them
+        length = 0
+        while (h := await asyncio.wait_for(reader.readline(), 5)) not in (b"\r\n", b"\n", b""):
+            name, _, value = h.decode("latin-1").partition(":")
+            if name.strip().lower() == "content-length":
+                length = min(int(value.strip() or 0), 4096)
+        body_in = await asyncio.wait_for(reader.readexactly(length), 5) if length else b""
         parts = line.decode("latin-1").split(" ")
+        method = parts[0]
         path = parts[1].split("?", 1)[0] if len(parts) > 1 else "/"
         status_code = "200 OK"
-        if path == "/api/status":
+        if path == "/api/settings":
+            if method == "POST":
+                obj = save_settings(json.loads(body_in or b"{}"))
+            else:
+                obj = settings()
+        elif path == "/api/status":
             obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"])
         elif path in ("/health", "/api/health"):
             obj = {"status": "ok", "app": "factorycrew"}

@@ -18,6 +18,13 @@ cp "$ROOT/bridge/factorio_bridge.py" "$OUT/bridge/"
 cp "$ROOT/mcp/factorio_mcp.py" "$ROOT/mcp/kc_compute.py" "$OUT/mcp/"
 rsync -a --exclude __pycache__ "$ROOT/mcp/kc/" "$OUT/mcp/kc/"  # primitive library, package `kc`
 cp "$ROOT/dispatcher/factorio_dispatch.py" "$OUT/dispatcher/"
+# Error and bug reports (docs/sentry.md). The Sentry environment is stamped here: `prod` when
+# scripts/release.sh builds (FC_REPORT_ENV=prod), dev-<host> for every other build (app e2e,
+# app-dev), so a test install never writes into the players' environment.
+mkdir -p "$OUT/report"
+cp "$ROOT/report/kc_report.py" "$ROOT/report/settings.json" "$OUT/report/"
+ENVIRONMENT="${FC_REPORT_ENV:-dev-$(hostname -s | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-')}"
+echo "$ENVIRONMENT" > "$OUT/report/environment"
 cp "$ROOT/tools/kira-256.png" "$OUT/assets/icon.png"
 rsync -a --exclude tests --exclude '.*' "$ROOT/mod/kc-companion/" "$OUT/mod/kc-companion/"
 rsync -a --exclude __pycache__ "$ROOT/skills/" "$OUT/skills/"  # SKILL.md + lib/*.py, imported by factorio_compute

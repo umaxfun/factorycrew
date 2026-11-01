@@ -36,6 +36,35 @@ function Row({ c }) {
   )
 }
 
+const SETTINGS_URL = '/apps/factorycrew/api/settings'
+
+// Automatic error reports (docs/sentry.md): on by default, and the page says so plainly.
+function Reports() {
+  const api = useAppApi()
+  const [on, setOn] = useState(null)
+  const [err, setErr] = useState(null)
+  useEffect(() => {
+    api.get(SETTINGS_URL).then(d => setOn(d.telemetry !== false)).catch(e => setErr(String(e && e.message || e)))
+  }, [])
+  const flip = () => {
+    const want = !on
+    api.post(SETTINGS_URL, { telemetry: want })
+      .then(d => { if (d.ok === false) throw new Error(d.message || d.error); setOn(d.telemetry); setErr(null) })
+      .catch(e => setErr(String(e && e.message || e)))
+  }
+  return h('div', { className: 'mt-4 border border-border bg-card rounded-lg p-4' },
+    h('label', { className: 'flex items-center gap-2 text-sm font-semibold text-text-strong cursor-pointer' },
+      h('input', { type: 'checkbox', checked: !!on, disabled: on === null, onChange: flip, 'data-testid': 'telemetry' }),
+      'Send error reports to the developer'),
+    h('div', { className: 'text-[13px] text-muted mt-1' },
+      'When a part of the app fails, it sends the error, the code that failed and the versions. ' +
+      'It never sends your questions, Kira\'s answers or your chats, and your user name is cut out of file paths. ' +
+      'Without a network the reports wait and go later. A bug report you send yourself always includes ' +
+      'what you choose, whatever this switch says.'),
+    err ? h('div', { className: 'text-[13px] text-danger mt-1' }, err) : null,
+  )
+}
+
 function StatusPage() {
   const api = useAppApi()
   const [data, setData] = useState(null)
@@ -88,6 +117,7 @@ function StatusPage() {
           ...(data && data.checks ? data.checks : []).map(c => h(Row, { key: c.id, c }))),
     h('div', { className: 'mt-4 text-[12px] text-muted' },
       'Refreshes every 3 seconds. Factorio offline is normal while you are not playing.'),
+    h(Reports),
   )
 }
 

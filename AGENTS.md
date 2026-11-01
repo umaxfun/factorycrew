@@ -43,6 +43,7 @@ Work in your own git worktree, next to the main clone (`<main clone>.worktrees/<
 | `agent/` | [Kira, the agent](docs/areas/kira-agent.md) |
 | `app/`, `scripts/build-app.sh`, `scripts/release.sh`, `scripts/app-dev.sh` | [Kiro Crew app and releases](docs/areas/app.md) |
 | `scripts/` (stand, kc, test scripts, lib), `tools/ui_dev.py`, `docker/`, `tests/e2e/stand.py`, `tests/e2e/watch.py`, `.github/` | [Dev stands and test harness](docs/areas/dev-stand.md) |
+| `report/` | [Error and bug reports](docs/sentry.md) |
 | `tests/` | the area doc of the code each test checks |
 
 The last readiness assessment: [docs/agent-readiness.md](docs/agent-readiness.md).

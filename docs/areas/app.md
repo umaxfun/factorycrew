@@ -5,10 +5,10 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 ## Main files
 
 - `app/app.json`: the manifest. Name `factorycrew`, `version` (the one version of app and mod), agent, MCP server `factorio` (`python3 mcp/factorio_mcp.py`), backend `backend/server.py` with `/health`, cron `factorio-dispatch` every 30 s, the sidebar page `/apps/factorycrew` ("Factorio"), API permissions `/apps/factorycrew/api/*`, skill `skills/belts`.
-- `app/backend/server.py`: the backend the gateway starts. Runs the bridge in-process (`fb.serve`) on the ports from `<app>/data/config.json`, answers `/health` and `/api/status` on `$PORT`, and copies the mod into Factorio's mods folder at start (`install_mod`).
+- `app/backend/server.py`: the backend the gateway starts. Runs the bridge in-process (`fb.serve`) on the ports from `<app>/data/config.json`, answers `/health`, `/api/status` and `GET`/`POST /api/settings` (the error-report switch `telemetry`, see [Error and bug reports](../sentry.md)) on `$PORT`, and copies the mod into Factorio's mods folder at start (`install_mod`).
 - `app/backend/status.py`: the checks behind `/api/status`: Kiro Crew version, bridge, game, mod, dispatcher, MCP server, Kira's agent. Each is `{id, label, state: ok|warn|fail|idle, detail, fix?}`.
 - `app/ui/index.mjs`: the status page. Plain ESM with React from the host, no build step; polls `/apps/factorycrew/api/status` every 3 s.
-- `scripts/build-app.sh`: builds `dist/factorycrew/` and `dist/factorycrew-<version>.zip`, writes the app's agent file, stamps the mod's version.
+- `scripts/build-app.sh`: builds `dist/factorycrew/` and `dist/factorycrew-<version>.zip`, writes the app's agent file, stamps the mod's version, copies `report/` and stamps its Sentry environment (`FC_REPORT_ENV`, default `dev-<host>`; `release.sh` passes `prod`).
 - `scripts/release.sh`: `patch|minor|major|X.Y.Z|current [--push]`: bumps `app/app.json`, commits and tags `vX.Y.Z` on `main`, builds, commits the build to `release` as `apps/factorycrew/`.
 - `scripts/app-dev.sh`: build, reinstall, trust, enable on a dev gateway (`FC_APP_PORT`, default 5479; `FC_APP_HOME`, default `~/.kirocrew-factorio-app`). `app-dev.sh ports H U G` writes `data/config.json`.
 - `scripts/test-app-e2e.sh`, `tests/app_e2e/`: the app e2e on the real 2.0.77 client.
