@@ -40,6 +40,7 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 - The Mod check warns while the online game runs another mod version than the mods folder holds (a game whose mod reports none is older than 0.3.7), with "Restart Factorio to load the updated mod." (`tests/unit/test_app_status.py::test_a_game_still_running_the_old_mod_asks_for_a_restart`).
 - An update needs no Kiro Crew restart: the backend (bridge, status) is restarted by Kiro Crew, the dispatcher's wake exits on a changed file, Kira's MCP servers re-execute themselves ([MCP server](mcp-server.md)), and only Factorio has to be restarted by the player (README, "Releases and updates").
 - The "Panel library" check lists `factorio-panel` artifacts with the same CLI call Kira's saves use (`probe_library`, cached a minute) and fails the page when that call fails (`tests/unit/test_app_status.py::test_a_library_the_cli_cannot_reach_fails_the_page`). Before it, panels went unsaved for days with every check green.
+- A bridge that cannot take its ports (the app in a second Kiro Crew on the same machine, same ports) does not kill the backend: the status page stays up, the Bridge check fails with the bind error and what to do, and the game and dispatcher checks stay "unknown" instead of reading the other copy's bridge (`run_bridge` in `app/backend/server.py`; `tests/unit/test_app_status.py::test_the_backend_survives_a_taken_bridge_port`, `::test_a_bridge_that_lost_its_port_is_named_and_the_other_one_is_not_read`; checked on two dev gateways on 2026-11-01).
 
 ## Easy to break
 
