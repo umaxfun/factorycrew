@@ -316,6 +316,33 @@ def test_a_turn_that_ends_under_the_next_wake_still_reaches_the_game(tmp_path, m
     assert ("/turn_end", {"chat": "General", "ask_id": None}) in posted and nxt.watch == {}
 
 
+@pytest.mark.parametrize("delta", [-9, +9, -5000])
+def test_a_metadata_rewrite_that_moves_the_offset_does_not_lose_the_turn(tmp_path, monkeypatch, delta):
+    # gamer, 2026-11-01 ("ну что там?"): the gateway rewrote the file with a shorter metadata row
+    # after the offset was taken; the seek landed inside the question's row, it failed to parse,
+    # and nothing of the turn was traced or forwarded. -5000: the file got shorter than the offset.
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path))
+    (tmp_path / "sessions").mkdir(exist_ok=True)
+    posted = []
+    monkeypatch.setattr(d, "bridge", lambda cfg, method, path, body=None, timeout=40.0: posted.append((path, body)) or {})
+    path = d.transcript_path("s1")
+    meta = {"_type": "metadata", "last_consolidated": 0, "pad": "x" * 6000}
+    old = [{"role": "user", "content": "[Factorio ...]\nfirst", "ts": "2026-11-01T14:41:21+00:00"},
+           {"role": "assistant", "content": "old answer", "ts": "2026-11-01T14:42:49+00:00", "meta": {"turn_stats": {}}}]
+    path.write_text("\n".join(json.dumps(r) for r in [meta, *old]) + "\n")
+    t = d.Tracer({})
+    t.start("s1", {"chat": "General", "run_id": "r", "id": "ask-3"}, since=1_793_547_000, pos=t.offset("s1"))
+    meta["pad"] = "x" * max(0, 6000 + delta)  # the rewrite moves every later row by delta bytes
+    new = [{"role": "user", "content": "[Factorio ...]\nну что там?", "ts": "2026-11-01T16:24:00+00:00"},
+           {"role": "assistant", "content": "Для 25 000 lubricant/мин: 167 машин.", "ts": "2026-11-01T16:25:00+00:00",
+            "meta": {"turn_stats": {"credits": 1}}}]
+    path.write_text("\n".join(json.dumps(r) for r in [meta, *old, *new]) + "\n")
+    t.poll()
+    assert ("/reply", {"chat": "General", "text": "Для 25 000 lubricant/мин: 167 машин.", "fallback": True,
+                       "ask_id": "ask-3"}) in posted, posted
+    assert not any(b and b.get("text") == "old answer" for _, b in posted)
+
+
 def test_the_dispatcher_log_outlives_a_wake(tmp_path):
     d.note("first wake: asked")
     d.RECENT_LOG.clear()  # a new wake starts with an empty memory
