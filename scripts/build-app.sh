@@ -18,6 +18,7 @@ cp "$ROOT/bridge/factorio_bridge.py" "$OUT/bridge/"
 cp "$ROOT/mcp/factorio_mcp.py" "$ROOT/mcp/kc_compute.py" "$OUT/mcp/"
 rsync -a --exclude __pycache__ "$ROOT/mcp/kc/" "$OUT/mcp/kc/"  # primitive library, package `kc`
 cp "$ROOT/dispatcher/factorio_dispatch.py" "$OUT/dispatcher/"
+mkdir -p "$OUT/hooks" && cp "$ROOT/app/hooks/turn_hook.py" "$OUT/hooks/"  # Kira's turn-contract hook
 # Error and bug reports (docs/sentry.md). The Sentry environment is stamped here: `prod` when
 # scripts/release.sh builds (FC_REPORT_ENV=prod), dev-<host> for every other build (app e2e,
 # app-dev), so a test install never writes into the players' environment.
@@ -37,6 +38,11 @@ from pathlib import Path
 root, out = Path(sys.argv[1]), Path(sys.argv[2])
 spec = json.loads((root / "agent" / "factorio-companion.json").read_text())
 rules = (root / "agent" / "factorio-companion.md").read_text()
+
+
+def hooks(cmd):
+    """The same three hooks as agent/factorio-companion.json, with the app's own path."""
+    return {event: [dict(h, command=cmd) for h in hs] for event, hs in spec["hooks"].items()}
 agent = {
     "name": "factorio-companion",
     "description": spec["description"],
@@ -44,6 +50,8 @@ agent = {
     "tools": ["@factorycrew:factorio"],
     "allowedTools": ["@factorycrew:factorio"],
     "includeMcpJson": False,
+    # the turn contract (docs/areas/bridge.md): Kiro Crew runs these on every turn of Kira's
+    "hooks": hooks('/usr/bin/python3 "$KIROCREW_HOME/apps/factorycrew/hooks/turn_hook.py"'),
 }
 (out / "agents" / "factorio-companion.json").write_text(json.dumps(agent, ensure_ascii=False, indent=2) + "\n")
 EOF

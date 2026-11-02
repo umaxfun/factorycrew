@@ -24,5 +24,26 @@
         "FACTORIO_BRIDGE_URL": "http://127.0.0.1:34198"
       }
     }
+  },
+  "hooks": {
+    "userPromptSubmit": [
+      {
+        "command": "/usr/bin/python3 __ROOT__/app/hooks/turn_hook.py --bridge http://127.0.0.1:34198",
+        "timeout_ms": 8000
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "/usr/bin/python3 __ROOT__/app/hooks/turn_hook.py --bridge http://127.0.0.1:34198",
+        "matcher": "*",
+        "timeout_ms": 8000
+      }
+    ],
+    "stop": [
+      {
+        "command": "/usr/bin/python3 __ROOT__/app/hooks/turn_hook.py --bridge http://127.0.0.1:34198",
+        "timeout_ms": 8000
+      }
+    ]
   }
 }

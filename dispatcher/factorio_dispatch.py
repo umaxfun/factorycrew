@@ -439,16 +439,17 @@ class Tracer:
         self.watch[slot] = {"chat": ask["chat"], "run_id": ask["run_id"], "ask_id": ask.get("id"), "pos": pos,
                             "started": time.time(), "last_text": "", "since": since, "asked": False}
 
-    def ended(self, w):
+    def ended(self, w, failure=False):
         """The turn ended without factorio_reply: forward its last text, then tell the bridge the
         turn is over, so a turn that left no text stops "thinking" now and not at idle_after."""
-        self.forward(w)
+        self.forward(w, failure)
         try:
-            bridge(self.cfg, "POST", "/turn_end", {"chat": w["chat"], "ask_id": w.get("ask_id")}, timeout=10)
+            bridge(self.cfg, "POST", "/turn_end", {"chat": w["chat"], "ask_id": w.get("ask_id"),
+                                                   **({"failure": True} if failure else {})}, timeout=10)
         except (urllib.error.URLError, OSError, ValueError) as exc:
             note(f"could not report the end of the turn for [{w['chat']}]: {exc}")
 
-    def forward(self, w):
+    def forward(self, w, failure=False):
         """The turn ended without factorio_reply (a light model under "auto" once answered "how are
         you?" in the chat only, and the window kept "thinking"): send its last text to the tab."""
         text = w["last_text"].strip()
@@ -458,8 +459,10 @@ class Tracer:
             # fallback: the bridge drops it if the turn did answer. The transcript may show the
             # turn's end before its factorio_reply row, and then this copy (in the dashboard's
             # language, with the dashboard's [OPTIONS]) came on top of the real answer.
+            # failure: Kiro Crew killed the turn, so no Stop hook fires and this is the only news of it
             r = bridge(self.cfg, "POST", "/reply", {"chat": w["chat"], "text": text, "fallback": True,
-                                                    "ask_id": w.get("ask_id")}, timeout=10)
+                                                    "ask_id": w.get("ask_id"), **({"failure": True} if failure else {})},
+                       timeout=10)
             if r.get("skipped"):
                 return
             note(f"turn for [{w['chat']}] ended without factorio_reply; forwarded its last text")
@@ -519,7 +522,7 @@ class Tracer:
                              "usage_limit": str(USAGE_LIMIT.search(str(row.get("content") or "")) is not None)},
                             level="warning")
                     w["last_text"] = failure
-                    self.ended(w)
+                    self.ended(w, failure=True)
                     done = True
                     break
                 if turn_ended(row):

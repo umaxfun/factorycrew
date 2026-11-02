@@ -245,7 +245,8 @@ def test_finds_why_trains_leave_with_cargo(kira):
         "Don't change anything, just tell me the cause and the fix."), timeout=LONG)
     print(f"\ntrain diagnosis ({t:.0f}s): {text}")
     low = text.lower()
-    assert "inactiv" in low, "cause 1: the Unload wait condition is inactivity, not empty cargo"
+    # the same cause in other words: "5 s of no activity" (app e2e, 2026-11-02)
+    assert "inactiv" in low or "no activity" in low, "cause 1: the Unload wait condition is inactivity, not empty cargo"
     assert "400" in low, "cause 2: the unload inserters stop at 400 plates in the chests"
     after = lua(TRAIN_STATE.replace("TID", str(ids["train"])).replace("INS", lua_points(ids["inserters"])))
     assert after == before, f"changed without consent: {before} -> {after}"

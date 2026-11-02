@@ -78,7 +78,7 @@ Level 3 starts the factorycrew gateway if needed, installs the agent and dispatc
 
 ### Releases and updates
 
-`scripts/release.sh patch|minor|major|X.Y.Z|current [--push]` bumps the version in `app/app.json`, commits and tags `vX.Y.Z` on `main`, builds, and commits the build to the `release` branch as `apps/factorycrew/`. That branch is a Kiro Crew app registry (it synthesizes its index from `apps/*/app.json`). Without `--push` nothing leaves the machine.
+Releases are cut by GitHub Actions only: **Actions → Release → Run workflow**, pick patch, minor or major (`.github/workflows/release.yml`). It runs the unit tests, bumps `app/app.json` on `main`, tags `vX.Y.Z`, builds with Sentry environment `prod`, commits the build to the `release` branch as `apps/factorycrew/`, and attaches the zip to a GitHub release. Pushing a tag `vX.Y.Z` releases that commit (it must match `app/app.json`); a tag with a suffix (`v0.3.12-test.1`) is a rehearsal published on `release-staging` only, never to players. `scripts/release.sh` refuses to run outside Actions.
 
 Players (Kiro Crew 0.11 or newer): Apps → Discover → Sources (gear) → add the repository URL with branch `release`, install **Factorio Companion** and trust it in the dialog. An app installed from a local directory stays local-only: to switch it to the repository, uninstall it (data is kept) and install from the store. A newer version on `release` arrives through the app's Update action (a `git pull` of the branch); the store caches each app's `app.json` for up to 24 h, so the Update badge can lag a day behind a release.
 

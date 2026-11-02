@@ -40,6 +40,17 @@ HTTP routes (`bridge/factorio_bridge.py:539-613`):
 - Used by: [App](app.md) backend, which runs the bridge in its own process with `fb.serve` on the ports in `<app>/data/config.json`, and whose status page reads `/health` (`app/backend/server.py:119-126`, `app/backend/status.py:64`).
 - Used by: [Dev stand](dev-stand.md) tooling: `tools/ui_dev.py` starts a dev bridge (`tools/ui_dev.py:189`), `scripts/services.sh` installs it as launchd agent `dev.factorycrew.bridge` (`scripts/services.sh:60`), level 2 and the e2e stand start it from `tests/integration/conftest.py:195-198`.
 
+## Turn contract
+
+How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading Kiro Crew's chat transcript, which lost answers three ways on 2026-11-01: a turn that ended under the next dispatcher wake, a bridge restart, and the gateway rewriting the transcript file.
+
+- Kira's agent spec carries three hooks that Kiro Crew runs on every turn of hers: `userPromptSubmit`, `postToolUse` and `stop`, each the command `app/hooks/turn_hook.py` (in the app `$KIROCREW_HOME/apps/factorycrew/hooks/turn_hook.py`, on a dev stand the checkout's with `--bridge`). It posts the event to `POST /hook` and, on Stop, prints the bridge's decision.
+- `UserPromptSubmit` whose prompt starts with the dispatcher's header binds the chat slot (`session_key`) to its tab. When the header's `tick` is the tab's current question, the turn becomes **hooked**: from then on its end is the Stop hook's to decide. Events of a slot whose current question is not hooked yet are ignored: the previous turn's Stop arrives about 2 s after its answer, when a quick follow-up may already be thinking.
+- `PostToolUse` of a hooked turn is a sign of life and a trace line (`TOOL_LABELS`); the transcript's tool lines are dropped for it.
+- `Stop` of a hooked turn that is still working (no `factorio_reply` ended it) answers `{"decision": "block", "reason": REPLY_NUDGE}` once: Kiro Crew starts a continuation turn telling Kira to call `factorio_reply` now. At the next Stop with still no answer, the bridge sends the turn's last text to the tab itself, or ends it with `no_reply` if there is none. So an answer that exists reaches the game.
+- For a hooked turn the dispatcher's fallback copy and `/turn_end` are ignored, unless they carry `failure: true`: Kiro Crew does not fire Stop for a turn it killed (an error row: credits spent, model refused, turn limit), so that path stays on the transcript. A turn that is never hooked (an older Kiro Crew, a hook that does not run) keeps the transcript path as before.
+- Checked: `tests/unit/test_turn_contract.py`, `tests/integration/test_bridge.py::test_the_stop_hook_sends_a_turn_without_factorio_reply_back_then_its_text_to_the_tab`, `tests/e2e/test_turn_contract_e2e.py` (a model told not to call `factorio_reply`; a dispatcher restart mid-turn). Measured on Kiro Crew 2026-11-02 (spike): app-spec hooks fire on the default KAS backend with `session_key`, `prompt`, `tool_name`, `assistant_text`; a block's reason arrives as an `inject` row "[Hook continuation — automatic]"; Stop fires only on the success path (`kiro_crew/dashboard/chat_runner.py`).
+
 ## Must stay true
 
 - `pong` lists `working`, the chats with a live turn, queued or leased question (`Bridge.live_chats`); a new bridge lists none, so the mod drops the tabs a restart orphaned (`tests/integration/test_bridge.py::test_a_turn_lost_in_a_bridge_restart_stops_thinking`).

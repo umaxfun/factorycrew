@@ -76,6 +76,17 @@ def report_exception(exc: BaseException, **tags) -> None:
 
 BUG_FALLBACK_S = 15  # a bug report no dispatcher took by then is sent by the bridge
 
+HEADER_TAB = __import__("re").compile(r'^\[Factorio · run ".*?" · tab "(.*?)" · tick ([^\s\]]+)')
+MAX_REPLY_NUDGES = 1  # times a game turn without factorio_reply is sent back to Kira before its text is used
+REPLY_NUDGE = ('This turn came from the game tab "{chat}" and ended without factorio_reply, so the player saw '
+               'nothing. Call factorio_reply now with chat="{chat}" and your answer, in the player\'s language '
+               '(the `arguments` of tool_call are a JSON object, not a string). Do nothing else.')
+TOOL_LABELS = {"factorio_query": "running a Lua query", "factorio_mark": "placing map marks",
+               "factorio_unmark": "removing marks", "factorio_list_marks": "listing marks",
+               "factorio_compute": "computing in Python", "factorio_atlas": "reading the base",
+               "factorio_panel": "making a panel", "factorio_saved_panels": "looking up saved panels",
+               "factorio_feedback": "writing a report", "tool_load": "", "tool_call": ""}
+
 
 def bug_tags(ask: dict, by: str) -> dict:
     return {"by": by, "mod_version": ask.get("mod_version") or "?", "factorio": ask.get("factorio_version") or "?"}
@@ -317,6 +328,7 @@ class Bridge(asyncio.DatagramProtocol):
         self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
         self.answered: set[tuple] = set()  # (run_id, chat) whose last question got an answer
         self.current_ask: dict[tuple, str | None] = {}  # (run_id, chat) -> id of its last question
+        self.slots: dict[str, tuple] = {}  # Kiro Crew chat slot -> (run_id, chat), learnt from its hooks
         self.ids = itertools.count(1)
         self.dispatcher_seen: float | None = None  # last GET /asks
         self.agent_seen: float | None = None  # last tool call of Kira's (via the MCP server)
@@ -600,15 +612,16 @@ class Bridge(asyncio.DatagramProtocol):
             self.leased[ask["id"]] = (ask, exp)
             out.append(ask)
             if not ask.get("kind"):  # a library request or a stop starts no turn
-                self.set_thinking(ask["run_id"], ask["chat"], ask.get("id"))
+                self.set_thinking(ask["run_id"], ask["chat"], ask.get("id"), ask.get("tick"))
         return out
 
     def confirm_asks(self, ids: list[str]) -> int:
         return sum(1 for i in ids if self.leased.pop(i, None) is not None)
 
-    def set_thinking(self, run_id, chat, ask_id=None) -> None:
+    def set_thinking(self, run_id, chat, ask_id=None, tick=None) -> None:
         key = (run_id, chat)
-        self.working[key] = {"steps": 0, "activity": ""}
+        # tick: the question's tick, which the dispatcher's header repeats; the hooks match on it
+        self.working[key] = {"steps": 0, "activity": "", "tick": tick}
         self.answered.discard(key)  # a new question: its answer is still to come
         self.current_ask[key] = ask_id
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "thinking"})
@@ -639,6 +652,56 @@ class Bridge(asyncio.DatagramProtocol):
             self.arm_idle(key)
         return len(keys)
 
+    # ── the turn contract: Kira's agent-spec hooks (docs/areas/bridge.md, "Turn contract") ──
+    # Kiro Crew runs the hooks of Kira's agent spec on every turn (app/hooks/turn_hook.py posts
+    # them here): UserPromptSubmit and PostToolUse are signs of life, Stop is the end of a turn
+    # with its final text. A turn from the game that ends without factorio_reply is sent back to
+    # Kira once ("call factorio_reply now"); if it still has none, its text goes to the tab. This
+    # replaced reading Kiro Crew's chat transcript for the answer, which lost turns three ways
+    # (a dispatcher wake ending, a bridge restart, a transcript rewrite; 2026-11-01).
+
+    def hook(self, body: dict) -> dict:
+        event = str(body.get("event") or "")
+        slot = str(body.get("session_key") or "").removeprefix("dashboard:")
+        m = HEADER_TAB.search(str(body.get("prompt") or "")) if event == "UserPromptSubmit" else None
+        if m:
+            self.slots[slot] = (self.game.run_id, m.group(1))
+        key = self.slots.get(slot)
+        if key is None or key not in self.working:
+            return {"ok": True, "turn": False}  # not a game turn, or already answered
+        w = self.working[key]
+        if m and str(m.group(2)) == str(w.get("tick")):
+            w["hooked"] = True  # this question's own prompt: from now on its end is the Stop hook's
+        if not w.get("hooked"):
+            # the previous turn of this chat still closing (its Stop comes ~2 s after its answer,
+            # when the next question may already be thinking): not this question's events
+            return {"ok": True, "turn": False}
+        if event == "Stop":
+            return self.on_stop(key, str(body.get("assistant_text") or ""))
+        if event == "PostToolUse":
+            name = str(body.get("tool_name") or "").rsplit("/", 1)[-1]
+            label = TOOL_LABELS.get(name, name) if name not in ("factorio_reply", "factorio_progress") else ""
+            if label:
+                self.deliver({"type": "trace", "run_id": key[0], "chat": key[1], "kind": "tool",
+                              "text": label[:TRACE_MAX]})
+        self.arm_idle(key)
+        return {"ok": True, "turn": True}
+
+    def on_stop(self, key, text: str) -> dict:
+        """The turn ended and the tab still has no answer (factorio_reply would have ended it)."""
+        chat, w = key[1], self.working[key]
+        if w.get("nudges", 0) < MAX_REPLY_NUDGES:
+            w["nudges"] = w.get("nudges", 0) + 1
+            log.info("turn for [%s] ended without factorio_reply: sending it back to Kira", chat)
+            self.arm_idle(key)
+            return {"ok": True, "turn": True, "decision": "block", "reason": REPLY_NUDGE.format(chat=chat)}
+        if text.strip():
+            log.info("turn for [%s] still has no factorio_reply: its last text goes to the tab", chat)
+            self.reply(chat, text.strip())
+        else:
+            self.end_turn(key, "no_reply")
+        return {"ok": True, "turn": True}
+
     def idle_timeout(self, key) -> None:
         log.info("no sign of life in %ss for [%s], sending idle", self.s.idle_after, key[1])
         self.end_turn(key, "no_reply")
@@ -652,12 +715,14 @@ class Bridge(asyncio.DatagramProtocol):
         run_id, chat = key
         self.deliver({"type": "status", "run_id": run_id, "chat": chat, "state": "idle", "note": note})
 
-    def turn_end(self, chat: str, ask_id: str | None) -> dict:
+    def turn_end(self, chat: str, ask_id: str | None, failure: bool = False) -> dict:
         """The dispatcher saw the chat's turn end in the transcript. If no answer reached the tab
         (no factorio_reply, no fallback copy), it stops "thinking" now instead of at idle_after."""
         key = (self.game.run_id, chat)
         if key not in self.working or (ask_id and self.current_ask.get(key) != ask_id):
             return {"ok": True, "ended": False}
+        if self.working[key].get("hooked") and not failure:
+            return {"ok": True, "ended": False, "skipped": "hooks"}  # the Stop hook decides
         log.info("the turn for [%s] ended without an answer to the game", chat)
         self.end_turn(key, "no_reply")
         return {"ok": True, "ended": True}
@@ -677,13 +742,18 @@ class Bridge(asyncio.DatagramProtocol):
         self.end_turn(key, "stopped")
         return {"ok": True, "delivered": self.online()}
 
-    def reply(self, chat: str, text: str, fallback: bool = False, ask_id: str | None = None) -> dict:
+    def reply(self, chat: str, text: str, fallback: bool = False, ask_id: str | None = None,
+              failure: bool = False) -> dict:
         """An answer for a tab. `fallback`: the dispatcher's copy of the turn's last text, sent when
         it saw no factorio_reply in the transcript; dropped if this turn already answered, or if
         `ask_id` is not the tab's current question (a copy of an earlier turn). The transcript is
         not a reliable signal for either; the bridge's own record is."""
         run_id = self.game.run_id
         key = (run_id, chat)
+        if fallback and (self.working.get(key) or {}).get("hooked") and not failure:
+            # Kira's Stop hook ends turns now; the transcript copy would race the nudge back to her
+            log.info("dropped the dispatcher's copy for [%s]: the hooks end turns", chat)
+            return {"ok": True, "delivered": False, "queued": False, "skipped": "hooks"}
         if fallback and key in self.answered:
             log.info("dropped the dispatcher's copy for [%s]: the turn already answered", chat)
             return {"ok": True, "delivered": False, "queued": False, "skipped": "already_answered"}
@@ -738,14 +808,16 @@ class Bridge(asyncio.DatagramProtocol):
             if not isinstance(chat, str) or not isinstance(text, str):
                 raise BridgeError("bad_request", "chat and text are required strings")
             ask_id = body.get("ask_id") if isinstance(body.get("ask_id"), str) else None
-            return 200, self.reply(chat, text, fallback=body.get("fallback") is True, ask_id=ask_id)
+            return 200, self.reply(chat, text, fallback=body.get("fallback") is True, ask_id=ask_id,
+                                   failure=body.get("failure") is True)
         if method == "POST" and path in ("/turn_end", "/stopped"):
             # from the dispatcher: a turn ended in the transcript / the player's stop was carried out
             chat = body.get("chat")
             if not isinstance(chat, str):
                 raise BridgeError("bad_request", "chat is required")
             if path == "/turn_end":
-                return 200, self.turn_end(chat, body.get("ask_id") if isinstance(body.get("ask_id"), str) else None)
+                return 200, self.turn_end(chat, body.get("ask_id") if isinstance(body.get("ask_id"), str) else None,
+                                          failure=body.get("failure") is True)
             return 200, self.stopped(body.get("run_id"), chat, body.get("ok") is not False, str(body.get("error") or ""))
         if method == "POST" and path == "/library_result":
             # the dispatcher's answer to a library request: a list, a panel spec, a deletion
@@ -754,6 +826,9 @@ class Bridge(asyncio.DatagramProtocol):
             msg = {k: v for k, v in body.items() if k not in ("type", "v", "_agent")}
             msg["type"] = "library_result"
             return 200, {"ok": True, "delivered": self.deliver(msg)}
+        if method == "POST" and path == "/hook":
+            # Kira's agent-spec hooks, through app/hooks/turn_hook.py: the turn contract
+            return 200, self.hook(body)
         if method == "POST" and path == "/bug_report_result":
             # the dispatcher sent (or saved) a bug report: tell the window its id
             if not isinstance(body.get("id"), str):
@@ -769,6 +844,8 @@ class Bridge(asyncio.DatagramProtocol):
             key = (self.game.run_id, chat)
             if key not in self.working:
                 return 200, {"ok": True, "sent": False}  # the turn already answered or timed out
+            if kind == "tool" and self.working[key].get("hooked"):
+                return 200, {"ok": True, "sent": False}  # PostToolUse hooks report the tools
             self.arm_idle(key)
             sent = self.deliver({"type": "trace", "run_id": key[0], "chat": chat, "kind": kind,
                                  "text": text[:TRACE_MAX]})
