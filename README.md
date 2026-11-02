@@ -1,7 +1,7 @@
 # factorycrew release channel
 
-Built Kiro Crew app, version 0.3.11 (source `c6d283a` on `main`). Do not edit: `scripts/release.sh` on
-`main` writes this branch.
+Built Kiro Crew app, version 0.4.0 (source `c1d821f`). Do not edit: the Release workflow
+(`.github/workflows/release.yml`, `scripts/release.sh`) writes this branch.
 
 Install: Kiro Crew 0.11 or newer, Apps -> Discover -> Sources (gear) -> add this repository with
 branch `release`, then install **Factorio Companion**. Start Factorio with the launch option

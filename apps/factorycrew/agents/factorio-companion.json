@@ -8,5 +8,26 @@
   "allowedTools": [
     "@factorycrew:factorio"
   ],
-  "includeMcpJson": false
+  "includeMcpJson": false,
+  "hooks": {
+    "userPromptSubmit": [
+      {
+        "command": "/usr/bin/python3 \"$KIROCREW_HOME/apps/factorycrew/hooks/turn_hook.py\"",
+        "timeout_ms": 8000
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "/usr/bin/python3 \"$KIROCREW_HOME/apps/factorycrew/hooks/turn_hook.py\"",
+        "matcher": "*",
+        "timeout_ms": 8000
+      }
+    ],
+    "stop": [
+      {
+        "command": "/usr/bin/python3 \"$KIROCREW_HOME/apps/factorycrew/hooks/turn_hook.py\"",
+        "timeout_ms": 8000
+      }
+    ]
+  }
 }
