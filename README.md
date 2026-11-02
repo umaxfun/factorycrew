@@ -1,6 +1,6 @@
 # factorycrew release channel
 
-Built Kiro Crew app, version 0.4.1 (source `baabc83`). Do not edit: the Release workflow
+Built Kiro Crew app, version 0.4.2 (source `9e146c9`). Do not edit: the Release workflow
 (`.github/workflows/release.yml`, `scripts/release.sh`) writes this branch.
 
 Install: Kiro Crew 0.11 or newer, Apps -> Discover -> Sources (gear) -> add this repository with
