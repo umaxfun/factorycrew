@@ -1,0 +1,56 @@
+# Releases, one button: Actions -> Release -> Run workflow (pick patch, minor or major).
+# It bumps app/app.json on main, tags vX.Y.Z, builds the app with Sentry environment `prod`,
+# publishes the build on branch `release` (the players' update channel) and attaches the zip to a
+# GitHub release. Pushing a tag vX.Y.Z does the same for that commit; a tag with a suffix
+# (v0.3.12-test.1) is a rehearsal published on `release-staging` only (scripts/release.sh).
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
+      - uses: astral-sh/setup-uv@v5
+      - name: Unit tests
+        run: ./scripts/test-unit.sh
+      - name: Release
+        id: rel
+        run: |
+          git config user.name "factorycrew release"
+          git config user.email "release@users.noreply.github.com"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            ./scripts/release.sh bump "${{ inputs.bump }}"
+          else
+            ./scripts/release.sh tag "${{ github.ref_name }}"
+          fi
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.rel.outputs.version }}"
+          pre=""; [ "${{ steps.rel.outputs.channel }}" = release ] || pre="--prerelease"
+          gh release create "v$v" "${{ steps.rel.outputs.zip }}" --title "factorycrew $v" $pre \
+            --notes "Built from $(git rev-parse --short HEAD). Channel branch: ${{ steps.rel.outputs.channel }}." \
+            || gh release upload "v$v" "${{ steps.rel.outputs.zip }}" --clobber

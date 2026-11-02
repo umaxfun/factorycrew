@@ -185,6 +185,26 @@ def test_a_turn_lost_in_a_bridge_restart_stops_thinking(stack):
         stack.wait_online()
 
 
+def test_the_stop_hook_sends_a_turn_without_factorio_reply_back_then_its_text_to_the_tab(stack):
+    """The turn contract through the real bridge and mod (the test plays Kiro Crew's hooks)."""
+    ask_id = stack.ask("Hooked", "ну что там?")
+    assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]
+    http("POST", "/asks/done", {"ids": [ask_id]})
+    wait_until(lambda: stack.tab("Hooked")["state"] == "thinking", what="thinking")
+    slot = "dashboard:factorio-l2hook"
+    tick = next(e for e in stack.tab("Hooked")["feed"] if e.get("id") == ask_id)["tick"]
+    http("POST", "/hook", {"event": "UserPromptSubmit", "session_key": slot,
+                           "prompt": f'[Factorio · run "R" · tab "Hooked" · tick {tick}]\nну что там?'})
+    http("POST", "/hook", {"event": "PostToolUse", "session_key": slot, "tool_name": "@x:factorio/factorio_query"})
+    first = http("POST", "/hook", {"event": "Stop", "session_key": slot, "assistant_text": "167 машин."})
+    assert first["decision"] == "block" and "factorio_reply" in first["reason"]
+    assert stack.tab("Hooked")["state"] == "thinking"
+    assert http("POST", "/reply", {"chat": "Hooked", "text": "copy", "fallback": True, "ask_id": ask_id})["skipped"] == "hooks"
+    http("POST", "/hook", {"event": "Stop", "session_key": slot, "assistant_text": "167 машин."})
+    t = wait_until(lambda: (lambda t: t if t["state"] == "idle" else None)(stack.tab("Hooked")), what="the answer")
+    assert [e["text"] for e in t["feed"] if e.get("from") == "kira"] == ["167 машин."]
+
+
 def test_turn_end_from_the_dispatcher_ends_thinking(stack):
     ask_id = stack.ask("Ended", "how are you?")
     assert [a["id"] for a in http("GET", "/asks?wait=10")["asks"]] == [ask_id]

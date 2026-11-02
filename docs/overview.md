@@ -67,7 +67,7 @@ flowchart LR
 ## Build and ship
 
 - Development: each worktree runs its own stack with `scripts/stand.sh` ([dev-stand](areas/dev-stand.md), [worktrees.md](worktrees.md)). The fast check is `scripts/check.sh`; CI runs the same steps (`.github/workflows/check.yml`).
-- Players: `scripts/build-app.sh` makes `dist/factorycrew/`, a Kiro Crew app with the mod, bridge, MCP server, dispatcher, Kira and skills; `scripts/release.sh` commits it to the `release` branch, which is the app registry players add ([app](areas/app.md)). The app copies the mod into Factorio's mods folder; nothing comes from the mod portal.
+- Players: `scripts/build-app.sh` makes `dist/factorycrew/`, a Kiro Crew app with the mod, bridge, MCP server, dispatcher, Kira and skills; the Release workflow in GitHub Actions (`scripts/release.sh`) commits it to the `release` branch, which is the app registry players add ([app](areas/app.md)). The app copies the mod into Factorio's mods folder; nothing comes from the mod portal.
 
 ## Decisions
 

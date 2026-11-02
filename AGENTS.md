@@ -23,7 +23,7 @@ Work in your own git worktree, next to the main clone (`<main clone>.worktrees/<
 - A change that alters an area's behaviour updates that area's doc in the same change.
 - The code wins when SPEC, README and code disagree: fix the doc ([docs/decisions.md](docs/decisions.md)).
 - Do not undo a decision in [docs/decisions.md](docs/decisions.md) without asking.
-- Costly to get wrong: `scripts/release.sh --push` and the `release` branch (players update from it), `app/app.json` version, `mod/kc-companion/scripts/protocol.lua` together with `bridge/factorio_bridge.py` (both ends of the UDP protocol), the mod's `storage` layout (players' saves), dispatcher chat keys and cron identity (chats refuse a new cron), `agent/factorio-companion.json` (no `model` field, on purpose).
+- Costly to get wrong: the Release workflow (`.github/workflows/release.yml`, `scripts/release.sh`) and the `release` branch (players update from it; rehearse with a `vX.Y.Z-test.N` tag, which goes to `release-staging`), `app/app.json` version, `mod/kc-companion/scripts/protocol.lua` together with `bridge/factorio_bridge.py` (both ends of the UDP protocol), the mod's `storage` layout (players' saves), dispatcher chat keys and cron identity (chats refuse a new cron), `agent/factorio-companion.json` (no `model` field, on purpose).
 
 ## Where things are
 
@@ -35,7 +35,7 @@ Work in your own git worktree, next to the main clone (`<main clone>.worktrees/<
 | `mod/kc-companion/scripts/atlas.lua`, `mcp/kc/atlas.py`, `scripts/atlas-fixture.sh`, `tests/data/atlas/`, `tools/atlas_proto/` | [Atlas](docs/areas/atlas.md) |
 | `mod/kc-companion/scripts/circuits.lua`, `mcp/kc/circuits.py` | [Circuits](docs/areas/circuits.md) |
 | `mod/kc-companion/scripts/panels.lua`, panel tools in `mcp/factorio_mcp.py` | [Live panels](docs/areas/panels.md) |
-| `bridge/` | [Bridge](docs/areas/bridge.md) |
+| `bridge/`, `app/hooks/` | [Bridge](docs/areas/bridge.md) |
 | `dispatcher/` | [Dispatcher](docs/areas/dispatcher.md) |
 | `mcp/factorio_mcp.py`, `mcp/kc_compute.py` | [MCP server](docs/areas/mcp-server.md) |
 | `mcp/kc/` (except atlas, circuits) | [kc library](docs/areas/kc-library.md) |

@@ -218,8 +218,8 @@ def test_a_turn_killed_by_the_usage_limit_tells_the_tab_at_once(tmp_path, monkey
         USAGE_LIMIT_ROW,
     ])
     assert [(p, b) for p, b in posted if p != "/trace"] == [
-        ("/reply", {"chat": "General", "text": d.USAGE_LIMIT_TEXT, "fallback": True, "ask_id": None}),
-        ("/turn_end", {"chat": "General", "ask_id": None})]
+        ("/reply", {"chat": "General", "text": d.USAGE_LIMIT_TEXT, "fallback": True, "ask_id": None, "failure": True}),
+        ("/turn_end", {"chat": "General", "ask_id": None, "failure": True})]  # no Stop hook fires for a killed turn
     assert t.watch == {}
 
 
