@@ -1,0 +1,11 @@
+{
+  "name": "kc-companion",
+  "version": "0.3.12-test.1",
+  "title": "Kiro Crew Companion",
+  "author": "umaxfun",
+  "factorio_version": "2.0",
+  "description": "Ask Kiro Crew about the current run from an in-game window. Talks to a local bridge over UDP (--enable-lua-udp).",
+  "dependencies": [
+    "base >= 2.0.0"
+  ]
+}
