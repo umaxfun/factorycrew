@@ -1,6 +1,6 @@
 {
   "name": "factorycrew",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "displayName": "Factorio Companion",
   "description": "Kira, a Factorio companion: ask about your live run from an in-game window; she reads the save, answers in the tab and marks places on the map.",
   "author": "umaxfun",

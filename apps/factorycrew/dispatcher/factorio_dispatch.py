@@ -583,8 +583,11 @@ def artifact_cli(*argv, timeout=30):
     """`kirocrew artifact ...` against this gateway: KIROCREW_PORT is the cron's own port, set by
     remember_gateway_port, so a second gateway on the default port is never asked."""
     try:
+        # cwd: the kirocrew CLI reads its working directory on start (project-dir lookup), and a process
+    # of an app that was updated runs in the deleted old install folder: FileNotFoundError
+    # from os.getcwd(), and no panel was saved (gamer, 2026-11-02, after 0.4.0)
         p = subprocess.run([kirocrew_exe(), "artifact", *argv], capture_output=True, text=True, timeout=timeout,
-                           stdin=subprocess.DEVNULL)
+                           stdin=subprocess.DEVNULL, cwd=os.path.expanduser("~"))
     except (OSError, subprocess.SubprocessError) as exc:
         raise LibraryError(f"kirocrew artifact {argv[0]}: {exc}") from exc
     if p.returncode != 0:

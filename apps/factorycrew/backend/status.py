@@ -111,7 +111,7 @@ def probe_mcp() -> dict:
     t0 = time.monotonic()
     try:
         p = subprocess.run([sys.executable, "-s", str(script)], input="".join(json.dumps(r) + "\n" for r in reqs),
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, cwd=str(Path.home()))
         tools = []
         for line in p.stdout.splitlines():
             try:
