@@ -24,6 +24,7 @@ In-game windows that Kira writes once with `factorio_panel` and the mod then kee
 
 ## Must stay true
 
+- Every `kirocrew artifact` call (MCP server `_kc`, dispatcher `artifact_cli`, the status page's library probe) runs with the home directory as its cwd: the CLI reads its cwd on start, and an updated app's processes keep the deleted old install folder as theirs (`tests/unit/test_cli_cwd.py`; gamer, 2026-11-02, after 0.4.0).
 - A panel body's first failure in a row and every failed button are queued as `lua_error` with the panel's code, at most 20 between sends (`mod/kc-companion/tests/test-panels.lua::queues a panel's first failure and every failed button for the developer, with the code`). See [Error and bug reports](../sentry.md).
 - A panel is created, replaced or removed by one `query` that calls `kc.panel{...}` / `kc.panel_remove(...)`, and its spec reaches the game byte for byte, including `]]` and Cyrillic in the body (`tests/unit/test_panel_tool.py::test_long_string_never_closes_early`, `::test_panel_lua_carries_the_spec_as_json`, `tests/integration/test_panels_game.py::test_bad_body_is_reported_and_kept`)
 - The body runs once on create and the tool returns its `view` (tables cut to 30 rows, `rows_total`) or `error` (`panels.lua:414-430`, `mod/kc-companion/tests/test-panels.lua` "runs the body once on create...")

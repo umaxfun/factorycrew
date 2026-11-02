@@ -561,8 +561,11 @@ def _kc(*argv: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
     if gateway_port():
         env["KIROCREW_PORT"] = gateway_port()
     try:
+        # cwd: the kirocrew CLI reads its working directory on start (project-dir lookup), and a process
+        # of an app that was updated runs in the deleted old install folder: FileNotFoundError
+        # from os.getcwd(), and no panel was saved (gamer, 2026-11-02, after 0.4.0)
         return subprocess.run([exe, "artifact", *argv], capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL, env=env)
+                              stdin=subprocess.DEVNULL, env=env, cwd=os.path.expanduser("~"))
     except (OSError, subprocess.SubprocessError):
         return None
 
