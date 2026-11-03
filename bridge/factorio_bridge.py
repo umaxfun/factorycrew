@@ -129,6 +129,11 @@ class Settings:
     # the installed app's version, sent in every pong: a mod that runs an older version tells the
     # player to restart Factorio (the app copied the new mod in, the game loads it only at start)
     app_version: str | None = None
+    # Test only (tests/e2e/stand.py): the first factorio_reply for each of these tabs is answered
+    # "delivered" but never reaches the game, the way a turn that skipped factorio_reply looks to
+    # the bridge. It plants the fault the turn contract handles without relying on a model that
+    # disobeys "do not call factorio_reply" (it often calls it anyway).
+    drop_first_reply: tuple[str, ...] = ()
 
 
 @dataclass
@@ -323,6 +328,7 @@ class Bridge(asyncio.DatagramProtocol):
         self.leased: dict[str, tuple[dict, float]] = {}  # taken, not yet confirmed
         self.seen_asks: deque[str] = deque(maxlen=1000)
         self.ask_event = asyncio.Event()
+        self.to_drop: set[str] = set(settings.drop_first_reply)  # planted fault, see Settings
         self.outbox: deque[dict] = deque()  # reply/status for an offline game
         self.idle_timers: dict[tuple, asyncio.TimerHandle] = {}
         self.working: dict[tuple, dict] = {}  # (run_id, chat) thinking -> {"steps", "activity"}
@@ -750,6 +756,10 @@ class Bridge(asyncio.DatagramProtocol):
         not a reliable signal for either; the bridge's own record is."""
         run_id = self.game.run_id
         key = (run_id, chat)
+        if chat in self.to_drop and not fallback and not failure:
+            self.to_drop.discard(chat)
+            log.warning("planted fault: dropped the first factorio_reply for [%s]", chat)
+            return {"ok": True, "delivered": True, "queued": False}
         if fallback and (self.working.get(key) or {}).get("hooked") and not failure:
             # Kira's Stop hook ends turns now; the transcript copy would race the nudge back to her
             log.info("dropped the dispatcher's copy for [%s]: the hooks end turns", chat)
@@ -966,6 +976,8 @@ def main() -> None:
     p.add_argument("--idle-after", type=float, default=d.idle_after)
     p.add_argument("--request-timeout", type=float, default=d.request_timeout)
     p.add_argument("--lease", type=float, default=d.lease)
+    p.add_argument("--drop-first-reply", action="append", default=[], metavar="TAB",
+                   help="test only: answer the tab's first factorio_reply without delivering it")
     p.add_argument("-v", "--verbose", action="store_true")
     a = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
@@ -973,7 +985,8 @@ def main() -> None:
     # Loopback by default: the API has no auth, anyone who can reach it can run Lua in the game.
     s = Settings(udp_port=a.udp_port, game_port=a.game_port, http_port=a.http_port, http_host=a.http_host,
                  offline_after=a.offline_after, idle_after=a.idle_after,
-                 request_timeout=a.request_timeout, lease=a.lease)
+                 request_timeout=a.request_timeout, lease=a.lease,
+                 drop_first_reply=tuple(a.drop_first_reply))
     try:
         asyncio.run(serve(s))
     except KeyboardInterrupt:

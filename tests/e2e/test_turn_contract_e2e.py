@@ -26,15 +26,19 @@ def rows(chat):
 
 
 def test_a_turn_that_skips_factorio_reply_still_answers_in_the_game(player):
-    # the planted fault: the model ends the turn in the chat only (gamer, 2026-11-01)
-    text, _, t = player.ask_and_wait("NoReply", (
-        "This is a test of the app. Answer only in the Kiro Crew chat with the single word pong, "
-        "and do not call factorio_reply."))
+    # The planted fault: the turn ends with no answer in the game (gamer, 2026-11-01). The stand's
+    # bridge drops this tab's first factorio_reply (--drop-first-reply NoReply, tests/e2e/stand.py),
+    # so the fault happens whether Kira calls factorio_reply or not. Asking the model not to call
+    # it was not enough: it called it anyway in about one run of two, and nothing was tested.
+    text, _, t = player.ask_and_wait("NoReply", "This is a test of the app. Answer with the single word pong.")
     print(f"\nreply in the game ({t:.0f}s): {text}")
     assert "pong" in text.lower()
-    # Kiro Crew writes the Stop hook's continuation as an `inject` row
-    nudged = [r for r in rows("NoReply") if "Hook continuation" in str(r.get("content"))]
-    assert nudged, "the Stop hook did not send the turn back to Kira"
+    # Kiro Crew writes the Stop hook's continuation as an `inject` row. The answer reaches the game
+    # about 2 s before the continuation turn closes, and the gateway may write the rows only then.
+    deadline = time.monotonic() + 30
+    while not (nudged := [r for r in rows("NoReply") if "Hook continuation" in str(r.get("content"))]):
+        assert time.monotonic() < deadline, "the Stop hook did not send the turn back to Kira"
+        time.sleep(1)
 
 
 def test_a_dispatcher_restart_mid_turn_does_not_lose_the_answer(player):

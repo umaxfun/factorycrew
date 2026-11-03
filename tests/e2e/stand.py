@@ -12,7 +12,9 @@ import time
 sys.path.insert(0, "/work/tests/integration")
 import conftest as c  # noqa: E402
 
-c.BRIDGE_ARGS = ["--http-host", "0.0.0.0"]  # real timeouts; published only to 127.0.0.1 on the host
+# real timeouts; published only to 127.0.0.1 on the host. The NoReply tab's first factorio_reply
+# is dropped: tests/e2e/test_turn_contract_e2e.py plants a turn that "skipped" factorio_reply.
+c.BRIDGE_ARGS = ["--http-host", "0.0.0.0", "--drop-first-reply", "NoReply"]
 s = c.Stack()
 s.prepare()
 s.start_bridge()
