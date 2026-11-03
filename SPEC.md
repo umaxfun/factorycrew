@@ -283,6 +283,8 @@ Level 1 and 2 tests pass with the commands from the README, and the level 3 e2e 
 
 ## Decided
 
+The repository owner's decisions here are on record as entries in [docs/decisions.md](docs/decisions.md); this section keeps the checks and measurements behind them.
+
 **Where the game runs.** On the player's own machine, next to Kiro Crew; everything talks over loopback, no network or tunnels. Players install the Kiro Crew app; the earlier setup with a separate `gamer` account and a symlinked mod is retired (confirmed by Michael on 2026-10-29).
 
 **`load` in the mod runtime.** Available for text chunks (Factorio Lua API docs, Libraries). `factorio_query` takes arbitrary Lua; no fallback to primitives.

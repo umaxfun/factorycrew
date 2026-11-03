@@ -70,7 +70,7 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 - The mod reports only where a pointer is and what is under it; what it means is Kira's job. [SPEC.md, "Pointers"](../../SPEC.md#pointers)
 - The window does not pause the game. [SPEC.md, "Mod ↔ bridge protocol"](../../SPEC.md#mod--bridge-protocol)
 - How the window looks is checked with a real client, because headless renders nothing: [SPEC.md, "Decided", "Screenshots for UI work"](../../SPEC.md#decided)
-- The code wins when SPEC, README and code disagree: confirmed by Michael, 2026-10-29
+- The code wins when SPEC, README and code disagree: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed)
 
 ## Terms
 

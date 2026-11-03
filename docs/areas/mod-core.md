@@ -64,8 +64,8 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 
 ## Decisions
 
-- The code wins when SPEC, README and the code disagree: confirmed by Michael, 2026-10-29
-- Queries run arbitrary Lua through `load` with their own environment, with no sandbox and no fallback to primitives; read-only is an agent rule: [SPEC.md, "Decided", "`load` in the mod runtime"](../../SPEC.md#decided) and "Agent tools"; confirmed by Michael, 2026-10-29
+- The code wins when SPEC, README and the code disagree: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed)
+- Queries run arbitrary Lua through `load` with their own environment, with no sandbox and no fallback to primitives; read-only is an agent rule: [SPEC.md, "Decided", "`load` in the mod runtime"](../../SPEC.md#decided) and "Agent tools"; decided by the repository owner, [decisions.md](../decisions.md#queries-run-arbitrary-lua-with-no-sandbox-read-only-is-an-agent-rule), [decisions.md](../decisions.md#queries-take-arbitrary-lua-through-load-with-no-fallback-to-primitives)
 - A run is a `run_id` in `storage`, named by the player: the Lua API has no save name. [SPEC.md, "Decided", "Save name in the Lua API"](../../SPEC.md#decided) and "What a run is"
 - The mod declares `factorio_version: "2.0"`; level 1 runs on 2.0.77 and 2.1.23: the player's game is 2.0.77 and headless 2.0 crashes on UDP. [SPEC.md, "Decided", "Game version"](../../SPEC.md#decided)
 - The mod slices 4096 bytes of source JSON per part: the bridge handles the ~8 KB packets this makes, while the game's own receive buffer starts at 4 KB. [SPEC.md, "Mod ↔ bridge protocol"](../../SPEC.md#mod--bridge-protocol)
