@@ -43,6 +43,31 @@ def test_a_turn_without_factorio_reply_goes_back_to_kira_once_then_its_text_to_t
     assert ("r1", "лубрикант") not in b.working
 
 
+def test_the_planted_fault_drops_only_the_first_reply_of_its_tab():
+    # tests/e2e/stand.py runs the bridge with --drop-first-reply NoReply, so the e2e's turn "skips"
+    # factorio_reply whatever the model does
+    b = fb.Bridge(fb.Settings(drop_first_reply=("лубрикант",)))
+    b.game.run_id = "r1"
+    out = []
+    b.deliver = lambda m: out.append(m) or True
+    b.arm_idle = lambda key: None
+    b.set_thinking("r1", "лубрикант", "ask-1", 5)
+    out.clear()
+    b.hook({"event": "UserPromptSubmit", "session_key": SLOT, "prompt": HEADER})
+    assert b.reply("лубрикант", "pong")["delivered"] is True and out == []  # looks delivered to Kira
+    assert ("r1", "лубрикант") in b.working  # the turn still has no answer
+    assert b.hook({"event": "Stop", "session_key": SLOT, "assistant_text": "pong"})["decision"] == "block"
+    b.reply("лубрикант", "pong")  # the nudged turn's own reply goes through
+    assert [m["text"] for m in out if m["type"] == "reply"] == ["pong"]
+    assert ("r1", "лубрикант") not in b.working
+
+
+def test_no_reply_is_dropped_without_the_flag():
+    b, out = bridge_with_turn()
+    b.reply("лубрикант", "pong")
+    assert [m["type"] for m in out] == ["reply"]
+
+
 def test_the_previous_turns_late_stop_is_not_the_new_questions():
     # full e2e, 2026-11-02: turn 1 answered, the follow-up was already thinking when turn 1's Stop
     # came; it was taken for the follow-up's, Kira was sent back and repeated turn 1's answer
