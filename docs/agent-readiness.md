@@ -6,25 +6,25 @@ Tools brought in: none.
 
 ## Summary
 
-Start (docs):    map -> contracts. `report/` has its own area doc, the overview names it with where its data goes and the Release workflow, and the repository owner's decisions are append-only entries in `docs/decisions.md`. They become verified decisions once the owner restates them in one comment on the docs pull request; until then each entry says "Evidence: restated on this merge request". A fresh agent answered 15 of 15 questions from recent changes on the new docs, and 15 of 15 on the docs before.
+Start (docs):    map -> contracts. `report/` has its own area doc, the overview names it with where its data goes and the Release workflow, and the repository owner's decisions are append-only entries in `docs/decisions.md`. The owner restated all of them, and five design notes besides, in [one comment on PR #4](https://github.com/umaxfun/factorycrew/pull/4#issuecomment-6623796024), which every entry links as its evidence. A fresh agent answered 15 of 15 questions from recent changes on the new docs, and 15 of 15 on the docs before.
 Finish (checks): See it run -> See it run. The flaky turn-contract e2e plants its fault itself now (bridge flag `--drop-first-reply`, test only); 6 real-model runs green.
 
 Blocking an agent today:
-- Nothing blocks T1/T2 work. T3/T4 need the decisions on record: the owner's comment on the docs pull request.
+- Nothing blocks T1-T4 work.
 - `main` has no branch protection: CI is not a required check (the factory's go-live sets it up).
 
 ## Start: can an agent learn what it is about to change?
 
-Level: contracts (verified once the decisions comment is on the forge)
+Level: contracts
 
 | Area | Paths | Doc |
 |---|---|---|
-| Mod core | `mod/kc-companion/control.lua`, `scripts/protocol.lua` | docs/areas/mod-core.md |
-| Window and pointers | `scripts/gui.lua`, `scripts/pointers.lua`, `data.lua` | docs/areas/window.md |
-| Build helpers, trial | `scripts/helpers.lua`, `scripts/trial.lua` | docs/areas/build-helpers.md |
-| Atlas | `scripts/atlas.lua`, `mcp/kc/atlas.py` | docs/areas/atlas.md |
-| Circuits | `scripts/circuits.lua`, `mcp/kc/circuits.py` | docs/areas/circuits.md |
-| Live panels | `scripts/panels.lua`, panel tools | docs/areas/panels.md |
+| Mod core | `mod/kc-companion/control.lua`, `mod/kc-companion/scripts/protocol.lua` | docs/areas/mod-core.md |
+| Window and pointers | `mod/kc-companion/scripts/gui.lua`, `mod/kc-companion/scripts/pointers.lua`, `mod/kc-companion/data.lua` | docs/areas/window.md |
+| Build helpers, trial | `mod/kc-companion/scripts/helpers.lua`, `mod/kc-companion/scripts/trial.lua` | docs/areas/build-helpers.md |
+| Atlas | `mod/kc-companion/scripts/atlas.lua`, `mcp/kc/atlas.py` | docs/areas/atlas.md |
+| Circuits | `mod/kc-companion/scripts/circuits.lua`, `mcp/kc/circuits.py` | docs/areas/circuits.md |
+| Live panels | `mod/kc-companion/scripts/panels.lua`, panel tools | docs/areas/panels.md |
 | Bridge (with the turn hooks) | `bridge/`, `app/hooks/` | docs/areas/bridge.md |
 | Dispatcher | `dispatcher/` | docs/areas/dispatcher.md |
 | MCP server | `mcp/factorio_mcp.py`, `mcp/kc_compute.py` | docs/areas/mcp-server.md |
@@ -41,7 +41,7 @@ Level: contracts (verified once the decisions comment is on the forge)
 | S2 Areas | pass | pass | 15 areas, confirmed by the owner (report/ its own area, hooks under Bridge). |
 | S3 Area contracts | partial | pass | 15 area docs on the template; `docs-check.py --claims`: 0 unmarked, 20 `(inferred)`. |
 | S4 Overview | partial | pass | docs/overview.md: the reports area, a diagram edge to Sentry, where report data lives, the Release workflow. |
-| S5 Decisions | partial | pass, pending evidence | 21 entries in docs/decisions.md (Decided by, Date, Why, Evidence); area docs link them; agents' notes listed as not confirmed. |
+| S5 Decisions | partial | pass | 26 entries in docs/decisions.md (Decided by, Date, Why, Evidence), each linking [the owner's comment](https://github.com/umaxfun/factorycrew/pull/4#issuecomment-6623796024); area docs link them. |
 | S6 Terms | pass | pass | per area doc. |
 | S7 Docs are current | pass | pass | 14 claims of the new docs checked against the code (call sites of `configure`/`install_hooks` in all four parts, `SETTINGS_URL`, outbox path, copy steps in `build-app.sh`/`kc.sh`, UI components); one wrong claim fixed before commit (only one integration test asserts no player text). docs/sentry.md mod paths fixed. |
 | S8 Question test | pass (15/15) | pass (15/15) | a new frozen set of 15 changes; fresh `kiro-cli` with fs_read only on each bundle; graded by a separate agent: before 15/15, after 15/15, no misses. |
@@ -75,17 +75,15 @@ Unknown. The repository has three merged pull requests and no issues on GitHub; 
 
 ## Answers from you
 
-- Decisions as entries, restated in one comment on the docs pull request: yes.
+- Decisions as entries, restated in one comment on the docs pull request: yes, [restated](https://github.com/umaxfun/factorycrew/pull/4#issuecomment-6623796024).
 - SPEC.md "Decided" and docs/sentry.md "Decided": the owner's decisions, written by agents; entries too.
 - `report/` its own area, turn hooks stay under Bridge: yes.
 - App e2e: already run, skip.
-- Factory: humans `umaxfun`; a bot account to be created; the Kiro API key later; review models Opus and GPT Sol; branch protection on `main`: yes.
+- Factory: humans `umaxfun`; the GitHub App `factorycrew-crew` for the crew, a fine-grained token of the owner for the merger, `KIRO_API_KEY` in the environment `factory`; review models Opus and GPT Sol; branch protection on `main`: yes.
 
 ## Plan
 
 Yours:
-- Restate the decisions in one comment on the docs pull request (the text is in its body); then each entry's Evidence links to it.
-- Merge the docs pull request.
-- For the factory: create the bot account (or a GitHub App) and give the Kiro API key for CI.
+- Nothing for the docs. The factory's setup pull request follows (`kirocrew-factory` configure).
 
 Agent, after that: the factory setup pull request (`kirocrew-factory` configure), with factory.yml and tier texts drafted on a local branch.
