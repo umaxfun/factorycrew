@@ -1,6 +1,6 @@
 # Error reports and bug reports through Sentry
 
-Status: T1-T4 done on branch `feature/sentry` (not released): `report/kc_report.py` and the switch, every part reporting its errors, "Report a problem" in the window and on the app page, Kira's `factorio_feedback`. Branch `feature/sentry`, agreed with Michael on 2026-11-01. This is also the area doc for `report/`.
+The plan and design of error reports: T1-T4 are done and shipped in the app (`report/kc_report.py`, the switch, every part reporting its errors, "Report a problem" in the window and on the app page, Kira's `factorio_feedback`). The area doc for `report/`, with its main files, what must stay true and how to check a change, is [Error and bug reports](areas/reports.md). The decisions below are the repository owner's and are on record as entries in [decisions.md](decisions.md); this doc keeps their reasons.
 
 Why: on 2026-10-31 a player's tab kept "thinking" after Kiro credits ran out, and the cause (an old dispatcher still running) could not be seen from the developer's machine. Reports bring that data back without the player logging in anywhere.
 
@@ -39,23 +39,9 @@ Michael, 2026-11-01: long answers that stop for no visible reason and tools that
 
 Each file keeps its last 40 MB; a zip over 15 MB loses the first half of its biggest file until it fits. The window's report, Kira's `factorio_feedback` and the app page's report all carry it: the window and Kira for their tab, the app page for the three Factorio chats written to last (`chat<n>-<slot>/...`). A comment is optional everywhere, and under a turn that went wrong (stopped, no answer, "Kiro Crew could not finish", no credits) the window shows "Report this to the developer", which opens the dialog with nothing to fill in.
 
-## Main files
+## Main files, easy to break, how to check a change
 
-- `report/kc_report.py`: `Reporter` (settings, `capture_exception`, `capture_message`, `send_report`, the outbox, `flush`, the sender thread) and module functions `configure(part)`, `capture_exception`, `capture_message`, `send_report` that never raise.
-- `report/settings.json`: the shipped DSN. `report/environment`: written only into a build.
-- `app/backend/server.py` `settings`, `save_settings`: `GET`/`POST /api/settings` behind the gateway's `/apps/factorycrew/api/settings`; `app/ui/index.mjs` `Reports`: the switch.
-- `scripts/build-app.sh` copies `report/` into the app and stamps the environment; the Release workflow (`scripts/release.sh`) builds with `FC_REPORT_ENV=prod`.
-
-## Easy to break
-
-- Turning the switch writes `data/config.json`, whose mtime the dispatcher watches: its wake exits and the next one starts within 30 s, and a turn it was following loses its live trace (`dispatcher/factorio_dispatch.py` `source_stamp`).
-- From T2 on, every part reports. Test scripts and CI must set `FC_SENTRY_DSN` to a fake receiver or to empty, or planted test errors land in `dev-<host>` (or in `prod`, from a test of a release build).
-- The exception message is sent: an exception built from player text would carry it. Messages are trimmed to 500 chars; code that raises with a question in the text must not report it.
-
-## How to check a change
-
-- `./scripts/test-unit.sh tests/unit/test_report.py tests/unit/test_app_status.py`: the envelope, scrubbing, environments, rate limit, outbox limits, every HTTP answer, offline and back, the switch over HTTP, against a fake Sentry on localhost. ~10 s.
-- A real send: `Reporter("smoke", outbox=<scratch dir>, settings_url=None).capture_exception(...)`, then `flush()`; Sentry answered 200 for an event and for a `feedback` with an attachment on 2026-11-01 (environment `dev-mac`).
+In the area doc, [Error and bug reports](areas/reports.md). A real send by hand answered 200 for an event and for a `feedback` with an attachment on 2026-11-01 (environment `dev-mac`).
 
 ## Checked
 
@@ -76,7 +62,7 @@ Each file keeps its last 40 MB; a zip over 15 MB loses the first half of its big
 
 **T2. Automatic errors.** Done. What reports what:
 - **Bridge** (`bridge/factorio_bridge.py`): a packet whose handling raised, a failed atlas prefetch, an HTTP handler that raised; Kira's `factorio_query` that came back `compile_error`/`runtime_error` (only calls flagged `_agent`), with `code.lua`; and the mod's new `lua_error` message. Tags: `part`, `source`, `mod_version`, `app_version`.
-- **Mod** (`control.lua`, `scripts/protocol.lua`, `scripts/panels.lua`): sends `lua_error` `{source, name?, message, lua?}` for a panel body's first failure in a row (`panel`), every failed panel button (`panel_action`), and an error in the mod's own handler (`mod`, with the traceback). The UDP handler, the 60-tick handler and the GUI handlers run under `xpcall`: an error there no longer stops the game with Factorio's error screen; the game prints one line per session, and a request the bridge waits on is answered `mod_error` instead of timing out. Queue capped at 20 between sends; module memory, not `storage`.
+- **Mod** (`mod/kc-companion/control.lua`, `mod/kc-companion/scripts/protocol.lua`, `mod/kc-companion/scripts/panels.lua`): sends `lua_error` `{source, name?, message, lua?}` for a panel body's first failure in a row (`panel`), every failed panel button (`panel_action`), and an error in the mod's own handler (`mod`, with the traceback). The UDP handler, the 60-tick handler and the GUI handlers run under `xpcall`: an error there no longer stops the game with Factorio's error screen; the game prints one line per session, and a request the bridge waits on is answered `mod_error` instead of timing out. Queue capped at 20 between sends; module memory, not `storage`.
 - **MCP server** (`mcp/factorio_mcp.py`): a tool that raised (it now answers `internal` instead of killing the server), and Kira's `factorio_compute` code that failed (`ComputeError`, with `main.py` and `stderr.txt`), on the same terms as her Lua.
 - **Dispatcher** (`dispatcher/factorio_dispatch.py`): a wake that raised; a question it could not pass after the last attempt; a turn Kiro Crew ended with an error row, as a `warning` `KiroCrewTurnError` with Kiro Crew's text and `usage_limit` (the 2026-10-31 case). Its printed lines are kept for a bug report (`note`, `RECENT_LOG`).
 - **Backend** (`app/backend/server.py`): a failed mod install, an HTTP handler that raised. It sets reports up for the bridge running in its process.

@@ -56,7 +56,7 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 
 - Without the parent check, a gateway restart leaves two dispatchers sharing one queue (SPEC.md "How it works"). Without the source-stamp check, old code keeps serving for up to an hour, with a stale chat header for example (SPEC.md "How it works"). `scripts/kc.sh install` copies only on change, because any copy restarts the running wake (`scripts/kc.sh:47-48`).
 - `not_creator` is recognised by that substring in the exception text (`dispatcher/factorio_dispatch.py:473`). If Kiro Crew changes the wording, every tab opened by an earlier cron job answers "Could not pass the question…" after 3 tries (inferred: the wording is not pinned by a Kiro Crew contract).
-- Recreating the cron, reinstalling the app or disabling and enabling it gives a new job id, so every old chat refuses messages and is replaced by a fresh one without the agent's memory of the old one (SPEC.md "How it works" step 3).
+- Recreating the cron, reinstalling the app or disabling and enabling it gives a new job id, so every old chat refuses messages and is replaced by a fresh one without the agent's memory of the old one ([SPEC.md, "How it works"](../../SPEC.md#how-it-works), step 3).
 - The private `_post` calls break on a Kiro Crew update; the tab then shows "ScriptContext._post is gone" or "/api/chat/... refused" after 3 tries (`dispatcher/factorio_dispatch.py:92-99`; SPEC.md "Open questions").
 - Without `agent.session_control = true` the dispatcher gets `session_control_disabled` (SPEC.md "What to enable"), and each question ends as "Could not pass the question…" after 3 tries (`dispatcher/factorio_dispatch.py:486-493`). The app status page still shows the dispatcher green then, because it checks only that `/asks` is polled (`app/backend/status.py:168-178`).
 - The trace and the fallback forward depend on Kiro Crew's transcript shape (`role`, `content`, `meta.turn_stats`, `meta.mcp_server`, `ts`). If it changes they stop silently; the tab then gets only "Kira did not answer here" after the bridge's 20-minute backstop when the model skips `factorio_reply` (SPEC.md "Mod ↔ bridge protocol", "Long turns"; `dispatcher/factorio_dispatch.py:266-299`).
@@ -65,7 +65,7 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 - `poll_wait` above 60 s: the bridge caps the wait at 60 s, and the app status page reports the dispatcher down after 60 s of silence (`bridge/factorio_bridge.py:548`, `app/backend/status.py:21`).
 - A bridge error on `/asks/done` or on the failure `/reply` inside `handle` is not caught, so the wake ends with an exception; the ask comes back by lease to the next wake (`dispatcher/factorio_dispatch.py:492-495`, `:565`).
 - A tab's chat is cached in `dispatch-state.json` and only replaced on `not_creator`; a chat removed in the dashboard probably fails every later question of that tab (inferred: what `send_to_session` does for a deleted slot is not checked).
-- Renaming a run does not rename its folder (SPEC.md "Open questions").
+- Renaming a run does not rename its folder ([SPEC.md, "Open questions"](../../SPEC.md#open-questions)).
 
 ## How to check a change
 
@@ -78,13 +78,13 @@ The dispatcher is a Kiro Crew script-cron. It takes the questions the game sent 
 
 ## Decisions
 
-- When SPEC, README and the code disagree, the code wins: confirmed by Michael on 2026-10-29.
+- When SPEC, README and the code disagree, the code wins: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed).
 - Chat key is `run_id` + tab, one folder per run: the public `open_session` uses one string as key and title and keys are global, so two runs' "Logistics" would share a chat. SPEC.md "Decided" "Chat key", "How it works" step 2.
 - Nested folders through the private `_post` until Kiro Crew [issue #25210](https://github.com/kirodotdev/KiroCrew/issues/25210) lands: the public `create_session_folder` has no parent. SPEC.md "How it works" step 1, "Open questions".
 - One wake long-polls for 3500 s: Kiro Crew caps a script at 3600 s. SPEC.md "How it works".
 - Confirm after `send_to_session`, not on pickup: a dispatcher dying halfway loses no question. SPEC.md "How it works".
 - The trace reads Kiro Crew's transcript, accepting that a format change stops it: nothing else breaks. SPEC.md "Mod ↔ bridge protocol", "Long turns".
-- The `gamer`-account setup is retired; players install the Kiro Crew app, whose cron runs this script: confirmed by Michael on 2026-10-29.
+- The `gamer`-account setup is retired; players install the Kiro Crew app, whose cron runs this script: confirmed by the repository owner, [decisions.md](../decisions.md#players-install-the-kiro-crew-app-the-second-account-setup-is-retired).
 
 ## Terms
 

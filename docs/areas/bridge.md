@@ -80,7 +80,7 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 - A port that answers is not proof it is your bridge: a dispatcher pointed at another session's bridge takes that session's questions (`docs/worktrees.md` "What is yours").
 - `request_timeout` is 10 s: a slow query returns `game_timeout` while the game is still running it, and the late `result` is dropped (`bridge/factorio_bridge.py:49`, `:355-358`).
 - Partial UDP messages are dropped after 30 s, and a lost atlas packet fails the request with `atlas_incomplete` (`bridge/factorio_bridge.py:130`, `:364-367`).
-- The API has no authentication; binding it to anything but loopback lets anyone reaching the port run Lua in the game (SPEC.md "Mod ↔ bridge protocol").
+- The API has no authentication; binding it to anything but loopback lets anyone reaching the port run Lua in the game ([SPEC.md, "Mod ↔ bridge protocol"](../../SPEC.md#mod--bridge-protocol)).
 
 ## How to check a change
 
@@ -93,12 +93,12 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 
 ## Decisions
 
-- When SPEC, README and the code disagree, the code wins: confirmed by Michael on 2026-10-29.
+- When SPEC, README and the code disagree, the code wins: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed).
 - HTTP on loopback only, no authentication: whoever reaches the port can run Lua in the game. SPEC.md "Mod ↔ bridge protocol".
 - Packets to the game at most 4000 bytes: the game's receive buffer starts at 4 KB and grows only after dropping a packet. SPEC.md "Mod ↔ bridge protocol".
 - An ask queue with a lease: a question survives a dispatcher restart and a dispatcher dying halfway. SPEC.md "How it works".
 - The bridge sends `idle` itself after 20 min without a sign of life, and at once on the dispatcher's `/turn_end`: "thinking…" must not hang when the agent does not answer, and a model thinking for minutes must not be cut off (90 s did that until 0.3.3). SPEC.md "How it works" (the agent paragraph and "Who sets the status"), "v1 done criteria".
-- `factorio_query` runs arbitrary Lua with no sandbox; read-only is an agent rule: confirmed by Michael on 2026-10-29, SPEC.md "Agent tools".
+- `factorio_query` runs arbitrary Lua with no sandbox; read-only is an agent rule: confirmed by the repository owner, [decisions.md](../decisions.md#queries-run-arbitrary-lua-with-no-sandbox-read-only-is-an-agent-rule), SPEC.md "Agent tools".
 
 ## Terms
 

@@ -65,9 +65,9 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 
 ## Decisions
 
-- Players install the Kiro Crew app; the old `gamer`-account setup is retired: confirmed by Michael, 2026-10-29 (README, "Playing").
-- The agent spec pins no model, left on auto so it is cheap for players: confirmed by Michael, 2026-10-29. `scripts/build-app.sh:33-40` writes no `model`.
-- When SPEC, README and code disagree, the code wins: confirmed by Michael, 2026-10-29.
+- Players install the Kiro Crew app; the old `gamer`-account setup is retired: confirmed by the repository owner, [decisions.md](../decisions.md#players-install-the-kiro-crew-app-the-second-account-setup-is-retired) (README, "Playing").
+- The agent spec pins no model, left on auto so it is cheap for players: confirmed by the repository owner, [decisions.md](../decisions.md#kiras-agent-spec-pins-no-model). `scripts/build-app.sh:33-40` writes no `model`.
+- When SPEC, README and code disagree, the code wins: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed).
 
 ## Terms
 

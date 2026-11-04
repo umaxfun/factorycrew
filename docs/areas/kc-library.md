@@ -64,7 +64,7 @@ The pure-Python building blocks Kira imports with `import kc` inside `factorio_c
 
 ## Decisions
 
-- When SPEC, README and code disagree, the code wins (confirmed by Michael 2026-10-29). No other kc decision is written down with a reason in the repo docs. The module docstrings record origins and licences (`mcp/kc/steiner.py`, `mcp/kc/lp.py`, `mcp/kc/bp.py`, `mcp/kc/wires.py`).
+- When SPEC, README and code disagree, the code wins (confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed)). No other kc decision is written down with a reason in the repo docs. The module docstrings record origins and licences (`mcp/kc/steiner.py`, `mcp/kc/lp.py`, `mcp/kc/bp.py`, `mcp/kc/wires.py`).
 
 ## Terms
 

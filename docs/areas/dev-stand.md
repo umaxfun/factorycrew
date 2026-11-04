@@ -70,7 +70,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 - FactorioTest is built from source at `cli-v3.5.1`: the portal copy needs a Factorio login, and from 3.6.0 the mod needs 2.1 ([SPEC, Tests](../../SPEC.md#tests)).
 - Level 2 runs on 2.1.23: headless 2.0 aborts on the first UDP packet ([SPEC, Decided](../../SPEC.md#decided), "Game version").
 - The UI loop uses a real client: headless renders no screenshots ([SPEC, Decided](../../SPEC.md#decided), "Screenshots for UI work").
-- Players install the Kiro Crew app and the `gamer` setup is retired, so `services.sh`, `deploy-mod.sh` and the `gamer` lines in `tools/ui_dev.py`'s docstring describe it: confirmed by Michael, 2026-10-29.
+- Players install the Kiro Crew app and the `gamer` setup is retired, so `services.sh`, `deploy-mod.sh` and the `gamer` lines in `tools/ui_dev.py`'s docstring describe it: confirmed by the repository owner, [decisions.md](../decisions.md#players-install-the-kiro-crew-app-the-second-account-setup-is-retired).
 
 ## Terms
 

@@ -18,6 +18,7 @@ factorycrew lets a Factorio player ask Kira, a Kiro Crew agent, about the curren
 | kc library | Python building blocks Kira imports in `factorio_compute` | [kc-library.md](areas/kc-library.md) |
 | Skills | Python planners (belts, pipes, power, mining, beacons, production, solar) | [skills.md](areas/skills.md) |
 | Kira, the agent | the agent spec and her rules | [kira-agent.md](areas/kira-agent.md) |
+| Error and bug reports | `report/`: automatic errors from every part and bug reports, through an outbox to Sentry | [reports.md](areas/reports.md), design: [sentry.md](sentry.md) |
 | Kiro Crew app and releases | the package a player installs; the `release` branch | [app.md](areas/app.md) |
 | Dev stands and test harness | per-worktree stacks, test scripts, CI | [dev-stand.md](areas/dev-stand.md), host rules: [worktrees.md](worktrees.md) |
 
@@ -49,6 +50,9 @@ flowchart LR
   kira -- tool calls --> mcp
   mcp -- POST /query /mark /reply /atlas --> br
   mcp --> lib
+  rep[report/ outbox]
+  br & disp & mcp -. errors, bug reports .-> rep
+  rep -. HTTPS envelope .-> sentry[(Sentry)]
 ```
 
 1. The player asks in the window. The mod sends `ask` over UDP; the bridge acks and queues it ([mod-core](areas/mod-core.md), [bridge](areas/bridge.md)).
@@ -63,12 +67,13 @@ flowchart LR
 - In the bridge's memory: the ask queue and leases, the outbox for an offline game, the merged atlas structure per surface; nothing on disk ([bridge](areas/bridge.md)).
 - In the gateway home (`~/.kirocrew-factorio*` for development, the app's `data/` for a player): `dispatch-state.json` (run and tab to chat), chat transcripts, Kira's agent file, saved panels as Kiro Crew artifacts ([dispatcher](areas/dispatcher.md), [app](areas/app.md)).
 - In the MCP process: the parsed atlas per surface and run ([atlas](areas/atlas.md)).
+- Error and bug reports: written to `<KIROCREW_HOME>/factorio/outbox/` and sent to Sentry in the background; a copy of every bug report stays in `<KIROCREW_HOME>/factorio/bug-reports/`. No automatic error carries the player's question or Kira's chat; only a bug report the player confirmed does ([reports](areas/reports.md)).
 
 ## Build and ship
 
 - Development: each worktree runs its own stack with `scripts/stand.sh` ([dev-stand](areas/dev-stand.md), [worktrees.md](worktrees.md)). The fast check is `scripts/check.sh`; CI runs the same steps (`.github/workflows/check.yml`).
-- Players: `scripts/build-app.sh` makes `dist/factorycrew/`, a Kiro Crew app with the mod, bridge, MCP server, dispatcher, Kira and skills; the Release workflow in GitHub Actions (`scripts/release.sh`) commits it to the `release` branch, which is the app registry players add ([app](areas/app.md)). The app copies the mod into Factorio's mods folder; nothing comes from the mod portal.
+- Players: `scripts/build-app.sh` makes `dist/factorycrew/`, a Kiro Crew app with the mod, bridge, MCP server, dispatcher, Kira and skills; the Release workflow in GitHub Actions (`.github/workflows/release.yml`, run by hand or by a `v*` tag; it runs the unit tests, then `scripts/release.sh`) builds with Sentry environment `prod` and commits the app to the `release` branch (a `vX.Y.Z-test.N` tag goes to `release-staging`), which is the app registry players add ([app](areas/app.md)). The app copies the mod into Factorio's mods folder; nothing comes from the mod portal.
 
 ## Decisions
 
-Confirmed decisions and where they come from: [decisions.md](decisions.md).
+The repository owner's decisions, one entry each with its evidence: [decisions.md](decisions.md).

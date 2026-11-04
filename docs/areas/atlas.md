@@ -67,7 +67,7 @@ The base as a graph for Kira: the mod streams the structure of a surface, the br
 - One tool with flat parameters: weak models handle it better than composing Python. [docs/atlas.md, Tool](../atlas.md#tool)
 - Per-tick limits of 3 chunk lookups, 150 cost units, 4000 bytes: looking at chunks is what costs frames, and sending ~500 KB/s stopped the client answering. [docs/atlas.md, Task 1 measurements](../atlas.md#1-one-zone-end-to-end)
 - Planted-fault cases are builds the test makes on the dev map, not committed saves: reviewable in the diff, no binary, no mods, each setup checked against the game first. [docs/atlas.md, task 5](../atlas.md#5-selection-versus-block-on-synthetic-saves)
-- The code wins when SPEC, README and code disagree: confirmed by Michael, 2026-10-29.
+- The code wins when SPEC, README and code disagree: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed).
 
 ## Terms
 

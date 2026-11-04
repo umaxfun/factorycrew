@@ -75,11 +75,11 @@ The bridge counts every call flagged `_agent` as a step of Kira's turn (`bridge/
 
 ## Decisions
 
-- `factorio_query` runs any Lua, with no sandbox; read-only is an agent rule: v1 is single player, and every query shows in the chat. [SPEC.md "Agent tools"](../../SPEC.md#agent-tools-mcp-factorio), last paragraph; "Decided: `load` in the mod runtime"; confirmed by Michael 2026-10-29.
+- `factorio_query` runs any Lua, with no sandbox; read-only is an agent rule: v1 is single player, and every query shows in the chat. [SPEC.md "Agent tools"](../../SPEC.md#agent-tools-mcp-factorio), last paragraph; "Decided: `load` in the mod runtime"; confirmed by the repository owner, [decisions.md](../decisions.md#queries-run-arbitrary-lua-with-no-sandbox-read-only-is-an-agent-rule).
 - `--bridge` on the command line comes before the env variable, because the agent spec's env block does not reach the MCP process. [../worktrees.md "Checking only your own stand"](../worktrees.md#checking-only-your-own-stand); `mcp/factorio_mcp.py:22-27`.
 - Under an outer sandbox, compute runs without its own profile rather than not at all, because macOS refuses a nested one. [SPEC.md "Agent tools"](../../SPEC.md#agent-tools-mcp-factorio), `factorio_compute`.
 - `factorio_atlas` is one tool with flat parameters, because weak models handle that better than composing Python. [../atlas.md "Tool"](../atlas.md#tool).
-- When SPEC, README and code disagree, the code wins (confirmed by Michael 2026-10-29).
+- When SPEC, README and code disagree, the code wins (confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed)).
 
 ## Terms
 

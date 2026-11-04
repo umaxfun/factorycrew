@@ -77,7 +77,7 @@ In-game windows that Kira writes once with `factorio_panel` and the mod then kee
 - Panels live in `player.gui.left`: Factorio stacks frames there, so panels never overlap. SPEC.md, `factorio_panel` entry, "Window".
 - No description in the game window: the player's rule; the description goes only into the artifact. SPEC.md, `factorio_panel` entry, "description".
 - The dispatcher answers library requests in a thread off its loop: each CLI call takes about 2 s. SPEC.md, `factorio_panel` entry, "Library in the window" (measurements), `factorio_dispatch.py:561`.
-- Panels are not sandboxed: a panel is arbitrary Lua like `factorio_query`, which has no sandbox and is read-only only by agent rule; this is accepted for a single-player game on the player's own machine. README.md, "Live panels"; confirmed by Michael 2026-10-29.
+- Panels are not sandboxed: a panel is arbitrary Lua like `factorio_query`, which has no sandbox and is read-only only by agent rule; this is accepted for a single-player game on the player's own machine. README.md, "Live panels"; confirmed by the repository owner, [decisions.md](../decisions.md#queries-run-arbitrary-lua-with-no-sandbox-read-only-is-an-agent-rule).
 - When SPEC, README and code disagree, the code wins. Confirmed by Michael 2026-10-29.
 
 ## Terms
