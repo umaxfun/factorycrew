@@ -156,7 +156,7 @@ areas:
   - {name: MCP server, paths: [mcp/factorio_mcp.py, mcp/kc_compute.py], doc: docs/areas/mcp-server.md}
   - {name: kc library, paths: ["mcp/kc/**"], doc: docs/areas/kc-library.md}
   - {name: Skills, paths: ["skills/**"], doc: docs/areas/skills.md}
-  - {name: Kira, the agent, paths: ["agent/**"], doc: docs/areas/kira-agent.md}
+  - {name: "Kira, the agent", paths: ["agent/**"], doc: docs/areas/kira-agent.md}
   - {name: Kiro Crew app and releases, paths: ["app/**", scripts/build-app.sh, scripts/release.sh, scripts/app-dev.sh], doc: docs/areas/app.md}
   - {name: Dev stands and test harness, paths: ["scripts/**", tools/ui_dev.py, "docker/**", tests/e2e/stand.py, tests/e2e/watch.py, ".github/**"], doc: docs/areas/dev-stand.md}
   - {name: Error and bug reports, paths: ["report/**"], doc: docs/areas/reports.md}

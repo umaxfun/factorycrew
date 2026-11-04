@@ -27,6 +27,12 @@ of these, or show a new one.
   stay true", docs/decisions.md).
 - `report/settings.json` fetched from the `release` branch: used only when its DSN points at
   `*.sentry.io` (`report/kc_report.py` `DSN_RE`; docs/areas/reports.md).
+- `KIRO_API_KEY`: a secret of the environment `factory`, reachable only from a workflow file a
+  job declares it in. The crew's GitHub App `factorycrew-crew` has no `workflows` permission, so
+  GitHub refuses any push of its that adds or changes a file under `.github/workflows/`; only
+  the repository owner can, and `.github/workflows/**` is a gate path (the App's permissions,
+  `factory.yml` `gate_paths`). Report a new path to the key that does not go through a workflow
+  file, not this one. Case: the second review round of the factory setup pull request.
 - The turn hook: `app/hooks/turn_hook.py` posts Kiro Crew's hook events to the bridge's `/hook`;
   the bridge acts only on a turn whose prompt carries the dispatcher's header for the tab's
   current question (docs/areas/bridge.md "Turn contract").

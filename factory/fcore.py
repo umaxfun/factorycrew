@@ -479,8 +479,10 @@ def issue_tier(events: list[dict], cfg: Config) -> tuple[str, str]:
 TRIAGE_MARK = "<!-- factory-triage -->"
 # The triager's citation of the documented behaviour a T1 (a fix) restores, one line of its
 # comment: Spec: `docs/areas/x.md:42` "the line, quoted". No such line: the issue is not a fix.
-SPEC_LINE = re.compile(r'(?m)^\s*Spec:\s*`?([A-Za-z0-9_./@+-]+):(\d+)`?\s*[-\u2014:]?\s*'
-                       r'["\u201c](.+?)["\u201d]\s*$')
+# Line patterns use [ \t], never \s: \s crosses newlines, and on a body of blank lines every
+# line start would rescan the rest of the body (quadratic; minutes on a forge-sized body).
+SPEC_LINE = re.compile(r'(?m)^[ \t]*Spec:[ \t]*`?([A-Za-z0-9_./@+-]+):(\d+)`?[ \t]*[-\u2014:]?[ \t]*'
+                       r'["\u201c](.+?)["\u201d][ \t]*\r?$')
 
 
 class Citation(NamedTuple):
@@ -510,7 +512,7 @@ def triage_citation(comments: list[Comment], cfg: Config) -> Citation | None:
     return None
 
 
-FIXES = re.compile(r"(?im)^\s*(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\s*:?\s+#(\d+)\s*\.?\s*$")
+FIXES = re.compile(r"(?im)^[ \t]*(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)[ \t]*:?[ \t]+#(\d+)[ \t]*\.?[ \t]*\r?$")
 
 
 def fixes_issues(body: str) -> list[int]:
@@ -648,8 +650,8 @@ STALE = "stale"     # an adopted merge request's checks ran before its adoption:
 # 40-character head sha, compared for equality: a short prefix could be matched by a later commit
 # crafted to share it, and the override would then clear a review nobody saw.
 OVERRIDE = re.compile(
-    r"(?im)^\s*/factory\s+override\s+ai-review\s+([0-9a-f]{40})\s+([a-z-]+)"
-    r"(?:\s+(#\d+|https://\S+))?(?:\s+model=(\S+?))?\s*:\s*(\S.*?)\s*$")
+    r"(?im)^[ \t]*/factory[ \t]+override[ \t]+ai-review[ \t]+([0-9a-f]{40})[ \t]+([a-z-]+)"
+    r"(?:[ \t]+(#\d+|https://\S+))?(?:[ \t]+model=(\S+?))?[ \t]*:[ \t]*(\S.*?)[ \t]*\r?$")
 # The class names why a block is released, and what it must carry: #N an issue, <url> a job.
 OVERRIDE_CLASSES = {"false-positive": "", "not-applicable": "", "owner-decision": "",
                     "pre-existing": "#", "deferred": "#", "infra-failure": "url"}
@@ -661,7 +663,8 @@ REASON_MIN, REASON_MAX = 20, 500
 CREW_CLASS = "false-positive"
 CREW_NEVER = frozenset({"security", "crash", "data-loss", "corruption", "guard-removal",
                         "product-shape", "design-one-way-door", "evidence-gap"})
-IMAGE = re.compile(r"!\[[^\]]*\]\(\s*[^)\s]+|<img\s[^>]*src\s*=", re.I)
+# Bounded: an unclosed `![` or `<img` must not make every later one rescan to the end.
+IMAGE = re.compile(r"!\[[^\]]{0,2000}\]\([ \t]*[^)\s]+|<img\s[^>]{0,2000}src\s*=", re.I)
 _FAILED = {"failed", "cancelled"}
 
 
