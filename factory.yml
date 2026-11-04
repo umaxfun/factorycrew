@@ -1,0 +1,211 @@
+# factory.yml: the factory's rules for this repository. Schema: factory/schema.md.
+# Read from the default branch by the merger, the CI jobs and the crew. A gate path: a change
+# to it needs a person's approval.
+
+version: 1
+
+forge:
+  kind: github
+  url: https://github.com
+  project: umaxfun/factorycrew
+  merge_method: merge              # the repository merges pull requests with merge commits
+
+default_branch: main
+
+humans: [umaxfun]
+
+# The crew's GitHub App `factorycrew-crew`; it also posts the triager's tier labels.
+crew: ["factorycrew-crew[bot]"]
+triager: ["factorycrew-crew[bot]"]
+
+# The repository's own CI (`.github/workflows/check.yml`, the same steps as ./scripts/check.sh).
+# The e2e (./scripts/test-e2e.sh) has no CI job: it needs a Kiro Crew gateway and a real model.
+checks:
+  unit:      {job: unit, workflow: .github/workflows/check.yml}
+  level1-20: {job: "level 1, Factorio 2.0.77", workflow: .github/workflows/check.yml}
+  level1-21: {job: "level 1, Factorio 2.1.23", workflow: .github/workflows/check.yml}
+  level2:    {job: "level 2, Factorio 2.1.23", workflow: .github/workflows/check.yml}
+
+tiers:
+  T1:
+    title: Fix
+    label: "tier:T1"
+    checks: [unit, level1-20, level1-21, level2, factory-docs, ai-review]
+    automerge: false               # no tier test yet (the repository has no closed issues); configure.md
+    triage: |
+      The code contradicts DOCUMENTED behaviour, and the fix brings it back in the product's own
+      code. Documented means a line you can quote, as Spec: `file:line` "quote", from:
+      - SPEC.md: the protocol between mod and bridge, the agent tools, the in-game window, the
+        dispatcher's message, what a run is;
+      - docs/areas/*.md, mostly "Must stay true" (one doc per area, the table in AGENTS.md);
+      - docs/decisions.md entries; agent/factorio-companion.md (Kira's rules: what she must and
+        must not do); README.md (install, releases, updates);
+      - docs/atlas.md, docs/circuits-format.md, docs/sentry.md, docs/worktrees.md (dev stands);
+      - a test that asserts it: mod/kc-companion/tests/*.lua (level 1), tests/unit,
+        tests/integration (level 2), tests/e2e, tests/app_e2e.
+      Before 2026-10-30 there was no AGENTS.md and no docs/areas/: the spec was SPEC.md,
+      README.md, docs/atlas.md, docs/worktrees.md and agent/factorio-companion.md.
+      No line to quote: not T1. Behaviour nobody documented is presumed intended.
+      These look like specs and are not: a command's one-line description when the command
+      fails to start, build or install; a tool call or Lua snippet inside an example; a generic
+      sentence about a feature, a heading or a page intro. A documented form written with
+      harmless differences (spaces, order, letter case of an item name) is the same form, and a
+      line that states no limit covers every run, tab and surface the game has.
+      Stale docs: read the commit that last changed the contradicting code (git blame, then its
+      message and diff). When it changed this behaviour on purpose, it is not T1: the docs may
+      be the stale side, so a person decides (T3, Decision names the commit). A fix, refactor
+      or unrelated feature that broke the line by accident is a regression: T1.
+      Dependencies: Factorio (2.0.77 for players, headless 2.1.23 in level 2), Kiro Crew (the
+      gateway, its CLI and transcripts) and the model Kira runs on. When the behaviour comes
+      from one of them and the product's own code that does the thing is unchanged, it is not
+      T1: a person picks working around it in code, asking upstream, or changing the docs.
+    examples:
+      - "Panels were not saved after an app update (commit 26bc53c, PR #2); docs/areas/panels.md:3 'Every panel that works is saved as a Kiro Crew artifact'"
+      - "A quick follow-up got the previous turn's text as its answer (commit ed84320); docs/areas/dispatcher.md:36 'rows dated before the question are skipped'"
+      - "Panels were not saved in a real install, only on a dev stand (commit 709163a); docs/areas/panels.md:3, the same line"
+  T2:
+    title: Addition
+    label: "tier:T2"
+    checks: [unit, level1-20, level1-21, level2, factory-docs, ai-review]
+    automerge: false
+    triage: |
+      A small new option, value, field, button or cell kind in an existing area. Everything a
+      player, Kira or a script sees today stays the same: no default, output, message, layout,
+      timing or rule changes. A new field in an HTTP answer (`/health`), a new accepted value of
+      a tool parameter, a new panel cell kind, a new button that does what was not possible
+      before.
+    examples:
+      - "Panel link cells {gps=pos} are buttons that open the map there (commit 141a8de)"
+      - "A collapse button in a panel's title bar (commit 09eb28c)"
+      - "Bridge /health shows atlas_dirty (commit 0eae8c6)"
+  T3:
+    title: Behaviour change
+    label: "tier:T3"
+    checks: [unit, level1-20, level1-21, level2, factory-docs, ai-review]
+    automerge: false
+    needs_start: contracts
+    design: short
+    triage: |
+      Changes what existing behaviour does, however small: what the game window shows or how
+      it lays out, a timeout or a backstop, what Kira's rules tell her to do, a message, an
+      error that replaces a result, the order of things, the UDP protocol, the mod's storage
+      layout, the dispatcher's chat keys. Also a "bug" whose expected behaviour no line states,
+      and any change to Kira's rules (agent/factorio-companion.md): they are what players get.
+    examples:
+      - "A turn Kiro Crew gives up on ends in the tab at once, instead of 'thinking' until the documented 20-minute backstop (commit 155e6f8)"
+      - "A panel's description no longer shows in the game window, only in the saved artifact (commit a7457ee)"
+      - "Window tabs wrap into rows of four instead of one row (commit d68b0ea)"
+  T4:
+    title: New concept
+    label: "tier:T4"
+    checks: [unit, level1-20, level1-21, level2, factory-docs, ai-review]
+    automerge: false
+    needs_start: contracts
+    design: full
+    triage: |
+      Something the product did not have: a new row in the AGENTS.md area table, a new term in
+      docs/overview.md, a new family of Kira's tools or a new kind of message between mod and
+      bridge. T4 even if small. The crew drafts the design only when a person asks.
+    examples:
+      - "Error and bug reports through Sentry: the report/ area (commits ddc6b9b, b34314b)"
+      - "Live panels: in-game windows Kira writes once and the mod refreshes (commit 8a7f135)"
+      - "The atlas: the base as a graph, dumped by the mod and read by Kira (commits dcbff16, 9f61ba3)"
+
+triage:
+  when_unsure: higher
+  borderline:
+    - case: "A test fails now and then while the product behaves as documented; the fix changes only the test or its harness and keeps every assertion"
+      tier: T1
+      why: "the test's assertion is the documented line; the fix restores the check, it changes nothing a player sees"
+    - case: "The same flaky test, fixed by loosening or removing an assertion"
+      tier: T3
+      why: "a weaker check changes what the repository promises"
+    - case: "Kira did what her rules forbid once, and the rules are unchanged; the fix rewrites her rules"
+      tier: T3
+      why: "the model is a dependency and her rules are player-facing behaviour; a person decides"
+    - case: "Kira cannot follow a rule because a tool or the dispatcher's message gives her wrong data; the fix is in that code"
+      tier: T1
+      why: "the product's own code contradicts the rule's line, and the fix restores it"
+    - case: "Kiro Crew changed (its transcript format, its CLI, a gateway default) and the product's own code is unchanged"
+      tier: T3
+      why: "dependency: Decision names the Kiro Crew version and asks: work around in code, ask upstream, or change the docs"
+    - case: "The game window shows something its area doc does not state, and a player wants it different"
+      tier: T3
+      why: "undocumented behaviour is presumed intended"
+    - case: "A crash or a hang replaced by a clear error line on the app's status page, where nothing documents the crash"
+      tier: T2
+      why: "a new status line where there was none; nothing that worked changes"
+    - case: "A doc line states a behaviour; the code that breaks it last changed in a commit that names that behaviour and says it changes"
+      tier: T3
+      why: "the change was on purpose, so the docs may be the stale side: Decision names the commit"
+    - case: "The same doc line; the breaking commit is a refactor or a fix of something else"
+      tier: T1
+      why: "a regression, whatever the dates"
+
+# The area map; AGENTS.md has the same table, factory-docs fails when they differ.
+overview: docs/overview.md
+areas:
+  - {name: Mod core, paths: [mod/kc-companion/control.lua, mod/kc-companion/scripts/protocol.lua, mod/kc-companion/info.json], doc: docs/areas/mod-core.md}
+  - {name: In-game window and pointers, paths: [mod/kc-companion/scripts/gui.lua, mod/kc-companion/scripts/pointers.lua, mod/kc-companion/data.lua, "mod/kc-companion/graphics/**", "mod/kc-companion/locale/**"], doc: docs/areas/window.md}
+  - {name: Build helpers and trial runs, paths: [mod/kc-companion/scripts/helpers.lua, mod/kc-companion/scripts/trial.lua], doc: docs/areas/build-helpers.md}
+  - {name: Atlas, paths: [mod/kc-companion/scripts/atlas.lua, mcp/kc/atlas.py, scripts/atlas-fixture.sh, "tests/data/atlas/**", "tools/atlas_proto/**"], doc: docs/areas/atlas.md}
+  - {name: Circuits, paths: [mod/kc-companion/scripts/circuits.lua, mcp/kc/circuits.py], doc: docs/areas/circuits.md}
+  - {name: Live panels, paths: [mod/kc-companion/scripts/panels.lua, mcp/factorio_mcp.py], doc: docs/areas/panels.md}
+  - {name: Bridge, paths: ["bridge/**", "app/hooks/**"], doc: docs/areas/bridge.md}
+  - {name: Dispatcher, paths: ["dispatcher/**"], doc: docs/areas/dispatcher.md}
+  - {name: MCP server, paths: [mcp/factorio_mcp.py, mcp/kc_compute.py], doc: docs/areas/mcp-server.md}
+  - {name: kc library, paths: ["mcp/kc/**"], doc: docs/areas/kc-library.md}
+  - {name: Skills, paths: ["skills/**"], doc: docs/areas/skills.md}
+  - {name: Kira, the agent, paths: ["agent/**"], doc: docs/areas/kira-agent.md}
+  - {name: Kiro Crew app and releases, paths: ["app/**", scripts/build-app.sh, scripts/release.sh, scripts/app-dev.sh], doc: docs/areas/app.md}
+  - {name: Dev stands and test harness, paths: ["scripts/**", tools/ui_dev.py, "docker/**", tests/e2e/stand.py, tests/e2e/watch.py, ".github/**"], doc: docs/areas/dev-stand.md}
+  - {name: Error and bug reports, paths: ["report/**"], doc: docs/areas/reports.md}
+
+# report/environment exists only in a build (scripts/build-app.sh writes it).
+# tools/list and tools/call are MCP method names the docs cite, not paths under tools/.
+docs_allow: ["report/environment", "tools/list", "tools/call"]
+
+designs:
+  dir: docs/designs
+  branches: "feature/*"
+
+review:
+  models: [claude-opus-5.5, gpt-5.6-sol]
+  calibration: factory/review-calibration.md
+  max_rounds: 2
+
+# What players see: the game window, panels, pointers, the app's status page (F9, F10 pass).
+evidence:
+  screenshot_when:
+    - mod/kc-companion/scripts/gui.lua
+    - mod/kc-companion/scripts/pointers.lua
+    - mod/kc-companion/scripts/panels.lua
+    - mod/kc-companion/data.lua
+    - "mod/kc-companion/graphics/**"
+    - "mod/kc-companion/locale/**"
+    - "app/ui/**"
+  screenshot_except: ["mod/kc-companion/tests/**"]
+
+scope:
+  mode: full
+
+gate_paths:
+  - factory.yml
+  - "factory/**"
+  - ".github/workflows/**"
+  - AGENTS.md
+  - ".kiro/**"
+  - "docs/designs/**"
+  - docs/decisions.md
+  - pytest.ini
+  - "docker/**"
+  # C3, from AGENTS.md "Costly to get wrong" (touched by 0-1 of 16 recent fixes each):
+  - scripts/release.sh
+  - app/app.json
+  - mod/kc-companion/info.json
+  - mod/kc-companion/scripts/protocol.lua
+  - bridge/factorio_bridge.py
+  - mod/kc-companion/control.lua
+  - agent/factorio-companion.json
+  - "app/hooks/**"
+  - report/settings.json

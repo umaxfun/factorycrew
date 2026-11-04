@@ -1,0 +1,203 @@
+# factory.yml: the factory's rules for one repository, in one place. See factory/schema.md.
+# Configure writes it at the repository root from what it found in the repository and what the
+# person confirmed. The merger, the CI jobs and the crew read it from the DEFAULT branch, never
+# from a merge request. It is a gate path: a change to it needs a person's approval.
+
+version: 1
+
+forge:
+  kind: gitlab                     # gitlab | github
+  url: https://gitlab.example.com  # web address: gitlab.com, self-managed, github.com or GHE
+  project: group/repo              # GitLab path with namespace, or GitHub owner/name
+  merge_method: merge              # GitHub only: merge | squash | rebase
+
+default_branch: main
+
+# Forge usernames of the people. Only they approve gate paths, approve a tier that is not
+# merged alone, lower an issue's tier (anyone may raise one), ship a feature branch and
+# override an AI review.
+humans: [alice, bob]
+
+# The crew's forge accounts (the Kiro Crew instance's forge login). Only a merge request one of
+# them opened is the crew's. Must not share an account with humans.
+crew: [factory-bot]
+
+# The triager's forge accounts. Besides humans, only they may set an issue's first tier label;
+# a tier below the highest from anyone else does not count (the issue stays at the highest
+# tier). Usually the same login as the crew. Must not share an account with humans.
+triager: [factory-bot]
+
+# The repository's own checks, by the CI job that runs each. On GitHub a GitHub Actions check
+# also names its workflow file, because a merge request can add a job with the same name.
+# `ai-review` (one job per review model) and `factory-docs` are built in.
+checks:
+  check:
+    job: check
+  e2e:
+    job: e2e
+  # GitHub:
+  # check: {job: test, workflow: .github/workflows/ci.yml}
+  # jenkins: {job: continuous-integration/jenkins/pr-merge, app: commit-status}
+
+# Tiers, low to high. A tier says what the change does to the PRODUCT, not how big it is:
+# T1 fix, T2 addition, T3 behaviour change, T4 new concept (`effect`, by position unless a tier
+# names it). An issue without a tier label counts as the highest tier. Tiers only go up: the
+# crew moves an issue up when the work turns out to do more; only a person in humans lowers one.
+# A file with three tiers still loads: its T3 then covers both a change and a new concept.
+tiers:
+  T1:
+    title: Fix
+    label: "tier::1"
+    checks: [check, e2e, factory-docs, ai-review]
+    automerge: true                # false until the tier test passes, or 20 clean approvals in a row (configure.md)
+    triage: |
+      The code contradicts DOCUMENTED behaviour, and the fix brings it back. Documented means a
+      line in an area doc, the user docs, a test, or contributing/decisions.md; the triage
+      comment quotes that line (Spec: `file:line` "quote"). No line to quote: not T1.
+      Behaviour nobody documented is presumed intended. The line must name the thing the issue
+      uses and say what it does; these look like specs and are not: a command's one-line
+      description when the command fails to start, build or resolve, an import or a command
+      inside an example, a generic sentence about a feature. A documented form written with
+      harmless differences (spaces, order) is the same form, and a line with no stated limit
+      covers every context.
+      Stale docs: read the commit that last changed the contradicting code. When it changed
+      this behaviour on purpose (its message or diff says so), it is not T1: the docs may be
+      stale, so a person decides which side is right. A fix, refactor or unrelated feature
+      that broke the line by accident is a regression: T1. This check never makes a report
+      with no spec line T1.
+      Behaviour that comes from a dependency (the product's own code is unchanged, a dependency
+      or the runtime it needs changed) is not T1 either: a person picks pin, work around, or
+      change the docs.
+    examples:
+      - "#398 Counter includes removed players; docs/areas/game-engine.md says it must not (!401)"
+      - "#377 Answers lost when switching question type and back; a test asserts they stay (!380)"
+      - "#412 Export button cut off on a narrow screen; the UI doc says every action fits 320px (!418)"
+  T2:
+    title: Addition
+    label: "tier::2"
+    checks: [check, e2e, factory-docs, ai-review]
+    automerge: false               # the merger merges once a person approved
+    triage: |
+      A small new option, value or field in an existing area. Everything that works today
+      works the same afterwards: no default, output, message or rule changes.
+    examples:
+      - "#405 Download results as CSV next to the existing export (!409)"
+      - "#391 A 30-second timer preset (!393)"
+      - "#366 Show the PIN on the big screen (!370)"
+  T3:
+    title: Behaviour change
+    label: "tier::3"
+    checks: [check, e2e, factory-docs, ai-review]
+    automerge: false               # reaches the default branch only through a person
+    needs_start: contracts         # Start level the readiness report must reach for T3
+    design: short                  # a short design in a feature branch, approved by a person
+    triage: |
+      Changes what existing behaviour does, however small: a default, a sort order, an output
+      format, a rule, a message a script could parse. Also a "bug" whose expected behaviour no
+      doc states.
+    examples:
+      - "#350 Sort the leaderboard by speed, not by name"
+      - "#331 Rounds end when everyone answered, not on the timer"
+      - "#302 Replace polling with websockets"
+  T4:
+    title: New concept
+    label: "tier::4"
+    checks: [check, e2e, factory-docs, ai-review]
+    automerge: false
+    needs_start: contracts
+    design: full                   # why, alternatives, how it fits, the new area and its doc
+    triage: |
+      Something the product did not have: a new row in the AGENTS.md area map, a new term in
+      the architecture overview, a new public API family. Needs a new area or a new term in the
+      overview: T4, even if small. The crew drafts the design only when a person asks.
+    examples:
+      - "#360 Team mode"
+      - "#345 Question bank shared between hosts"
+      - "#310 Plugins for custom question types"
+
+triage:
+  when_unsure: higher              # higher | ask
+  borderline:
+    - case: "A bug whose fix needs a new setting"
+      tier: T2
+      why: "the fix adds an option users did not have"
+    - case: "A copy change on one screen the UI doc does not state"
+      tier: T3
+      why: "undocumented behaviour is presumed intended, so changing it is a behaviour change"
+    - case: "The host doc says players can change their name during a game; the code that locks names once the game starts last changed in a commit titled \"lock player names after start, renames confused scoring\", and the doc was not updated"
+      tier: T3
+      why: "that commit changed this behaviour on purpose, so the docs may be the stale side: Decision names the commit and asks which is right"
+    - case: "The same doc line; the code that locks names last changed in a commit titled \"refactor player store\" that does not mention names"
+      tier: T1
+      why: "a refactor that broke a documented behaviour by accident is a regression, whatever the dates"
+    - case: "The server command fails to start with a module that does not resolve; the only line is the command's description \"starts the game server\""
+      tier: T3
+      why: "a command's one-line description says nothing about starting or resolving; it is packaging or a dependency, and a person decides"
+    - case: "The same command starts, but ignores `--port`, which its docs line says sets the port"
+      tier: T1
+      why: "the line names the flag and says what it does, and the report contradicts it"
+    - case: "A setup snippet in the docs imports a helper, and the import fails"
+      tier: T3
+      why: "an import inside an example shows a use, it states no behaviour"
+    - case: "The doc shows a question written as `Q: text` and `Q:  text` with two spaces fails"
+      tier: T1
+      why: "a harmless difference in spacing is the same documented form"
+    - case: "The doc says the timer shows the seconds left, with no limit, and it shows nothing on the big screen"
+      tier: T1
+      why: "a line that states no limit covers every screen the product has"
+    - case: "The import doc says CSV files may use semicolons; after the CSV parser dependency's minor update they fail, and the game's own import code is unchanged"
+      tier: T3
+      why: "the contradiction comes from a dependency, not the product's code: Decision asks whether to pin it, work around it, or change the doc"
+
+# The area map. AGENTS.md has the same table for people and agents; factory-docs fails when
+# the two differ. Paths are root-relative globs.
+overview: docs/architecture/overview.md
+areas:
+  - name: Game engine
+    paths: ["backend/app/game/**"]
+    doc: docs/areas/game-engine.md
+  - name: Web client
+    paths: ["frontend/src/**"]
+    doc: docs/areas/web-client.md
+
+# Doc paths that exist only after a build or a test run; factory-docs does not report them.
+# docs_allow: ["e2e/browser/test-results/"]
+
+# T3 and T4 designs: one merge request into feature/<name> with the design and its step list.
+designs:
+  dir: docs/designs
+  branches: "feature/*"
+
+review:
+  models: [claude-opus-5.5, gpt-5.6-sol]   # two different model families
+  # lenses: [correctness, security, first_principles, tests_spec, ux]  # default from evidence
+  calibration: factory/review-calibration.md
+  max_rounds: 2                    # same lens blocks the same place twice: hand to a person
+
+# A merge request that changes one of these ships with a screenshot.
+evidence:
+  screenshot_when: ["frontend/src/**/*.tsx"]
+  screenshot_except: ["**/*.test.tsx"]
+
+# Which work the factory takes. `full` (default): all of it. `own`: only issues and merge
+# requests labelled `label` (and merge requests into feature branches), for a repository the
+# team also works in by hand; see skills/kirocrew-factory/onboard.md.
+scope:
+  mode: full                       # own | full
+  label: factory
+  adopt_wait_hours: 24             # an adopted (person's, labelled) merge request waits this long
+  adopt_per_day: 5                 # adoptions started per UTC day
+
+# A change to any of these needs a person's approval, whatever the tier.
+gate_paths:
+  - factory.yml
+  - "factory/**"
+  - .gitlab-ci.yml
+  - ".github/workflows/**"
+  - AGENTS.md
+  - "**/AGENTS.md"
+  - ".kiro/**"
+  - "docs/designs/**"
+  - "**/migrations/**"
+  - "**/package.json"
+  - "**/package-lock.json"
