@@ -45,6 +45,12 @@ env:
       git show "$T:factory.yml" > "$FACTORY_DIR/factory.yml"
       echo "factory: scripts and rules from $T"
     else
+      # Bootstrap runs this pull request's own factory code, in jobs that hold KIRO_API_KEY:
+      # only for the repository's owner or an organisation member, never for anyone else.
+      case "${{ github.event.pull_request.author_association }}" in
+        OWNER|MEMBER) ;;
+        *) echo "factory: not on $T yet; only the repository's owner may bootstrap it"; exit 1 ;;
+      esac
       echo "factory: not on $T yet, using this pull request's copy (bootstrap)"
       cp -r factory factory.yml "$FACTORY_DIR/"
     fi

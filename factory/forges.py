@@ -437,6 +437,11 @@ class GitHub(Forge):
 
     def changed_paths(self, mr):
         files = self.http.pages(f"{self.r}/pulls/{mr.number}/files")
+        # GitHub lists at most 3000 files: a shorter list than the pull request's own count
+        # could hide a gate path, and a rule never decides on a partial list.
+        total = (self.http.call("GET", f"{self.r}/pulls/{mr.number}") or {}).get("changed_files")
+        if isinstance(total, int) and len(files) < total:
+            raise ForgeError(200, f"pull request #{mr.number} lists {len(files)} of {total} changed files")
         return sorted({f["filename"] for f in files} | {f["previous_filename"] for f in files
                                                          if f.get("previous_filename")})
 
