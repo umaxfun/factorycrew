@@ -15,7 +15,7 @@ operating system's:
 - `setup` creates the user `factory-review` (no groups, no login shell) and a workspace, the
   agent's working directory: `repo/` (the head commit's tracked files from `git archive`, no
   `.git`, symlinks that lead out of it removed), `inputs/` (the review inputs), `home/` (the
-  user's HOME, with the agent profile: tools read, grep, glob, code, subagent; reads allowed
+  user's HOME, with the agent profile: tools read, grep, glob, subagent; reads allowed
   under repo/ and inputs/, denied under home/, bin/, /proc, /etc and the other system and job
   trees) and `bin/` (kiro-cli copied root-owned, mode 0711). It removes group and other access from the job's own directories (the original
   checkout with its `.git/config`, the runner's temp dirs, the invoking user's HOME) and
@@ -73,7 +73,8 @@ class ConfineError(Exception):
 
 # The tools the agent gets, by their kiro-cli 2.x (agent engine v2) names: review.sh pins that
 # engine, the one whose stream-json reports credits. No shell, no write, no web, no MCP.
-TOOLS = ["read", "grep", "glob", "code", "subagent"]
+# Read-only tools only: `code` can rewrite files (pattern_rewrite), its own profile included.
+TOOLS = ["read", "grep", "glob", "subagent"]
 
 
 def denied_paths(ws: str) -> list[str]:

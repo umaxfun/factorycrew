@@ -54,7 +54,16 @@ def slug(heading: str) -> str:
     return h.replace(" ", "-")
 
 
+EXPAND_MAX = 256  # brace alternatives one path may expand to; past it the path is left as written
+
+
 def expand(p: str) -> list[str]:
+    # Count first: 30 groups of two alternatives would build 2^30 paths.
+    n = 1
+    for g in re.findall(r"\{([^}]*)\}", p):
+        n *= len(g.split(","))
+        if n > EXPAND_MAX:
+            return [p]
     m = re.search(r"\{([^}]*)\}", p)
     if not m:
         return [p]

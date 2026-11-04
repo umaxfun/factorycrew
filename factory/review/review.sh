@@ -130,7 +130,7 @@ set +e
 bash "$HERE/kiro-run.sh" review "$OUT/raw.md" timeout "${REVIEW_TIMEOUT:-1500}" \
   "${CONFINE[@]}" run --ws "$WS" --with-key -- \
   kiro-cli chat --no-interactive --agent-engine v2 --agent factory-review \
-  --trust-tools=read,grep,glob,code,subagent \
+  --trust-tools=read,grep,glob,subagent \
   --model "$MODEL" "$(cat "$OUT/prompt.md")"
 rc=$?
 echo "confine: kiro-cli ran as user factory-review with agent factory-review (exit $rc)"
