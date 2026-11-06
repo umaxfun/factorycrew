@@ -1,0 +1,172 @@
+# The factory's CI jobs for GitHub Actions. Configure writes this file to
+# .github/workflows/factory.yml (the merger looks for the factory's checks in exactly that
+# file) and fills claude-opus-5.5 / gpt-5.6-sol with review.models from factory.yml and
+# claude-opus-5-5 / gpt-5-6-sol with their job slugs (lowercase, non-alphanumerics -> "-").
+#
+# `pull_request`, never `pull_request_target`: the jobs get a read-only token and no secrets on
+# forks. Everything that judges the pull request (factory.yml and the factory/ scripts and
+# prompt) is read from the TARGET branch, so a pull request cannot change its own gates; only
+# the pull request that adds the factory uses its own copy (bootstrap). One exception:
+# factory-docs checks the docs against the pull request's own factory.yml (`areas`,
+# `docs_allow`), because they describe the docs it changes. .github/workflows/**,
+# factory.yml and factory/** are gate paths: a person approves a change to them.
+#
+# With scope.mode own in factory.yml, factory-tier reports in_scope=0 for a pull request outside
+# the factory's stream, and factory-docs and the reviews are skipped (`if:`), so the team's
+# other pull requests cost no review credits and get no new red check. GitLab gets the same
+# with exit 3 (templates/ci.gitlab.yml).
+#
+# Secret: KIRO_API_KEY as an ENVIRONMENT secret of the environment `factory`, not a repository
+# secret: only the jobs below that declare that environment get it, and the repository's own
+# workflows, which run the pull request's code, never do. Limit the environment's deployment
+# branches if pull requests from branches must not reach it. Pin the actions below to commit
+# SHAs in your repository.
+name: factory
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FACTORY_FROM_TARGET: |
+    set -euo pipefail
+    git fetch --quiet origin "$GITHUB_BASE_REF" "${{ github.event.repository.default_branch }}"
+    FACTORY_DIR="$(mktemp -d)"
+    T="origin/$GITHUB_BASE_REF"
+    D="origin/${{ github.event.repository.default_branch }}"
+    if git cat-file -e "$D:factory/fcore.py" 2>/dev/null && git cat-file -e "$D:factory.yml" 2>/dev/null; then
+      # The scripts always come from the default branch: a feature branch is pushed to without a
+      # person's review, and these jobs hold KIRO_API_KEY. The rules come from the target, which
+      # the tier job merges with the default branch's (it may only make them stricter).
+      git archive "$D" factory | tar -x -C "$FACTORY_DIR"
+      git show "$T:factory.yml" > "$FACTORY_DIR/factory.yml" 2>/dev/null || git show "$D:factory.yml" > "$FACTORY_DIR/factory.yml"
+      echo "factory: scripts from $D, rules from $T"
+    else
+      # Bootstrap runs this pull request's own factory code, in jobs that hold KIRO_API_KEY:
+      # only for the repository's owner or an organisation member, never for anyone else.
+      case "${{ github.event.pull_request.author_association }}" in
+        OWNER|MEMBER) ;;
+        *) echo "factory: not on $D yet; only the repository's owner may bootstrap it"; exit 1 ;;
+      esac
+      echo "factory: not on $D yet, using this pull request's copy (bootstrap)"
+      cp -r factory factory.yml "$FACTORY_DIR/"
+    fi
+    git show "origin/${{ github.event.repository.default_branch }}:factory.yml" > "$FACTORY_DIR/default-factory.yml" 2>/dev/null \
+      || cp "$FACTORY_DIR/factory.yml" "$FACTORY_DIR/default-factory.yml"
+    echo "FACTORY_DIR=$FACTORY_DIR" >> "$GITHUB_ENV"
+
+jobs:
+  factory-tier:
+    name: factory-tier
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      in_scope: ${{ steps.tier.outputs.in_scope }}
+      tier: ${{ steps.tier.outputs.tier }}
+      checks: ${{ steps.tier.outputs.checks }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true   # git fetch of the target branch below
+      - run: eval "$FACTORY_FROM_TARGET"
+      - run: pip install --quiet --disable-pip-version-check pyyaml
+      - id: tier
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 "$FACTORY_DIR/factory/tier.py" "$FACTORY_DIR/factory.yml" "$FACTORY_DIR/default-factory.yml"
+
+  factory-docs:
+    name: factory-docs
+    needs: factory-tier
+    # scope.mode own: a pull request outside the factory's stream skips (GitLab: exit 3).
+    if: needs.factory-tier.outputs.in_scope != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: eval "$FACTORY_FROM_TARGET"
+      - run: pip install --quiet --disable-pip-version-check pyyaml
+      - run: python3 "$FACTORY_DIR/factory/docs_gate.py" --root . --config factory.yml --baseline "$FACTORY_DIR/factory/docs-baseline.txt"
+
+  ai-review-a:
+    name: ai-review-claude-opus-5-5
+    needs: factory-tier
+    # A review the tier does not need is skipped, and so is every review of a pull request
+    # outside the factory's scope (scope.mode own: factory-tier lists no checks); the merger
+    # accepts the skip only where factory.yml allows it.
+    if: contains(needs.factory-tier.outputs.checks, ',ai-review-claude-opus-5-5,')
+    runs-on: ubuntu-latest
+    environment: factory    # KIRO_API_KEY is an environment secret of `factory` (see the header)
+    permissions:
+      contents: read
+      issues: read          # the issues the pull request closes, for the review's context
+      pull-requests: read
+      checks: read          # earlier blocked review rounds, for the push budget
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: eval "$FACTORY_FROM_TARGET"
+      - run: pip install --quiet --disable-pip-version-check pyyaml
+      - env:
+          KIRO_API_KEY: ${{ secrets.KIRO_API_KEY }}
+          FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash "$FACTORY_DIR/factory/review/review.sh" "claude-opus-5.5"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-claude-opus-5-5
+          path: |
+            .review/
+            kiro-usage/
+          retention-days: 7
+
+  ai-review-b:
+    name: ai-review-gpt-5-6-sol
+    needs: factory-tier
+    if: contains(needs.factory-tier.outputs.checks, ',ai-review-gpt-5-6-sol,')
+    runs-on: ubuntu-latest
+    environment: factory    # KIRO_API_KEY is an environment secret of `factory` (see the header)
+    permissions:
+      contents: read
+      issues: read          # the issues the pull request closes, for the review's context
+      pull-requests: read
+      checks: read          # earlier blocked review rounds, for the push budget
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: eval "$FACTORY_FROM_TARGET"
+      - run: pip install --quiet --disable-pip-version-check pyyaml
+      - env:
+          KIRO_API_KEY: ${{ secrets.KIRO_API_KEY }}
+          FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash "$FACTORY_DIR/factory/review/review.sh" "gpt-5.6-sol"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-gpt-5-6-sol
+          path: |
+            .review/
+            kiro-usage/
+          retention-days: 7
