@@ -76,4 +76,4 @@ flowchart LR
 
 ## Decisions
 
-The repository owner's decisions, one entry each with its evidence: [decisions.md](decisions.md).
+The repository owner's decisions, one entry each with the forge comment it was restated in: [decisions.md](decisions.md).
