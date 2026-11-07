@@ -221,6 +221,7 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
     except (OSError, ValueError, KeyError):
         pass
     dst = mods_dir / MOD if mods_dir else None
+    mod_line = None
     if dst is None:
         checks.append(check("mod", "Mod", "fail", mod_note, "Start Factorio once so it creates its mods folder, "
                                                             "then disable and enable the app."))
@@ -230,6 +231,7 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
             have, line = info["version"], info.get("factorio_version")
         except (OSError, ValueError, KeyError):
             have, line = None, None
+        mod_line = line
         game = game_version(mods_dir)
         online = bool(h and h.get("game_online"))
         made_for = f" for Factorio {line}" if line else ""
@@ -258,7 +260,7 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
                 checks.append(check("mod", "Mod", "warn",
                                     f"{have}{made_for}: the mod is tested on Factorio "
                                     f"{' and '.join(TESTED_LINES)} only, so some of Kira's tools may fail",
-                                    "Report what breaks with the bug button in the game window."))
+                                    "Report what breaks with \"Report a problem\" in Kira's window in the game."))
             else:
                 checks.append(check("mod", "Mod", "ok", f"{have}{made_for} in {mods_dir}" +
                                     (", loaded in the game" if running else "")))
@@ -313,7 +315,11 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
             break
         if c["state"] == "warn":
             worst = "warn"
-    return {"ok": True, "state": worst, "checks": checks, "app_version": _app_version()}
+    # for the backend's restart prompt (server.status_now): the line the mods folder holds and the
+    # line of the game that is online now, so a heartbeat from the old game does not clear it
+    online_line = game_line(h.get("factorio_version")) if h and h.get("game_online") else None
+    return {"ok": True, "state": worst, "checks": checks, "app_version": _app_version(),
+            "mod_line": mod_line, "online_line": online_line}
 
 
 def _app_version():

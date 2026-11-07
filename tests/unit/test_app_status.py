@@ -207,6 +207,12 @@ def test_a_line_change_asks_for_a_restart_until_the_game_is_back(tmp_path, monke
     c = by_id(server.status_now())
     assert c["mod"]["state"] == "warn" and "Restart Factorio" in c["mod"]["fix"] and server.STATE["mod_switched"]
     offline.shutdown()
+    # the old 2.0 game is still sending heartbeats: that is not the restarted game
+    stale = fake_bridge({**HEALTHY, "factorio_version": "2.0.77"})
+    server.STATE["config"] = {"http_port": stale.server_port}
+    server.status_now()
+    stale.shutdown()
+    assert server.STATE["mod_switched"] is True
     online = fake_bridge({**HEALTHY, "factorio_version": "2.1.24"})
     server.STATE["config"] = {"http_port": online.server_port}
     server.status_now()

@@ -167,8 +167,8 @@ def status_now() -> dict:
     online again."""
     obj = status.status(STATE["config"], STATE["mods"], STATE["mod_note"], STATE["bridge_error"],
                         STATE["mod_switched"])
-    if any(c["id"] == "game" and c["state"] == "ok" for c in obj["checks"]):
-        STATE["mod_switched"] = False  # the restarted game is back
+    if obj.get("online_line") and obj.get("online_line") == obj.get("mod_line"):
+        STATE["mod_switched"] = False  # the restarted game is back on the line the mod was made for
     return obj
 
 
