@@ -184,6 +184,36 @@ def test_the_mod_is_installed_for_the_factorio_the_player_runs(tmp_path, monkeyp
     assert "already installed" in server.install_mod(mods)
 
 
+def test_a_line_change_asks_for_a_restart_until_the_game_is_back(tmp_path, monkeypatch):
+    # the backend's own loop: update_mod notices the reinstall, /api/status says restart, and the
+    # prompt goes once the restarted game is online
+    data = tmp_path / "factorio"
+    mods = data / "mods"
+    mods.mkdir(parents=True)
+    fake_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, SHIPPED))
+    monkeypatch.setattr(server, "STATE", {"config": {}, "mods": mods, "mod_note": "", "bridge_error": None,
+                                          "mod_switched": False})
+    _factorio_started(data, "2.0.77")
+    server.update_mod()
+    assert server.STATE["mod_switched"] is False and _line(mods) == "2.0"
+    _factorio_started(data, "2.1.24")
+    server.update_mod()
+    assert server.STATE["mod_switched"] is True and _line(mods) == "2.1", server.STATE
+    server.update_mod()  # nothing new: the prompt stays
+    assert server.STATE["mod_switched"] is True
+    offline = fake_bridge({**HEALTHY, "game_online": False})
+    server.STATE["config"] = {"http_port": offline.server_port}
+    c = by_id(server.status_now())
+    assert c["mod"]["state"] == "warn" and "Restart Factorio" in c["mod"]["fix"] and server.STATE["mod_switched"]
+    offline.shutdown()
+    online = fake_bridge({**HEALTHY, "factorio_version": "2.1.24"})
+    server.STATE["config"] = {"http_port": online.server_port}
+    server.status_now()
+    online.shutdown()
+    assert server.STATE["mod_switched"] is False
+
+
 def test_a_game_never_started_gets_the_current_stable_line(tmp_path, monkeypatch):
     mods = tmp_path / "factorio" / "mods"
     mods.mkdir(parents=True)

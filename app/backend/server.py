@@ -162,6 +162,16 @@ def update_mod() -> None:
         STATE["mod_note"] = note
 
 
+def status_now() -> dict:
+    """/api/status. The restart prompt after a reinstall for another line lasts until the game is
+    online again."""
+    obj = status.status(STATE["config"], STATE["mods"], STATE["mod_note"], STATE["bridge_error"],
+                        STATE["mod_switched"])
+    if any(c["id"] == "game" and c["state"] == "ok" for c in obj["checks"]):
+        STATE["mod_switched"] = False  # the restarted game is back
+    return obj
+
+
 async def watch_game() -> None:
     while True:
         await asyncio.sleep(GAME_WATCH_EVERY)
@@ -191,10 +201,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
         elif path == "/api/bug_report" and method == "POST":
             obj = await asyncio.to_thread(app_bug_report, json.loads(body_in or b"{}"))
         elif path == "/api/status":
-            obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"],
-                                          STATE["bridge_error"], STATE["mod_switched"])
-            if any(c["id"] == "game" and c["state"] == "ok" for c in obj["checks"]):
-                STATE["mod_switched"] = False  # the restarted game is back
+            obj = await asyncio.to_thread(status_now)
         elif path in ("/health", "/api/health"):
             obj = {"status": "ok", "app": "factorycrew"}
         else:

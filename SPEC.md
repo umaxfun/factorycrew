@@ -94,8 +94,8 @@ The Factorio Lua API does not expose the save file name: `runtime-api.json` 2.1.
 Each UDP packet holds one JSON string `{"v":1,"id":"…","type":"…",...}`. A long message is split into parts with `part` and `parts` fields; the receiver reassembles them by `id`. The bridge sends the game packets of at most 4000 bytes: the game's receive buffer starts at 4 KB and doubles only after it has dropped a packet that did not fit (measured on 2.1.23: an 8000-byte packet lost, the next 8150-byte one arrived). The mod slices 4096 bytes of source JSON without breaking UTF-8; its packets reach ~8 KB, which the bridge handles. The bridge listens on a fixed port (34199 by default), the game on the port from `--enable-lua-udp`, the bridge HTTP API on 127.0.0.1:34198. The HTTP API has no authentication: whoever reaches the port can run Lua in the game. So the bridge binds to loopback only.
 
 The game sends the bridge:
-- `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick`, the list of tabs, the atlas's `atlas_version` and `atlas_dirty` (docs/areas/atlas.md), and `mod_version`, the mod version the game loaded (from 0.3.7; the bridge shows it in `/health` for the app's status page);
-- `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds), and `pointers` when the player made some (see "Pointers");
+- `hello` on load and `heartbeat` every 5 seconds, with `run_id`, `run_name`, `tick`, the list of tabs, the atlas's `atlas_version` and `atlas_dirty` (docs/areas/atlas.md), `mod_version`, the mod version the game loaded (from 0.3.7), and `factorio_version`, the game's own version (`script.active_mods.base`); the bridge shows both in `/health` for the app's status page;
+- `ask`: `chat`, `text`, and `player` `{name, surface, x, y}` (where the asking player stands; the dispatcher puts it in the chat header, and it is the default place for "here" and for anything Kira builds), `pointers` when the player made some (see "Pointers"), and `factorio_version`, which the dispatcher puts in the header so Kira writes Lua for that game's API;
 - `result`: the answer to `query`, `mark` or `unmark`, with the same `id` and `ok`, `data` or `error`.
 
 The bridge sends the game:
@@ -212,14 +212,22 @@ If the player deletes a `[KC]` mark on the map (`on_chart_tag_removed`), the mod
 ## The message the dispatcher puts in the chat
 
 ```
-[Factorio · run "Megabase-2" · tab "Logistics" · tick 12345678]
+[Factorio 2.0.77 · run "Megabase-2" · tab "Logistics" · tick 12345678]
+find yellow chests without a filter
+```
+
+The version comes from the `ask`; a mod that sends none gets just `Factorio`. On 2.1 a line follows the header with the 2.0 reads 2.1 removed and what to use instead (`API_21` in `dispatcher/factorio_dispatch.py`):
+
+```
+[Factorio 2.1.24 · run "Megabase-2" · tab "Logistics" · tick 12345678]
+[2.1 API: entity.fluidbox is gone, use entity.fluids_count, get_fluid(i), ...]
 find yellow chests without a filter
 ```
 
 With pointers, one line each between the header and the question:
 
 ```
-[Factorio · run "Megabase-2" · tab "Build" · tick 12345678 · player p at (3.2, -1.5) on nauvis · reply in English]
+[Factorio 2.0.77 · run "Megabase-2" · tab "Build" · tick 12345678 · player p at (3.2, -1.5) on nauvis · reply in English]
 [@1: click at (12.4, -30.2) on nauvis; assembling-machine-2 (assembling-machine) at (12.5, -30.5), recipe electronic-circuit, status item_ingredient_shortage]
 [@2: box (10, -40)-(40, -20), 30×20 on nauvis; 42 entities: 30 transport-belt, 1 train-stop; recipes: 8 electronic-circuit]
 why is @1 slow? and build one like @2 here
