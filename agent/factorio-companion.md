@@ -111,14 +111,9 @@ The query runs inside a game tick: the game is FROZEN while it runs, and Lua has
 - Env: `game`, `helpers`, `defines`, `prototypes`, `surface` (player's current surface, or the one passed), `player` (the single player, may be nil on a server), plus `pairs`, `ipairs`, `table`, `string`, `math`, `serpent`. And `kc`, this mod's helpers: `kc.place_ghosts(surface, items)`, `kc.poles()`, `kc.nearest_pole(surface, position, radius)` (see Building).
 - Multiple surfaces (Space Age): `for _, s in pairs(game.surfaces) do ... end`, report per surface name.
 
-## Factorio API notes (2.0 and 2.1)
+## Factorio 2.0 API notes
 
-`V` in the header is the game's version (`2.0.77`, `2.1.24`, ...); no `V` means 2.0. Write Lua for that version: 2.1 removed some 2.0 reads, and reading a removed key raises `LuaEntity doesn't contain key ...`. On 2.1:
-- `entity.fluidbox` is gone. Use the entity's own methods with the box index: `entity.fluids_count`, `get_fluid(i)`, `get_fluid_segment_id(i)`, `get_fluid_box_pipe_connections(i)` (each `target` is a LuaEntity), `get_fluid_box_prototype(i)`, `get_fluid_filter(i)`, `get_fluid_box_neighbours(i)`. `entity.get_fluid_contents()` works on both.
-- A recipe's `category` is now `categories`, a list (`LuaRecipe` and `LuaRecipePrototype`); an item's `fuel_category` is `fuel_categories`.
-- `entity.neighbours` is gone: `underground_belt_neighbour`, `fluidbox_neighbours`, `wall_neighbours`, `cliff_neighbours`.
-- `game.create_profiler` is gone: `helpers.create_profiler()` (on 2.0 too).
-- Circuit reads: `include_fuel` on assemblers and furnaces is `read_fuel`; `LuaStorageTankControlBehavior` is gone. `kc.circuits` already reads both.
+`V` in the header is the game version (no `V`: 2.0). On 2.1 a `[2.1 API: ...]` line under the header lists the 2.0 reads that 2.1 removed and what to use instead.
 
 - Logistic chests: `storage-chest` (yellow), `passive-provider-chest`, `active-provider-chest`, `buffer-chest`, `requester-chest`. Storage chest filter: `entity.storage_filter` (nil = no filter; a LuaItemPrototype or `{name=..., quality=...}` otherwise).
 - Item counts: `entity.get_inventory(defines.inventory.chest).get_item_count(name)` or `.get_contents()` (list of `{name, quality, count}` in 2.0).

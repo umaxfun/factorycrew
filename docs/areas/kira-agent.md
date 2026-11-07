@@ -62,7 +62,7 @@ The Kiro Crew agent `factorio-companion` that answers questions from the game: a
 
 ## Terms
 
-- **Header**: the first line of a game question, `[Factorio V · run "R" · tab "T" · tick N · player P at (x, y) on S · reply in L]`, `V` the game version (`agent/factorio-companion.md:7`). The rules list what 2.1 removed from the 2.0 API under "Factorio API notes (2.0 and 2.1)" (`agent/factorio-companion.md:114`).
+- **Header**: the first line of a game question, `[Factorio V · run "R" · tab "T" · tick N · player P at (x, y) on S · reply in L]`, `V` the game version (`agent/factorio-companion.md:7`). A question from 2.1 has a `[2.1 API: ...]` line under the header with the 2.0 reads 2.1 removed and their replacements (`dispatcher/factorio_dispatch.py:263`); the rules only say what `V` and that line are (`agent/factorio-companion.md:114-116`), to keep the always-on rules short.
 - **Tab / chat**: one in-game tab is one Kiro Crew chat `Factorio/<run>/<tab>`; `chat` in every tool is the tab name.
 - **Pointer**: `@1`, `@2` lines between header and question, a click or a box the player made (`agent/factorio-companion.md:11`).
 - **Rules**: `agent/factorio-companion.md`; the repo spec loads them as a `file://` resource and the app folds them into the prompt (`scripts/build-app.sh:36`).
