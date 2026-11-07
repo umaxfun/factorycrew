@@ -105,28 +105,67 @@ def factorio_mods_dir() -> Path | None:
 
 
 def install_mod(mods: Path | None) -> str:
-    """Copy the shipped mod into the game's mods folder; never touch a folder we did not put there."""
+    """Copy the shipped mod into the game's mods folder; never touch a folder we did not put there.
+    Its info.json gets the factorio_version of the game that last started there (2.0 and 2.1 each
+    load only a mod made for their own line), so a game update to another line reinstalls it."""
     src = ROOT / "mod" / MOD
     if mods is None:
         return "no Factorio mods folder found; start the game once, then restart the app"
     dst = mods / MOD
     version = json.loads((src / "info.json").read_text())["version"]
+    line = status.game_line(status.game_version(mods)) or status.DEFAULT_LINE
     if dst.is_symlink() or (dst.exists() and not (dst / MANAGED_MARK).exists()):
         return f"{dst} exists and is not managed by the app; left as is"
+    switched = False
     if dst.exists():
         try:
-            if json.loads((dst / "info.json").read_text())["version"] == version and \
-                    (dst / MANAGED_MARK).read_text() == version:
-                return f"mod {version} already installed"
+            info = json.loads((dst / "info.json").read_text())
+            if info["version"] == version and (dst / MANAGED_MARK).read_text() == version:
+                if info.get("factorio_version") == line:
+                    return f"mod {version} already installed for Factorio {line}"
+                switched = True
         except (OSError, ValueError, KeyError):
             pass
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
+    info = json.loads((dst / "info.json").read_text())
+    info["factorio_version"] = line
+    (dst / "info.json").write_text(json.dumps(info, ensure_ascii=False, indent=2) + "\n")
     (dst / MANAGED_MARK).write_text(version)
-    return f"mod {version} installed into {dst} (restart Factorio to load it)"
+    if switched:
+        return f"mod {version} reinstalled for Factorio {line} into {dst} (the game changed version; restart it)"
+    return f"mod {version} installed for Factorio {line} into {dst} (restart Factorio to load it)"
 
 
-STATE = {"config": {}, "mods": None, "mod_note": "", "bridge_error": None}
+STATE = {"config": {}, "mods": None, "mod_note": "", "bridge_error": None, "mod_switched": False}
+GAME_WATCH_EVERY = 10  # s: a game started on another line finds its mod reinstalled this soon after
+
+
+def update_mod() -> None:
+    """Install or update the mod, and remember a reinstall for another Factorio line until the
+    game is online again (the status page then says to restart it). Never raises: a failed copy
+    must not take the bridge or the status page down."""
+    if STATE["mods"] is None:
+        STATE["mods"] = factorio_mods_dir()  # the game may have been started for the first time
+    try:
+        note = install_mod(STATE["mods"])
+    except Exception as e:  # noqa: BLE001
+        note = f"mod install failed: {e}"
+        log.exception("mod install failed")
+        if report:
+            report.capture_exception(e, {"part": "backend", "where": "install_mod"})
+    if note != STATE["mod_note"]:
+        log.info(note)
+    if "reinstalled for Factorio" in note:
+        STATE["mod_switched"] = True
+    if "already installed" not in note or not STATE["mod_note"]:
+        STATE["mod_note"] = note
+
+
+async def watch_game() -> None:
+    while True:
+        await asyncio.sleep(GAME_WATCH_EVERY)
+        await asyncio.to_thread(update_mod)
 
 
 async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -153,7 +192,9 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             obj = await asyncio.to_thread(app_bug_report, json.loads(body_in or b"{}"))
         elif path == "/api/status":
             obj = await asyncio.to_thread(status.status, STATE["config"], STATE["mods"], STATE["mod_note"],
-                                          STATE["bridge_error"])
+                                          STATE["bridge_error"], STATE["mod_switched"])
+            if any(c["id"] == "game" and c["state"] == "ok" for c in obj["checks"]):
+                STATE["mod_switched"] = False  # the restarted game is back
         elif path in ("/health", "/api/health"):
             obj = {"status": "ok", "app": "factorycrew"}
         else:
@@ -181,16 +222,8 @@ async def main() -> None:
         report.configure("backend")  # the bridge in this process reports through it too
         report.install_hooks()
     cfg = load_config()
-    mods = factorio_mods_dir()
-    STATE.update(config=cfg, mods=mods)
-    try:
-        STATE["mod_note"] = install_mod(mods)
-        log.info(STATE["mod_note"])
-    except Exception as e:  # a failed mod copy must not keep the bridge down
-        STATE["mod_note"] = f"mod install failed: {e}"
-        log.exception("mod install failed")
-        if report:
-            report.capture_exception(e, {"part": "backend", "where": "install_mod"})
+    STATE.update(config=cfg, mods=factorio_mods_dir())
+    update_mod()  # a failed mod copy must not keep the bridge down
     s = fb.Settings(udp_port=int(cfg.get("udp_port", 34199)), game_port=int(cfg.get("game_port", 34200)),
                     http_port=int(cfg.get("http_port", 34198)), app_version=status._app_version())
     port = int(os.environ.get("PORT", "0"))
@@ -198,7 +231,7 @@ async def main() -> None:
     hs = await asyncio.start_server(handle, "127.0.0.1", port)
     log.info("health on 127.0.0.1:%d", port)
     async with hs:
-        await asyncio.gather(hs.serve_forever(), run_bridge(s))
+        await asyncio.gather(hs.serve_forever(), run_bridge(s), watch_game())
 
 
 async def run_bridge(s) -> None:

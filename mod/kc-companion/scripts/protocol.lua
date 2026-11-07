@@ -159,6 +159,7 @@ function M.ask(chat, text, player, pointers)
   return {
     type = "ask", id = id, chat = chat, text = text,
     run_id = storage.kc.run_id, run_name = storage.kc.run_name, tick = game.tick,
+    factorio_version = script.active_mods.base, -- Kira writes Lua for this API (2.1 removed parts of 2.0's)
     player = whereabouts(player),
     pointers = (pointers and #pointers > 0) and pointers or nil,
   }
@@ -457,6 +458,7 @@ function M.heartbeat(kind)
     atlas_version = storage.kc.atlas_version,
     atlas_dirty = atlas.dirty_count("nauvis"),
     mod_version = script.active_mods["kc-companion"],
+    factorio_version = script.active_mods.base,
   }
 end
 

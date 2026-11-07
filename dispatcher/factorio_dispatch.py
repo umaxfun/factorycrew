@@ -266,7 +266,8 @@ def render(ask):
     if isinstance(p, dict) and "x" in p and "y" in p:
         who = f"player {p['name']} " if p.get("name") else "player "
         where = f" · {who}at ({p['x']}, {p['y']}) on {p.get('surface') or '?'}"
-    head = (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
+    game = f"Factorio {ask['factorio_version']}" if ask.get("factorio_version") else "Factorio"
+    head = (f"[{game} · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
             f"tick {ask.get('tick')}{where}{reply_in}]")
     lines = [render_pointer(p) for p in ask.get("pointers") or [] if isinstance(p, dict)]
     return "\n".join([head, *lines, ask["text"]])

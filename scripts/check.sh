@@ -2,7 +2,7 @@
 # The fast check: everything that needs no Kiro Crew, no model and no game window, ~2 min.
 # Run it before every commit; CI runs the same steps.
 #
-#   scripts/check.sh            # unit, level 1 on 2.0.77 and 2.1.23, level 2
+#   scripts/check.sh            # unit, level 1 on 2.0.77 and 2.1.24, level 2
 #
 # Every step runs even when an earlier one fails, so one red step does not hide another.
 # One line per step at the end; the exit code is non-zero when any step failed.

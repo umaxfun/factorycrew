@@ -9,7 +9,7 @@
 # own folder Factorio/<e2e MM-DD HH:MM> and empty chats.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="factorycrew-test:2.1.23"
+IMAGE="factorycrew-test:2.1.24"
 . "$ROOT/scripts/lib/checkout.sh"
 checkout_readable_by_gateway "$ROOT"
 . "$ROOT/scripts/lib/docker.sh"
@@ -57,7 +57,7 @@ done
 fresh_wake || { echo "no dispatcher wake with the installed script after 90 s" >&2; exit 1; }
 
 docker image inspect "$IMAGE" >/dev/null 2>&1 || \
-  docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.23 -t "$IMAGE" "$ROOT/docker"
+  docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.24 -t "$IMAGE" "$ROOT/docker"
 docker_ok "$IMAGE"
 timeout -k 3 20 docker rm -f "$FC_E2E_CONTAINER" >/dev/null 2>&1 || true
 cleanup() {

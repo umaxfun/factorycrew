@@ -69,7 +69,7 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 - The mod notices a stopped bridge by the missing `pong` and reconnects by itself (`tests/integration/test_bridge.py::test_no_pong_when_bridge_is_down_then_recovers`).
 - `mark` results carry `ids`/`failed` and `list_marks` a list as `[]`, never `{}` (`bridge/factorio_bridge.py:219-229`; `tests/integration/test_bridge.py::test_unfiltered_chests_marked_and_unmarked` asserts `failed == []`).
 - Stdlib only, and it runs on the macOS system `python3` 3.9 (`README.md` "Layout", `docs/worktrees.md` "Requirements on the host").
-- Every `pong` carries `Settings.app_version` when the bridge runs in the app (the backend passes the installed `app.json` version), and `/health` reports the `mod_version` from the last heartbeat (`tests/unit/test_bridge_versions.py`, `tests/integration/test_bridge.py::test_handshake`). A standalone bridge sends no `app_version`.
+- Every `pong` carries `Settings.app_version` when the bridge runs in the app (the backend passes the installed `app.json` version), and `/health` reports the `mod_version` and the game's `factorio_version` from the last heartbeat (`None` from a mod that sends none) (`tests/unit/test_bridge_versions.py`, `tests/integration/test_bridge.py::test_handshake`). A standalone bridge sends no `app_version`.
 
 ## Easy to break
 
@@ -84,7 +84,7 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 
 ## How to check a change
 
-- `./scripts/test-integration.sh`: level 2, mod + bridge + MCP in Docker on headless 2.1.23, ~65 s; logs in `.test-data/integration/bridge.log`. Pytest arguments pass through, e.g. `./scripts/test-integration.sh -k test_bridge` (`scripts/test-integration.sh:20`). The harness runs the bridge with short timeouts (`--offline-after 3 --idle-after 2 --request-timeout 5`) and game speed 4 (`tests/integration/conftest.py:30-31`).
+- `./scripts/test-integration.sh`: level 2, mod + bridge + MCP in Docker on headless 2.1.24, ~65 s; logs in `.test-data/integration/bridge.log`. Pytest arguments pass through, e.g. `./scripts/test-integration.sh -k test_bridge` (`scripts/test-integration.sh:20`). The harness runs the bridge with short timeouts (`--offline-after 3 --idle-after 2 --request-timeout 5`) and game speed 4 (`tests/integration/conftest.py:30-31`).
 - The bridge has no unit tests of its own. Unit tests that fake it: `tests/unit/test_app_status.py` (a fake `/health`), `tests/unit/test_e2e_watch.py` (health dicts), `tests/unit/test_panel_tool.py`, `tests/unit/test_kc_atlas.py`, `tests/unit/test_compute.py` (fake `bridge_post` in the MCP server). Run them with `./scripts/test-unit.sh tests/unit/test_app_status.py tests/unit/test_e2e_watch.py` (~5 s).
 - Test files that drive the real bridge: `tests/integration/test_bridge.py` (the protocol, queues, timers), every other `tests/integration/test_*_game.py` through the MCP fixture, `tests/integration/test_atlas_game.py` (`/atlas`, `/health` atlas keys), `tests/integration/test_panels_game.py` (`library` asks, `/library_result`).
 - Full chain: `./scripts/test-e2e.sh` (~4 min, real model, `tests/e2e/`) and `./scripts/test-app-e2e.sh` (~20 min, real client, the bridge inside the app backend, `tests/app_e2e/`).

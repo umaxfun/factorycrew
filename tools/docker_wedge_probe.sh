@@ -14,7 +14,7 @@ p() {
 }
 p before
 timeout -k 2 30 docker run -d --name fc-wedge-test --platform linux/amd64 \
-  -p 127.0.0.1:39998:34198 -p 127.0.0.1:39999:27015 factorycrew-test:2.1.23 sleep "$((LIVE + 120))" >/dev/null
+  -p 127.0.0.1:39998:34198 -p 127.0.0.1:39999:27015 factorycrew-test:2.1.24 sleep "$((LIVE + 120))" >/dev/null
 p "stand up"
 sleep "$LIVE"
 p "stand after ${LIVE}s"

@@ -57,7 +57,7 @@ The pure-Python building blocks Kira imports with `import kc` inside `factorio_c
 - `./scripts/test-unit.sh tests/unit/test_kc_geo_grid.py tests/unit/test_kc_search.py tests/unit/test_kc_steiner.py tests/unit/test_kc_cover.py tests/unit/test_kc_wires.py tests/unit/test_kc_lp.py tests/unit/test_kc_bp.py tests/unit/test_kc_world.py tests/unit/test_kc_checks.py tests/unit/test_compute.py`: the library, and the library inside the real compute sandbox. 168 tests, ~6 s.
 - `./scripts/test-unit.sh tests/unit/test_pipes.py tests/unit/test_power.py tests/unit/test_production.py`: the skills built on kc.
 - `cd mcp && /usr/bin/python3 -c "import kc; print(sorted(m for m in kc.MODULES if not hasattr(kc, m)))"`: must print `[]` on the interpreter Kira uses.
-- `./scripts/test-integration.sh -k kc_bp` (Docker, headless 2.1.23): `tests/integration/test_kc_bp_game.py`, `kc.bp` against the game's own `build_blueprint`. The whole level 2 run is ~65 s.
+- `./scripts/test-integration.sh -k kc_bp` (Docker, headless 2.1.24): `tests/integration/test_kc_bp_game.py`, `kc.bp` against the game's own `build_blueprint`. The whole level 2 run is ~65 s.
 - `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh` (~11 s each): the Lua readers whose output `kc.world` parses (`mod/kc-companion/tests/test-helpers.lua`).
 - Fixtures: `tests/unit/fixtures/kc_world/{2.0,2.1}/{scan,proto,resources,best_belt}.json` (recorded in game, read by `test_kc_world.py`). `tests/data/blueprints/*.txt` holds real blueprint, book and planner strings read by `test_kc_bp.py`; `red-circuits-block.txt` is also read by `test_kc_bp_game.py`.
 - End to end: `tests/app_e2e/test_uncoded.py` (Kira using `kc.scan/proto`, `kc.wires/cover/checks` on her own) under `./scripts/test-app-e2e.sh`.

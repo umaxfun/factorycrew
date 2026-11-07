@@ -9,7 +9,7 @@ set -euo pipefail
 # is given; tests that check reports start their own fake one.
 export FC_SENTRY_DSN="${FC_SENTRY_DSN-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${FACTORIO_L2_VERSION:-2.1.23}"
+VERSION="${FACTORIO_L2_VERSION:-2.1.24}"
 IMAGE="factorycrew-test:$VERSION"
 . "$ROOT/scripts/lib/docker.sh"
 docker_alive

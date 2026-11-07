@@ -152,6 +152,74 @@ def test_app_update_replaces_the_mod_it_installed(tmp_path, monkeypatch):
     assert (mods / "kc-companion" / server.MANAGED_MARK).read_text() == "0.3.3"
 
 
+def _factorio_started(data, version, how="log"):
+    """What a Factorio start leaves in its data dir: factorio-current.log (every start) or
+    player-data.json (written by the game, read when there is no log)."""
+    if how == "log":
+        (data / "factorio-current.log").write_text(
+            f"   0.000 2026-11-07 14:19:01; Factorio {version} (build 87808, mac-arm64, steam, space-age)\n"
+            "   0.001 Operating system: macOS 15\n")
+    else:
+        (data / "player-data.json").write_text(json.dumps({"last-played-version": {"game_version": version}}))
+
+
+def _line(mods):
+    return json.loads((mods / "kc-companion" / "info.json").read_text())["factorio_version"]
+
+
+def test_the_mod_is_installed_for_the_factorio_the_player_runs(tmp_path, monkeypatch):
+    # Factorio loads a mod only when its info.json names the game's own line: 2.0 or 2.1
+    data = tmp_path / "factorio"
+    mods = data / "mods"
+    mods.mkdir(parents=True)
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.4.3"))
+    _factorio_started(data, "2.0.77", how="player-data")
+    assert "for Factorio 2.0" in server.install_mod(mods) and _line(mods) == "2.0"
+    assert "already installed" in server.install_mod(mods)
+    # Steam updated the game: the log of its last start says 2.1, the mod follows
+    _factorio_started(data, "2.1.24")
+    note = server.install_mod(mods)
+    assert _line(mods) == "2.1" and "reinstalled for Factorio 2.1" in note, note
+    assert (mods / "kc-companion" / server.MANAGED_MARK).read_text() == "0.4.3"
+    assert "already installed" in server.install_mod(mods)
+
+
+def test_a_game_never_started_gets_the_current_stable_line(tmp_path, monkeypatch):
+    mods = tmp_path / "factorio" / "mods"
+    mods.mkdir(parents=True)
+    monkeypatch.setattr(server, "ROOT", _app_with_mod(tmp_path, "0.4.3"))
+    server.install_mod(mods)
+    assert _line(mods) == st.DEFAULT_LINE == "2.1"
+
+
+def test_the_mod_check_follows_the_game_version(tmp_path, monkeypatch):
+    mods = fake_install(tmp_path, monkeypatch)
+    data = mods.parent
+    info = mods / "kc-companion" / "info.json"
+    info.write_text(json.dumps({"version": SHIPPED, "factorio_version": "2.0"}))
+    _factorio_started(data, "2.0.77")
+    srv = fake_bridge({**HEALTHY, "factorio_version": "2.0.77"})
+    c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
+    assert c["mod"]["state"] == "ok" and "for Factorio 2.0" in c["mod"]["detail"], c["mod"]
+    assert "Factorio 2.0.77" in c["game"]["detail"], c["game"]
+    # the game went to 2.1 and the backend has not reinstalled yet
+    _factorio_started(data, "2.1.24")
+    c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
+    assert c["mod"]["state"] == "warn" and "made for Factorio 2.0" in c["mod"]["detail"], c["mod"]
+    # reinstalled for 2.1, the game has not come back yet: say what to do
+    info.write_text(json.dumps({"version": SHIPPED, "factorio_version": "2.1"}))
+    offline = fake_bridge({**HEALTHY, "game_online": False})
+    c = by_id(st.status({"http_port": offline.server_port}, mods, "", mod_switched=True))
+    assert c["mod"]["state"] == "warn" and "Restart Factorio" in c["mod"]["fix"] and "Mods" in c["mod"]["fix"], c["mod"]
+    # a line the mod was not tested on loads, with a warning
+    _factorio_started(data, "2.2.0")
+    info.write_text(json.dumps({"version": SHIPPED, "factorio_version": "2.2"}))
+    c = by_id(st.status({"http_port": srv.server_port}, mods, ""))
+    assert c["mod"]["state"] == "warn" and "2.0 and 2.1" in c["mod"]["detail"], c["mod"]
+    srv.shutdown()
+    offline.shutdown()
+
+
 def test_a_mod_folder_the_app_did_not_put_there_is_left_alone(tmp_path, monkeypatch):
     mods = tmp_path / "mods"
     (mods / "kc-companion").mkdir(parents=True)

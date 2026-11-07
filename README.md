@@ -6,7 +6,7 @@ Ask Kiro Crew about the current Factorio run from an in-game window. Design: [SP
 
 | Path | What |
 |---|---|
-| `mod/kc-companion/` | Factorio 2.0 mod: in-game window (Ctrl+Shift+K), query execution, map marks, tabs, UDP to the bridge |
+| `mod/kc-companion/` | Factorio 2.0 and 2.1 mod: in-game window (Ctrl+Shift+K), query execution, map marks, tabs, UDP to the bridge |
 | `bridge/factorio_bridge.py` | Bridge: UDP to the game, HTTP API on 127.0.0.1:34198 for the dispatcher and the MCP server |
 | `mcp/factorio_mcp.py` | MCP server `factorio` (stdio): `factorio_query`, `_mark`, `_unmark`, `_list_marks`, `_reply`, `_progress`, `_compute`, `_atlas`, `_panel`, `_saved_panels` ([docs/areas/mcp-server.md](docs/areas/mcp-server.md)) |
 | `mcp/kc/` | the `kc` primitive library Kira imports in `factorio_compute`; atlas and circuits live here too |
@@ -51,7 +51,7 @@ The HTTP API has no authentication: whoever reaches the port can run Lua in the 
 
 ## Tests
 
-**The fast check, before every commit: `./scripts/check.sh`** (~2 min). It runs the Python unit tests, level 1 on 2.0.77 and 2.1.23, and level 2, every step even when one fails, and prints one line per step; logs in `.test-data/check/`. CI runs the same steps.
+**The fast check, before every commit: `./scripts/check.sh`** (~2 min). It runs the Python unit tests, level 1 on 2.0.77 and 2.1.24, and level 2, every step even when one fails, and prints one line per step; logs in `.test-data/check/`. CI runs the same steps.
 
 Python unit tests (`tests/unit`: the kc library, atlas on the committed fixture dump, circuits, the MCP tools against a fake bridge, the dispatcher, the app status page, the e2e watchdog): `./scripts/test-unit.sh`, ~20 s, no game and no Docker. Any pytest arguments go through, e.g. `./scripts/test-unit.sh tests/unit/test_kc_atlas.py -k trace`.
 
@@ -59,9 +59,9 @@ Then three game levels (SPEC.md, "Tests"). Only level 3 and the app e2e are end 
 
 | Level | What | Command | Factorio |
 |---|---|---|---|
-| 1 | mod logic under FactorioTest | `./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh` | headless 2.0.77, 2.1.23 |
-| 2 | integration: mod + bridge + MCP, test plays dispatcher and agent | `./scripts/test-integration.sh` | headless 2.1.23 |
-| 3 | e2e: game → bridge → dispatcher → Kiro Crew chat → agent → game | `./scripts/test-e2e.sh` | headless 2.1.23 + factorycrew gateway; live game 2.0.77 by hand |
+| 1 | mod logic under FactorioTest | `./scripts/test-mod.sh`, `./scripts/test-mod-2.1.sh` | headless 2.0.77, 2.1.24 |
+| 2 | integration: mod + bridge + MCP, test plays dispatcher and agent | `./scripts/test-integration.sh` | headless 2.1.24 |
+| 3 | e2e: game → bridge → dispatcher → Kiro Crew chat → agent → game | `./scripts/test-e2e.sh` | headless 2.1.24 + factorycrew gateway; live game 2.0.77 and 2.1.24 by hand |
 
 Level 2 is on 2.1 because a 2.0 headless server aborts on the first UDP packet the mod receives ([forum report](https://forums.factorio.com/viewtopic.php?t=134790), fixed in 2.1). Each image is built on first use (~1 min); level 1 takes ~12 s, level 2 ~65 s. Logs of the last level 2 run: `.test-data/integration/`.
 
@@ -74,6 +74,7 @@ Level 3 starts the factorycrew gateway if needed, installs the agent and dispatc
 ```bash
 ./scripts/app-dev.sh          # build + reinstall + trust + enable on a dev gateway :5479 (~/.kirocrew-factorio-app)
 ./scripts/test-app-e2e.sh     # app e2e on the real 2.0.77 client, no Docker
+FACTORIO_APP=/Users/Shared/factorio-2.1.app ./scripts/test-app-e2e.sh   # the same on the 2.1.24 client
 ```
 
 ### Releases and updates
@@ -82,7 +83,7 @@ Releases are cut by GitHub Actions only: **Actions → Release → Run workflow*
 
 Players (Kiro Crew 0.11 or newer): Apps → Discover → Sources (gear) → add the repository URL with branch `release`, install **Factorio Companion** and trust it in the dialog. An app installed from a local directory stays local-only: to switch it to the repository, uninstall it (data is kept) and install from the store. A newer version on `release` arrives through the app's Update action (a `git pull` of the branch); the store caches each app's `app.json` for up to 24 h, so the Update badge can lag a day behind a release.
 
-The mod rides along: its version is the app's, and on every start the app backend replaces the `kc-companion` folder it put in Factorio's mods folder when the version differs (a folder it did not put there is left alone). Nothing comes from the Factorio mod portal. Restart Factorio after an update; the app's status page (sidebar → Factorio) shows the mod version in the mods folder and warns while the running game still has the old one, and Kira's window says so too.
+The mod rides along: its version is the app's, and on every start the app backend replaces the `kc-companion` folder it put in Factorio's mods folder when the version differs (a folder it did not put there is left alone). Nothing comes from the Factorio mod portal. The copy is made for the game the player runs, Factorio 2.0 or 2.1: Factorio loads only a mod made for its own line, so the backend writes that line into the copy's `info.json` and checks every 10 s which version last started. After Steam updates the game to another line, the mod is reinstalled for it and the status page asks for one more Factorio restart (and to turn kc-companion back on in Mods if the game turned it off). Restart Factorio after an update; the app's status page (sidebar → Factorio) shows the mod version in the mods folder and warns while the running game still has the old one, and Kira's window says so too.
 
 After an update everything else picks up the new code by itself, with no Kiro Crew restart and no chat closed:
 - the bridge and the status page run in the app backend, which Kiro Crew restarts on update;
@@ -100,7 +101,7 @@ The app e2e runs the real client (`tools/ui_dev.py`) with the built app's mod ag
 
 ## UI loop (screenshots of the real window)
 
-A real 2.0.77 client from the copy in `/Users/Shared/factorio.app`, with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with a game played on the same Mac (the app uses 34198-34200):
+A real 2.0.77 client from the copy in `/Users/Shared/factorio.app` (or the 2.1.24 one, `FACTORIO_APP=/Users/Shared/factorio-2.1.app`; the mod copy gets that client's `factorio_version`, and each line has its own dev save, because a save written by 2.1 does not load in 2.0), with its own data dir and a dev bridge on ports 34298-34300, so it never clashes with a game played on the same Mac (the app uses 34198-34200):
 
 ```bash
 tools/ui_dev.py start                                   # deploy mod, start bridge + game, wait until online
@@ -113,7 +114,7 @@ Screenshots land in `~/.factorycrew-dev/factorio/script-output/kc/`. The full st
 
 ## Playing
 
-Players install the Kiro Crew app (see "Releases and updates" above): it runs the bridge, the dispatcher and Kira, and copies the mod into Factorio's mods folder. Start Factorio with the launch option `--enable-lua-udp 34200`. If something does not answer, the app's status page (sidebar → Factorio) says which piece is down and what to do; Factorio's own log is `~/Library/Application Support/factorio/factorio-current.log` (`grep -iE "kc-companion|udp"`).
+Players install the Kiro Crew app (see "Releases and updates" above): it runs the bridge, the dispatcher and Kira, and copies the mod into Factorio's mods folder, made for the player's Factorio, 2.0 or 2.1. Start Factorio with the launch option `--enable-lua-udp 34200`. If something does not answer, the app's status page (sidebar → Factorio) says which piece is down and what to do; Factorio's own log is `~/Library/Application Support/factorio/factorio-current.log` (`grep -iE "kc-companion|udp"`).
 
 ### Live panels
 

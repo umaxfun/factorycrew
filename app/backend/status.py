@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import time
@@ -22,6 +23,39 @@ DISPATCH_EVERY = 60  # the cron wakes every 30 s and long-polls; silence past th
 MCP_PROBE_TTL = 60.0
 
 _mcp_cache: dict = {"at": 0.0, "result": None}
+
+# Factorio loads a mod only when info.json's factorio_version is the game's own major.minor, so
+# the app writes the line of the game it finds (server.install_mod). The mod is tested on these.
+TESTED_LINES = ("2.0", "2.1")
+DEFAULT_LINE = "2.1"  # a game that never started: a new Steam install is on the current stable line
+
+
+def game_version(mods_dir: Path | None) -> str | None:
+    """The version of the Factorio that last started on this data dir (the mods folder's parent):
+    the first line of factorio-current.log, which the game rewrites at every start, else
+    player-data.json's last-played-version. None when neither says."""
+    if mods_dir is None:
+        return None
+    data = mods_dir.parent
+    try:
+        with open(data / "factorio-current.log", encoding="utf-8", errors="replace") as f:
+            m = re.search(r"Factorio (\d+\.\d+\.\d+)", f.read(400))
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    try:
+        v = json.loads((data / "player-data.json").read_text())["last-played-version"]["game_version"]
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v):
+            return v
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def game_line(version: str | None) -> str | None:
+    """"2.1.24" -> "2.1"."""
+    return ".".join(version.split(".")[:2]) if version else None
 
 
 def check(cid, label, state, detail, fix=None):
@@ -138,7 +172,10 @@ def installed_agent(home: Path) -> tuple[Path | None, dict | None]:
     return None, None
 
 
-def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str | None = None) -> dict:
+def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str | None = None,
+           mod_switched: bool = False) -> dict:
+    """`mod_switched`: the backend reinstalled the mod for another Factorio line since the game was
+    last online (server.py), so the game that failed to load the old one has to be restarted."""
     home = kirocrew_home()
     port = int(config.get("http_port", 34198))
     game_port = int(config.get("game_port", 34200))
@@ -168,7 +205,8 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
         checks.append(check("game", "Factorio", "idle", "unknown while the bridge is down"))
     elif h.get("game_online"):
         run = h.get("run_name") or h.get("run_id") or "?"
-        checks.append(check("game", "Factorio", "ok", f"online, run \"{run}\", tick {h.get('tick')}, "
+        ver = f"Factorio {h['factorio_version']}, " if h.get("factorio_version") else ""
+        checks.append(check("game", "Factorio", "ok", f"online, {ver}run \"{run}\", tick {h.get('tick')}, "
                                                        f"tabs: {', '.join(h.get('tabs') or []) or 'none'}"))
     else:
         seen = h.get("last_seen_s")
@@ -188,23 +226,41 @@ def status(config: dict, mods_dir: Path | None, mod_note: str, bridge_error: str
                                                             "then disable and enable the app."))
     else:
         try:
-            have = json.loads((dst / "info.json").read_text())["version"]
+            info = json.loads((dst / "info.json").read_text())
+            have, line = info["version"], info.get("factorio_version")
         except (OSError, ValueError, KeyError):
-            have = None
+            have, line = None, None
+        game = game_version(mods_dir)
+        online = bool(h and h.get("game_online"))
+        made_for = f" for Factorio {line}" if line else ""
         if have is None:
             checks.append(check("mod", "Mod", "fail", f"not in {mods_dir}", mod_note))
         elif have != shipped:
             checks.append(check("mod", "Mod", "warn", f"{have} in the mods folder, the app ships {shipped}", mod_note))
+        elif game and line and game_line(game) != line:
+            # the backend reinstalls it for the new line within seconds (server.watch_game)
+            checks.append(check("mod", "Mod", "warn", f"made for Factorio {line}, the game is {game}",
+                                "The app is reinstalling it for this version; then restart Factorio."))
+        elif mod_switched and not online:
+            checks.append(check("mod", "Mod", "warn",
+                                f"{have} reinstalled{made_for} after the game changed version",
+                                "Restart Factorio. If it says kc-companion was disabled, turn it on in "
+                                "Mods and restart once more."))
         else:
             # the game loads mods only at start: after an update it runs the old one until restarted
             # (mods before 0.3.7 do not report their version, so an online game without one is older)
-            running = h.get("mod_version") if h and h.get("game_online") else None
-            if h and h.get("game_online") and running != have:
+            running = h.get("mod_version") if online else None
+            if online and running != have:
                 checks.append(check("mod", "Mod", "warn",
                                     f"the game runs {running or 'an older version'}, {have} is in {mods_dir}",
                                     "Restart Factorio to load the updated mod."))
+            elif line and line not in TESTED_LINES:
+                checks.append(check("mod", "Mod", "warn",
+                                    f"{have}{made_for}: the mod is tested on Factorio "
+                                    f"{' and '.join(TESTED_LINES)} only, so some of Kira's tools may fail",
+                                    "Report what breaks with the bug button in the game window."))
             else:
-                checks.append(check("mod", "Mod", "ok", f"{have} in {mods_dir}" +
+                checks.append(check("mod", "Mod", "ok", f"{have}{made_for} in {mods_dir}" +
                                     (", loaded in the game" if running else "")))
 
     seen = None if h is None else h.get("dispatcher_seen_s")

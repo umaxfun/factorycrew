@@ -58,12 +58,38 @@ local function clean(s)
   return (tostring(s or ""):gsub("[|\r\n]", " "))
 end
 
+-- Fluid boxes: 2.0 reads them through LuaEntity::fluidbox (a LuaFluidBox indexed by box); 2.1
+-- removed it, and the same reads are LuaEntity methods taking the box index. `boxes(e)` returns
+-- the object to call them on and the box count; FB names the methods of that object.
+local V20 = (script.active_mods.base or ""):match("^2%.0%.") ~= nil
+local FB = V20 and { seg = "get_fluid_segment_id", cons = "get_pipe_connections", proto = "get_prototype",
+                     filter = "get_filter", locked = "get_locked_fluid" }
+             or { seg = "get_fluid_segment_id", cons = "get_fluid_box_pipe_connections",
+                  proto = "get_fluid_box_prototype", filter = "get_fluid_filter" }
+
+local function boxes(e)
+  if V20 then
+    local ok, fb = pcall(function() return e.fluidbox end)
+    if ok and fb then return fb, #fb end
+    return nil, 0
+  end
+  local ok, n = pcall(function() return e.fluids_count end)
+  if ok and n and n > 0 then return e, n end
+  return nil, 0
+end
+
+local function call(fb, method, i)
+  if not method then return nil end
+  local ok, r = pcall(function() return fb[method](i) end)
+  if ok then return r end
+end
+
 local function segs_of(fb, i)
   local out = {}
-  local ok, own = pcall(fb.get_fluid_segment_id, i)
-  if ok and own then out[#out + 1] = own end
-  local okc, cons = pcall(fb.get_pipe_connections, i)
-  if okc and cons then
+  local own = call(fb, FB.seg, i)
+  if own then out[#out + 1] = own end
+  local cons = call(fb, FB.cons, i)
+  if cons then
     for _, c in pairs(cons) do
       if c.target then
         local okt, ts = pcall(c.target.get_fluid_segment_id, c.target_fluidbox_index)
@@ -75,43 +101,44 @@ local function segs_of(fb, i)
 end
 
 local function fluid_name(fb, i)
-  local f = fb[i]
+  local f
+  if V20 then f = fb[i] else f = call(fb, "get_fluid", i) end
   if f and f.name then return f.name end
-  local ok, lk = pcall(fb.get_locked_fluid, i)
-  if ok and lk then return lk end
-  local okf, flt = pcall(fb.get_filter, i)
-  if okf and flt and flt.name then return flt.name end
+  local lk = call(fb, FB.locked, i)
+  if lk then return lk end
+  local flt = call(fb, FB.filter, i) -- 2.0: a filter table, 2.1: a LuaFluidPrototype; both have name
+  if flt and flt.name then return flt.name end
   return "-"
 end
 
 local function ptype_of(fb, i)
-  local ok, pr = pcall(fb.get_prototype, i)
-  if not ok or not pr then return "-" end
+  local pr = call(fb, FB.proto, i)
+  if not pr then return "-" end
   if type(pr) == "table" and pr[1] then pr = pr[1] end
   local okp, t = pcall(function() return pr.production_type end)
   return okp and t or "-"
 end
 
 local function fluid_fields(e, parts)
-  local okf, fb = pcall(function() return e.fluidbox end) -- 2.1 raises on entities without one
-  if not okf or not fb or #fb == 0 then return end
-  local boxes = {}
-  for i = 1, #fb do
+  local fb, n = boxes(e)
+  if n == 0 then return end
+  local out = {}
+  for i = 1, n do
     local segs = segs_of(fb, i)
     local s = {}
     for k, v in ipairs(segs) do s[k] = fmt("%d", v) end
-    boxes[#boxes + 1] = concat(s, "+") .. ":" .. ptype_of(fb, i) .. ":" .. fluid_name(fb, i)
+    out[#out + 1] = concat(s, "+") .. ":" .. ptype_of(fb, i) .. ":" .. fluid_name(fb, i)
   end
-  parts[#parts + 1] = "f=" .. concat(boxes, ";")
+  parts[#parts + 1] = "f=" .. concat(out, ";")
 end
 
 local function pump_fields(e, parts)
-  local okf, fb = pcall(function() return e.fluidbox end)
-  if not okf or not fb then return end
+  local fb, n = boxes(e)
+  if not fb then return end
   local pin, pout = {}, {}
-  for i = 1, #fb do
-    local okc, cons = pcall(fb.get_pipe_connections, i)
-    if okc and cons then
+  for i = 1, n do
+    local cons = call(fb, FB.cons, i)
+    if cons then
       for _, c in pairs(cons) do
         local seg = -1
         if c.target then
@@ -462,16 +489,16 @@ end
 function M.dump_now(surface_name, budget, profile_file)
   if job then return nil, "busy" end
   local function prof()
-    local p = game.create_profiler(true)
+    local p = helpers.create_profiler(true)
     return p
   end
-  if profile_file then M.prof = { find = prof(), line = prof(), fluid = prof(), total = game.create_profiler() } end
+  if profile_file then M.prof = { find = prof(), line = prof(), fluid = prof(), total = helpers.create_profiler() } end
   M.start({ id = "now", surface = surface_name, budget = budget, send_bytes = math.huge })
   local texts, data = {}, nil
   local per_step = profile_file and (profile_file .. ".steps")
   if per_step then helpers.write_file(per_step, "") end
   while job do
-    local sp = per_step and game.create_profiler()
+    local sp = per_step and helpers.create_profiler()
     local at_chunk = job.next
     local msgs = M.step()
     if sp then

@@ -5,13 +5,13 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 ## Main files
 
 - `app/app.json`: the manifest. Name `factorycrew`, `version` (the one version of app and mod), agent, MCP server `factorio` (`python3 mcp/factorio_mcp.py`), backend `backend/server.py` with `/health`, cron `factorio-dispatch` every 30 s, the sidebar page `/apps/factorycrew` ("Factorio"), API permissions `/apps/factorycrew/api/*`, skill `skills/belts`.
-- `app/backend/server.py`: the backend the gateway starts. Runs the bridge in-process (`fb.serve`) on the ports from `<app>/data/config.json`, answers `/health`, `/api/status` and `GET`/`POST /api/settings` (the error-report switch `telemetry`, see [Error and bug reports](../sentry.md)) on `$PORT`, and copies the mod into Factorio's mods folder at start (`install_mod`).
+- `app/backend/server.py`: the backend the gateway starts. Runs the bridge in-process (`fb.serve`) on the ports from `<app>/data/config.json`, answers `/health`, `/api/status` and `GET`/`POST /api/settings` (the error-report switch `telemetry`, see [Error and bug reports](../sentry.md)) on `$PORT`, and copies the mod into Factorio's mods folder at start and every 10 s after (`update_mod`, `install_mod`), made for the game's line.
 - `app/backend/status.py`: the checks behind `/api/status`: Kiro Crew version, bridge, game, mod, dispatcher, MCP server, Kira's agent. Each is `{id, label, state: ok|warn|fail|idle, detail, fix?}`.
 - `app/ui/index.mjs`: the status page. Plain ESM with React from the host, no build step; polls `/apps/factorycrew/api/status` every 3 s.
 - `scripts/build-app.sh`: builds `dist/factorycrew/` and `dist/factorycrew-<version>.zip`, writes the app's agent file, stamps the mod's version, copies `report/` and stamps its Sentry environment (`FC_REPORT_ENV`, default `dev-<host>`; `release.sh` passes `prod`).
 - `.github/workflows/release.yml` and `scripts/release.sh`: releases, in GitHub Actions only. `bump patch|minor|major|X.Y.Z` (Run workflow on `main`) bumps `app/app.json`, commits and tags `vX.Y.Z`, builds with `FC_REPORT_ENV=prod`, publishes and pushes `main`, the tag and `release`; `tag vX.Y.Z[-suffix]` (a pushed tag) builds that commit; a suffix publishes on `release-staging`. Both attach `dist/factorycrew-<version>.zip` to a GitHub release.
 - `scripts/app-dev.sh`: build, reinstall, trust, enable on a dev gateway (`FC_APP_PORT`, default 5479; `FC_APP_HOME`, default `~/.kirocrew-factorio-app`). `app-dev.sh ports H U G` writes `data/config.json`.
-- `scripts/test-app-e2e.sh`, `tests/app_e2e/`: the app e2e on the real 2.0.77 client.
+- `scripts/test-app-e2e.sh`, `tests/app_e2e/`: the app e2e on a real client, 2.0.77 by default and 2.1.24 with `FACTORIO_APP=/Users/Shared/factorio-2.1.app`.
 - The `release` branch: builds only, `README.md` plus `apps/factorycrew/` (`git ls-tree --name-only release`).
 
 ## Talks to
@@ -29,7 +29,9 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 
 - One version: the build writes `app/app.json`'s version into the shipped mod's `info.json` (`scripts/build-app.sh:44-51`); the repo's `mod/kc-companion/info.json` keeps its own (0.2.0).
 - The backend replaces only a `kc-companion` folder it installed (one holding `.factorycrew-managed`, not a symlink) and leaves any other alone (`app/backend/server.py:61-62`; `tests/unit/test_app_status.py::test_a_mod_folder_the_app_did_not_put_there_is_left_alone`).
-- It reinstalls when the shipped version differs from the folder's `info.json` or its mark (`app/backend/server.py:63-73`; `tests/unit/test_app_status.py::test_app_update_replaces_the_mod_it_installed`).
+- It reinstalls when the shipped version differs from the folder's `info.json` or its mark (`app/backend/server.py:107-140`; `tests/unit/test_app_status.py::test_app_update_replaces_the_mod_it_installed`).
+- The copy's `info.json` names the line of the Factorio that last started on that data dir: the first line of `factorio-current.log`, else `last-played-version` in `player-data.json`, else 2.1 (`status.game_version`, `status.DEFAULT_LINE`, `app/backend/status.py:26-58`). Factorio 2.0 and 2.1 each load only a mod made for their own line, and with two copies side by side 2.0.77 takes the newest and refuses it, so there is one copy ([decisions.md](../decisions.md#the-mod-runs-on-factorio-20-and-21-the-app-writes-the-players-game-line-into-its-infojson); `tests/unit/test_app_status.py::test_the_mod_is_installed_for_the_factorio_the_player_runs`, `::test_a_game_never_started_gets_the_current_stable_line`).
+- The backend checks every 10 s (`watch_game`, `GAME_WATCH_EVERY`): a game started on the other line finds the mod reinstalled for it, and the Mod check says to restart Factorio (and to turn the mod back on in Mods) until the game is online again (`mod_switched`; `::test_the_mod_check_follows_the_game_version`). A line other than 2.0 and 2.1 gets its own line written in and a warning (`status.TESTED_LINES`).
 - A failed mod copy or a failing status check does not take the bridge or the backend down (`app/backend/server.py:102-103`, `:113-118`).
 - `/health` binds before the bridge starts, because the gateway reads a child that dies on its first bind as a port collision (`app/backend/server.py:122-123`).
 - `<app>/data/config.json` is the one source of ports for backend, MCP server and dispatcher; defaults 34198/34199/34200 match the mod (`app/backend/server.py:10-11`, `:119-120`).
@@ -57,7 +59,7 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 
 ## How to check a change
 
-- `./scripts/test-unit.sh tests/unit/test_app_status.py`: status checks and mod install/update, 8 tests, ~4 s.
+- `./scripts/test-unit.sh tests/unit/test_app_status.py`: status checks and mod install/update, 17 tests, ~6 s.
 - `./scripts/build-app.sh`: then look at `dist/factorycrew/agents/factorio-companion.json` and `dist/factorycrew/mod/kc-companion/info.json` (version = app's).
 - `./scripts/app-dev.sh`, then the dev gateway's sidebar, Factorio: every row OK while a game runs.
 - `./scripts/test-app-e2e.sh [-k <name>]`: real client, real model, ~20 min for all of `tests/app_e2e`. `test_app_e2e.py` covers the app itself; `test_atlas*.py` and `test_uncoded.py` reuse its harness, and `test_atlas.py` skips unless its fixture save is loaded (`tests/app_e2e/test_atlas.py:1-8`).
@@ -67,6 +69,7 @@ Packs the mod, the bridge, the MCP server, the dispatcher and Kira into one Kiro
 
 - Players install the Kiro Crew app; the old `gamer`-account setup is retired: confirmed by the repository owner, [decisions.md](../decisions.md#players-install-the-kiro-crew-app-the-second-account-setup-is-retired) (README, "Playing").
 - The agent spec pins no model, left on auto so it is cheap for players: confirmed by the repository owner, [decisions.md](../decisions.md#kiras-agent-spec-pins-no-model). `scripts/build-app.sh:33-40` writes no `model`.
+- The mod runs on Factorio 2.0 and 2.1, with the line written in at install: confirmed by the repository owner, [decisions.md](../decisions.md#the-mod-runs-on-factorio-20-and-21-the-app-writes-the-players-game-line-into-its-infojson).
 - When SPEC, README and code disagree, the code wins: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed).
 
 ## Terms

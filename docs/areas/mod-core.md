@@ -6,7 +6,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 
 - `mod/kc-companion/control.lua`: every event handler, the UDP probe and send, the `remote` interface `kc` used by tests and the UI loop, and the list of level 1 test modules (`mod/kc-companion/control.lua:153`, `:207`)
 - `mod/kc-companion/scripts/protocol.lua`: the protocol constants, `storage.kc` layout (`init_storage`), tabs and feed, `ask`, `run_query` and its environment, `mark`/`unmark`/`list_marks`, framing (`encode`/`decode`), and `handle` for each bridge message (`mod/kc-companion/scripts/protocol.lua:10-18`, `:22`, `:413`)
-- `mod/kc-companion/info.json`: mod name, version, `factorio_version: "2.0"`, dependency `base >= 2.0.0` (`mod/kc-companion/info.json`)
+- `mod/kc-companion/info.json`: mod name, version, `factorio_version: "2.0"`, dependency `base >= 2.0.0` (`mod/kc-companion/info.json`). Only the repo copy says 2.0: the app, the level 1 2.1 script and `tools/ui_dev.py` write the line of the game the copy runs on, because Factorio loads only a mod made for its own line ([decisions.md](../decisions.md#the-mod-runs-on-factorio-20-and-21-the-app-writes-the-players-game-line-into-its-infojson))
 - `mod/kc-companion/tests/test-protocol.lua`, `mod/kc-companion/tests/test-marks.lua`: level 1 tests for this area
 
 ## Talks to
@@ -37,6 +37,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 - `add_chart_tag` places a tag on an uncharted chunk, which the mark design relies on (`mod/kc-companion/tests/test-protocol.lua::can be placed on an uncharted chunk`)
 - Without `--enable-lua-udp` the mod stays quiet: one failed `recv_udp` probe sets `udp_state = "off"` and nothing is sent after it (`mod/kc-companion/control.lua:9-16`, `:39-48`)
 - Neither side checks the `v` field: `decode` and the bridge's reassembler ignore it (`mod/kc-companion/scripts/protocol.lua:364-381`; `grep '"v"' bridge/factorio_bridge.py`)
+- The heartbeat and every `ask` carry `factorio_version` (`script.active_mods.base`), for the status page and for the question header Kira reads (`test-protocol.lua` "tells the bridge and Kira which Factorio it runs").
 - The heartbeat carries `mod_version` (`script.active_mods["kc-companion"]`); a `pong` with another `app_version` sets `protocol.update_to`, kept per load and not in `storage` (`test-protocol.lua` "reports its version and learns from the pong...").
 
 ## Easy to break
@@ -55,7 +56,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 
 ## How to check a change
 
-- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh`: level 1 on headless 2.0.77 and 2.1.23, all `mod/kc-companion/tests/*.lua`, ~11 s each. This area: `mod/kc-companion/tests/test-protocol.lua`, `mod/kc-companion/tests/test-marks.lua`
+- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh`: level 1 on headless 2.0.77 and 2.1.24, all `mod/kc-companion/tests/*.lua`, ~11 s each. This area: `mod/kc-companion/tests/test-protocol.lua`, `mod/kc-companion/tests/test-marks.lua`
 - `./scripts/test-integration.sh`: level 2 (~65 s), for any protocol or framing change. Covers handshake, ack and thinking, marks via MCP, large Cyrillic replies, packet size, idle by timeout, `game_offline`, pong loss (`tests/integration/test_bridge.py`)
 - `./scripts/check.sh`: unit, both level 1 runs and level 2 (~105 s)
 - `./scripts/test-e2e.sh` (~4 min) and `./scripts/test-app-e2e.sh` (~20 min) when the ask/reply path changes (`tests/e2e/test_e2e.py`, `tests/app_e2e/test_app_e2e.py`)
@@ -67,7 +68,7 @@ The game side of the system: the `kc-companion` mod's event wiring, the run, tab
 - The code wins when SPEC, README and the code disagree: confirmed by the repository owner, [decisions.md](../decisions.md#when-spec-readme-and-the-code-disagree-the-code-wins-and-the-docs-are-fixed)
 - Queries run arbitrary Lua through `load` with their own environment, with no sandbox and no fallback to primitives; read-only is an agent rule: [SPEC.md, "Decided", "`load` in the mod runtime"](../../SPEC.md#decided) and "Agent tools"; decided by the repository owner, [decisions.md](../decisions.md#queries-run-arbitrary-lua-with-no-sandbox-read-only-is-an-agent-rule), [decisions.md](../decisions.md#queries-take-arbitrary-lua-through-load-with-no-fallback-to-primitives)
 - A run is a `run_id` in `storage`, named by the player: the Lua API has no save name. [SPEC.md, "Decided", "Save name in the Lua API"](../../SPEC.md#decided) and "What a run is"
-- The mod declares `factorio_version: "2.0"`; level 1 runs on 2.0.77 and 2.1.23: the player's game is 2.0.77 and headless 2.0 crashes on UDP. [SPEC.md, "Decided", "Game version"](../../SPEC.md#decided)
+- The mod runs on Factorio 2.0 and 2.1, one copy with the line written in at install; level 1 runs on 2.0.77 and 2.1.24, level 2 on 2.1.24 because headless 2.0 crashes on UDP: confirmed by the repository owner, [decisions.md](../decisions.md#the-mod-runs-on-factorio-20-and-21-the-app-writes-the-players-game-line-into-its-infojson). [SPEC.md, "Decided", "Game version"](../../SPEC.md#decided)
 - The mod slices 4096 bytes of source JSON per part: the bridge handles the ~8 KB packets this makes, while the game's own receive buffer starts at 4 KB. [SPEC.md, "Mod ↔ bridge protocol"](../../SPEC.md#mod--bridge-protocol)
 - Marks may go on uncharted territory: `add_chart_tag` accepts it. [SPEC.md, "Decided", "Marks on uncharted territory"](../../SPEC.md#decided)
 

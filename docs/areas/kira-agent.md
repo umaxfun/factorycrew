@@ -47,8 +47,8 @@ The Kiro Crew agent `factorio-companion` that answers questions from the game: a
 ## How to check a change
 
 - `./scripts/test-unit.sh tests/unit/test_dispatch.py tests/unit/test_app_status.py` (18 tests, ~2 s): header and language, the forward fallback, the status page's agent check. They do not run Kira.
-- `./scripts/test-e2e.sh` (headless 2.1.23 in Docker, real model, ~4 min): `tests/e2e/test_e2e.py` (7 chests marked, follow-up from context, remove marks, a new tab is a separate chat, Russian answered in Russian) and `tests/e2e/test_panels_e2e.py` (science panel with a period filter, live logistics panel, restore a saved panel, the window's Library without Kira).
-- `./scripts/test-app-e2e.sh [-k ...]` (real 2.0.77 client, the built app, ~20 min): `tests/app_e2e/test_app_e2e.py` (marks, follow-up, trash button, language, an older tab, long-build progress, nearest oil cluster, consent, the app's own MCP server), `test_uncoded.py` (lamp that never lights, trains leaving with cargo, power lamps from the grid, a rate from real numbers, belt around a wall), `test_atlas_planted.py` (planted faults and their controls), `test_atlas.py` and `test_atlas_events.py` (need a player's save, `-k atlas`, `-k events`).
+- `./scripts/test-e2e.sh` (headless 2.1.24 in Docker, real model, ~4 min): `tests/e2e/test_e2e.py` (7 chests marked, follow-up from context, remove marks, a new tab is a separate chat, Russian answered in Russian) and `tests/e2e/test_panels_e2e.py` (science panel with a period filter, live logistics panel, restore a saved panel, the window's Library without Kira).
+- `./scripts/test-app-e2e.sh [-k ...]` (real client, the built app, ~20 min; run it on the 2.0.77 client and with `FACTORIO_APP=/Users/Shared/factorio-2.1.app` on the 2.1.24 one): `tests/app_e2e/test_app_e2e.py` (marks, follow-up, trash button, language, an older tab, long-build progress, nearest oil cluster, consent, the app's own MCP server), `test_uncoded.py` (lamp that never lights, trains leaving with cargo, power lamps from the grid, a rate from real numbers, belt around a wall), `test_atlas_planted.py` (planted faults and their controls), `test_atlas.py` and `test_atlas_events.py` (need a player's save, `-k atlas`, `-k events`).
 - By hand: read Kira's chat for the tab in the gateway's dashboard (`Factorio/<run>/<tab>`), and the transcript `<home>/sessions/dashboard_<slot>.jsonl` (`tests/app_e2e/test_app_e2e.py:356-362`).
 
 ## Decisions
@@ -62,7 +62,7 @@ The Kiro Crew agent `factorio-companion` that answers questions from the game: a
 
 ## Terms
 
-- **Header**: the first line of a game question, `[Factorio · run "R" · tab "T" · tick N · player P at (x, y) on S · reply in L]` (`agent/factorio-companion.md:7`).
+- **Header**: the first line of a game question, `[Factorio V · run "R" · tab "T" · tick N · player P at (x, y) on S · reply in L]`, `V` the game version (`agent/factorio-companion.md:7`). The rules list what 2.1 removed from the 2.0 API under "Factorio API notes (2.0 and 2.1)" (`agent/factorio-companion.md:114`).
 - **Tab / chat**: one in-game tab is one Kiro Crew chat `Factorio/<run>/<tab>`; `chat` in every tool is the tab name.
 - **Pointer**: `@1`, `@2` lines between header and question, a click or a box the player made (`agent/factorio-companion.md:11`).
 - **Rules**: `agent/factorio-companion.md`; the repo spec loads them as a `file://` resource and the app folds them into the prompt (`scripts/build-app.sh:36`).

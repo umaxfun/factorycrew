@@ -211,3 +211,13 @@ Date: 2026-11-04
 
 - Why: (inferred: the restating comment gives none) the public API cannot create them yet. [SPEC.md, "Open questions"](../SPEC.md#open-questions)
 - Evidence: [the repository owner's comment on PR #4](https://github.com/umaxfun/factorycrew/pull/4#issuecomment-6623796024)
+
+## The mod runs on Factorio 2.0 and 2.1; the app writes the player's game line into its info.json
+
+Decided by: the repository owner (Michael)
+Date: 2026-11-07
+Supersedes: [The mod declares Factorio 2.0; level 1 runs on headless 2.0.77, level 2 on headless 2.1.23](#the-mod-declares-factorio-20-level-1-runs-on-headless-2077-level-2-on-headless-2123)
+
+- Quote: "нам бы поддержать мод и для 2.0.77 и для 2.1+" ("we should support the mod for both 2.0.77 and 2.1+"); on the test images: "образы переведи на 2.1.24" ("move the images to 2.1.24"); on the e2e: run it on both.
+- Why: Steam's stable branch is 2.1 now, so a new player's game is 2.1, and a game that is still 2.0 can be updated at any time. Factorio loads a mod only when its `factorio_version` is the game's own major.minor, so one copy of the mod cannot serve both lines (checked 2026-11-07: with two copies side by side, 2.0.77 picks the newest one and refuses it with "Incompatible Factorio version"). Level 1 runs on headless 2.0.77 and 2.1.24, level 2 and the headless e2e on 2.1.24 (headless 2.0 still crashes on UDP), the app e2e on the 2.0.77 and the 2.1.24 client. [SPEC.md, "Decided", "Game version"](../SPEC.md#decided)
+- Evidence: the repository owner's messages in the Kiro Crew chat of 2026-11-07, quoted above (the forge link is the pull request that brought this entry in).

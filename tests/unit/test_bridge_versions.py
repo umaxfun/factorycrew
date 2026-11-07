@@ -28,3 +28,11 @@ def test_outside_the_app_the_pong_is_as_before():
     b, sent = _bridge(None)
     b.on_game_message({"type": "hello", "id": "hb-2", "run_id": "r1"})  # a mod before 0.3.7: no version
     assert sent == [{"type": "pong", "id": "hb-2", "working": []}] and b.health()["mod_version"] is None
+
+
+def test_health_names_the_factorio_version_the_game_runs():
+    b, _ = _bridge("0.3.6")
+    b.on_game_message({"type": "heartbeat", "id": "hb-3", "run_id": "r1", "factorio_version": "2.1.24"})
+    assert b.health()["factorio_version"] == "2.1.24"
+    b.on_game_message({"type": "heartbeat", "id": "hb-4", "run_id": "r1"})  # a mod before this field
+    assert b.health()["factorio_version"] is None

@@ -146,6 +146,7 @@ class GameState:
     atlas_version: int | None = None
     atlas_dirty: int | None = None
     mod_version: str | None = None  # the mod version the game runs (heartbeat), None from mods before 0.3.7
+    factorio_version: str | None = None  # the game's own version (heartbeat), None from older mods
 
 
 # ── framing ──────────────────────────────────────────────────────────────
@@ -373,6 +374,7 @@ class Bridge(asyncio.DatagramProtocol):
             g.atlas_version = msg.get("atlas_version")
             g.atlas_dirty = msg.get("atlas_dirty")
             g.mod_version = msg.get("mod_version")
+            g.factorio_version = msg.get("factorio_version")
             # the tabs this bridge has a turn for (working, or a question still queued or leased):
             # a tab "thinking" in the save that is not here lost its turn (a bridge or game
             # restart), and the mod clears it instead of thinking forever
@@ -786,8 +788,8 @@ class Bridge(asyncio.DatagramProtocol):
         return {
             "ok": True, "game_online": self.online(), "run_id": g.run_id, "run_name": g.run_name,
             "mod_version": g.mod_version, "app_version": self.s.app_version,
+            "factorio_version": g.factorio_version,
             "tick": g.tick, "tabs": g.tabs, "atlas_version": g.atlas_version, "atlas_dirty": g.atlas_dirty,
-            "mod_version": g.mod_version, "app_version": self.s.app_version,
             "atlas_cached": {k or "player": v.version for k, v in self.atlas_store.items() if v.run_id == g.run_id},
             "last_seen_s": None if g.last_seen is None else round(time.monotonic() - g.last_seen, 2),
             "queued_asks": len(self.asks), "leased_asks": len(self.leased), "outbox": len(self.outbox),

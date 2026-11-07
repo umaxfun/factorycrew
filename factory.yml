@@ -23,8 +23,8 @@ triager: ["factorycrew-crew[bot]"]
 checks:
   unit:      {job: unit, workflow: .github/workflows/check.yml}
   level1-20: {job: "level 1, Factorio 2.0.77", workflow: .github/workflows/check.yml}
-  level1-21: {job: "level 1, Factorio 2.1.23", workflow: .github/workflows/check.yml}
-  level2:    {job: "level 2, Factorio 2.1.23", workflow: .github/workflows/check.yml}
+  level1-21: {job: "level 1, Factorio 2.1", workflow: .github/workflows/check.yml}
+  level2:    {job: "level 2, Factorio 2.1", workflow: .github/workflows/check.yml}
 
 tiers:
   T1:
@@ -55,7 +55,7 @@ tiers:
       message and diff). When it changed this behaviour on purpose, it is not T1: the docs may
       be the stale side, so a person decides (T3, Decision names the commit). A fix, refactor
       or unrelated feature that broke the line by accident is a regression: T1.
-      Dependencies: Factorio (2.0.77 for players, headless 2.1.23 in level 2), Kiro Crew (the
+      Dependencies: Factorio (2.0.77 and 2.1.24 for players, headless 2.1.24 in level 2), Kiro Crew (the
       gateway, its CLI and transcripts) and the model Kira runs on. When the behaviour comes
       from one of them and the product's own code that does the thing is unchanged, it is not
       T1: a person picks working around it in code, asking upstream, or changing the docs.
