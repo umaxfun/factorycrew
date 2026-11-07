@@ -36,3 +36,11 @@ def test_health_names_the_factorio_version_the_game_runs():
     assert b.health()["factorio_version"] == "2.1.24"
     b.on_game_message({"type": "heartbeat", "id": "hb-4", "run_id": "r1"})  # a mod before this field
     assert b.health()["factorio_version"] is None
+
+
+def test_an_ask_keeps_the_factorio_version_for_the_dispatcher():
+    # the dispatcher puts it in the question header, and Kira writes Lua for that API
+    b, _ = _bridge("0.3.6")
+    b.on_game_message({"type": "ask", "id": "ask-1", "chat": "General", "text": "hi", "run_id": "r1",
+                       "tick": 5, "factorio_version": "2.1.24"})
+    assert b.asks[-1]["factorio_version"] == "2.1.24"

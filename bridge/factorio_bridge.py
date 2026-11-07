@@ -392,7 +392,7 @@ class Bridge(asyncio.DatagramProtocol):
                 return
             self.seen_asks.append(msg.get("id"))
             self.asks.append({k: msg.get(k) for k in ("id", "chat", "text", "run_id", "run_name", "tick", "player",
-                                                    "pointers")})
+                                                    "pointers", "factorio_version")})
             self.ask_event.set()
             log.info("ask %s [%s] %r", msg.get("id"), msg.get("chat"), msg.get("text"))
         elif t == "library":

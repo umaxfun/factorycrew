@@ -205,6 +205,23 @@ def deploy():
                        stdout=open(DEV / "create.log", "w"), stderr=subprocess.STDOUT, timeout=180)
 
 
+# The plain dev map has no biters: tests teleport the character to far corners, and the 2.1.24 client
+# stops the game when the character dies (seen 2026-11-07: ticks stop, the update thread idles), so a
+# biter base at a test spot froze every later query. A player's save (FC_UI_SAVE) is left as is.
+NO_BITERS = """
+local s = game.surfaces[1]
+local mgs = s.map_gen_settings
+if mgs.autoplace_controls and mgs.autoplace_controls["enemy-base"] then
+  mgs.autoplace_controls["enemy-base"].size = 0
+  s.map_gen_settings = mgs
+end
+s.peaceful_mode = true
+game.map_settings.enemy_expansion.enabled = false
+for _, e in pairs(s.find_entities_filtered{force = "enemy"}) do e.destroy() end
+return true
+"""
+
+
 def spawn(name, argv, env=None):
     log = open(DEV / f"{name}.log", "w")
     p = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -237,6 +254,8 @@ def start():
             # the freeplay intro cutscene would sit on top of every screenshot
             lua("local p = game.get_player(1) if p and p.controller_type == defines.controllers.cutscene "
                 "then p.exit_cutscene() end return true")
+            if not os.environ.get("FC_UI_SAVE"):
+                lua(NO_BITERS)
             print("game online")
             return
         if not alive("game"):

@@ -69,7 +69,7 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 - The mod notices a stopped bridge by the missing `pong` and reconnects by itself (`tests/integration/test_bridge.py::test_no_pong_when_bridge_is_down_then_recovers`).
 - `mark` results carry `ids`/`failed` and `list_marks` a list as `[]`, never `{}` (`bridge/factorio_bridge.py:219-229`; `tests/integration/test_bridge.py::test_unfiltered_chests_marked_and_unmarked` asserts `failed == []`).
 - Stdlib only, and it runs on the macOS system `python3` 3.9 (`README.md` "Layout", `docs/worktrees.md` "Requirements on the host").
-- Every `pong` carries `Settings.app_version` when the bridge runs in the app (the backend passes the installed `app.json` version), and `/health` reports the `mod_version` and the game's `factorio_version` from the last heartbeat (`None` from a mod that sends none) (`tests/unit/test_bridge_versions.py`, `tests/integration/test_bridge.py::test_handshake`). A standalone bridge sends no `app_version`.
+- Every `pong` carries `Settings.app_version` when the bridge runs in the app (the backend passes the installed `app.json` version), and `/health` reports the `mod_version` and the game's `factorio_version` from the last heartbeat (`None` from a mod that sends none); an `ask` keeps its `factorio_version` on the way to the dispatcher, which puts it in the question header (`tests/unit/test_bridge_versions.py::test_an_ask_keeps_the_factorio_version_for_the_dispatcher`; the bridge copies only the fields it lists, so a new `ask` field must be added there, `bridge/factorio_bridge.py:394-395`) (`tests/unit/test_bridge_versions.py`, `tests/integration/test_bridge.py::test_handshake`). A standalone bridge sends no `app_version`.
 
 ## Easy to break
 
@@ -102,7 +102,7 @@ How a game turn ends, since 0.3.12. Before, the dispatcher learnt it by reading 
 
 ## Terms
 
-- **ask**: a question from a tab, `{id, chat, text, run_id, run_name, tick, player, pointers}` (`bridge/factorio_bridge.py:297`).
+- **ask**: a question from a tab, `{id, chat, text, run_id, run_name, tick, player, pointers, factorio_version}` (`bridge/factorio_bridge.py:297`).
 - **lease**: the time a taken ask stays out of the queue unless confirmed; 120 s default, the dispatcher asks for 60 s (`bridge/factorio_bridge.py:51`, `dispatcher/factorio_dispatch.py:554`).
 - **outbox**: messages for the game held while it is offline (`bridge/factorio_bridge.py:332-341`).
 - **step**: one `_agent` tool call counted for the tab's "thinking… step K" line. **activity**: the latest `factorio_progress` text, cut to 80 characters (`bridge/factorio_bridge.py:476-493`).

@@ -45,6 +45,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 
 ## Easy to break
 
+- The 2.1.24 client stops the game when the character dies (seen 2026-11-07: ticks stop, every query times out, the update thread idles), where 2.0.77 respawns by itself. Tests teleport the character to far corners of the plain dev map, so `tools/ui_dev.py start` removes the biters of that map and turns them off (`NO_BITERS`, `tools/ui_dev.py:211`); before that, one biter base at the atlas events spot froze every later test on 2.1. A player's save (`FC_UI_SAVE`) keeps its biters.
 - A running bridge, game or MCP server keeps the code it started with. `stand.sh check` compares `bridge.sha`, `game-mod.sha` and MCP start times with the checkout (`scripts/stand.sh:132-175`). Fix with `stand.sh ui restart`, or `stand.sh kc stop` then `up` for MCP.
 - Copying an identical dispatcher would restart the running wake, so `kc.sh` copies only on change (`scripts/kc.sh:47-48`). The e2e scripts wait up to 90 s for a wake newer than the installed script (`scripts/test-e2e.sh:31-53`).
 - `stand.sh check` uses macOS `stat -f %m` and parses `ps -o lstart` (`scripts/stand.sh:164`, `:169`); on a GNU userland that line misreads (inferred: GNU `stat -f` means file-system status).
