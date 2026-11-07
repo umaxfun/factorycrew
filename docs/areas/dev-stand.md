@@ -16,7 +16,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 - `tests/e2e/stand.py`: the e2e container's entry: the level 2 `Stack` with the bridge on `0.0.0.0` and normal timeouts, prints `STAND_READY`.
 - `tests/e2e/watch.py`: `wait_reply`, the watchdog every e2e reply wait goes through.
 - `.github/workflows/check.yml`: CI on every push and PR: a `unit` job and a matrix of the three game steps; uploads `.test-data/` on failure.
-- `.github/workflows/factory.yml`: the factory's jobs on every pull request: `factory-tier`, `factory-docs` and the two AI reviews; its scripts come from `factory/` on the default branch ([AGENTS.md](../../AGENTS.md), "Factory rules"; `factory.yml`).
+- `.github/workflows/factory.yml`: the factory's jobs on every pull request: `factory-tier`, `factory-docs`, the two AI reviews (each writes its whole review into the job summary) and `review-comment-<model>`, which puts each review on the pull request as one comment, edited for each new head (`factory/review/publish.py`); its scripts come from `factory/` on the default branch ([AGENTS.md](../../AGENTS.md), "Factory rules"; `factory.yml`).
 - `.github/pull_request_template.md`: the pull request body the factory reads: `Fixes #<n>`, Repro, Fix, Proof.
 - `scripts/services.sh`, `scripts/deploy-mod.sh`: the player install of the retired `gamer` setup (launchd agents `dev.factorycrew.bridge`/`.gateway`; mod copy to `/Users/Shared/kc-companion`). Both refuse to run in a linked worktree.
 

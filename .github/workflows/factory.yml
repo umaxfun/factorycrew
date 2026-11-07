@@ -129,6 +129,15 @@ jobs:
           FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash "$FACTORY_DIR/factory/review/review.sh" "claude-opus-5.5"
+      # The whole review in the job summary: it needs no write right. The comment on the pull
+      # request comes from review-comment-claude-opus-5-5 below, which holds the write right
+      # and not KIRO_API_KEY.
+      - if: always()
+        run: |
+          # A default branch from before publish.py has none: the review's own verdict stands.
+          if [ -f "$FACTORY_DIR/factory/review/publish.py" ]; then
+            python3 -I "$FACTORY_DIR/factory/review/publish.py" summary ".review/claude-opus-5-5/review.md" "claude-opus-5.5" "${{ github.event.pull_request.head.sha }}"
+          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -136,6 +145,7 @@ jobs:
           path: |
             .review/
             kiro-usage/
+          include-hidden-files: true   # .review/ starts with a dot; v4 leaves such paths out
           retention-days: 7
 
   ai-review-b:
@@ -162,6 +172,15 @@ jobs:
           FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash "$FACTORY_DIR/factory/review/review.sh" "gpt-5.6-sol"
+      # The whole review in the job summary: it needs no write right. The comment on the pull
+      # request comes from review-comment-gpt-5-6-sol below, which holds the write right
+      # and not KIRO_API_KEY.
+      - if: always()
+        run: |
+          # A default branch from before publish.py has none: the review's own verdict stands.
+          if [ -f "$FACTORY_DIR/factory/review/publish.py" ]; then
+            python3 -I "$FACTORY_DIR/factory/review/publish.py" summary ".review/gpt-5-6-sol/review.md" "gpt-5.6-sol" "${{ github.event.pull_request.head.sha }}"
+          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -169,4 +188,75 @@ jobs:
           path: |
             .review/
             kiro-usage/
+          include-hidden-files: true   # .review/ starts with a dot; v4 leaves such paths out
           retention-days: 7
+
+  # Shows the review on the pull request: one comment per model, edited for each new head. It
+  # holds `pull-requests: write` and no KIRO_API_KEY, runs only the default branch's
+  # publish.py on the review's artifact, and nothing from the pull request. Not for forks: their
+  # token cannot write. It never fails the pull request (publish.py exits 0 on every error).
+  review-comment-a:
+    name: review-comment-claude-opus-5-5
+    needs: [factory-tier, ai-review-a]
+    if: >-
+      always() && needs.ai-review-a.result != 'skipped' && needs.ai-review-a.result != 'cancelled'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: factory/review/publish.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # no artifact: publish.py says the review reached no verdict
+        with:
+          name: review-claude-opus-5-5
+          path: review-artifact
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f factory/review/publish.py ]; then echo "factory: publish.py is not on the default branch yet"; exit 0; fi
+          python3 -I factory/review/publish.py comment "review-artifact/.review/claude-opus-5-5/review.md" "claude-opus-5.5" "${{ github.event.pull_request.head.sha }}"
+
+  # Shows the review on the pull request: one comment per model, edited for each new head. It
+  # holds `pull-requests: write` and no KIRO_API_KEY, runs only the default branch's
+  # publish.py on the review's artifact, and nothing from the pull request. Not for forks: their
+  # token cannot write. It never fails the pull request (publish.py exits 0 on every error).
+  review-comment-b:
+    name: review-comment-gpt-5-6-sol
+    needs: [factory-tier, ai-review-b]
+    if: >-
+      always() && needs.ai-review-b.result != 'skipped' && needs.ai-review-b.result != 'cancelled'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: factory/review/publish.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # no artifact: publish.py says the review reached no verdict
+        with:
+          name: review-gpt-5-6-sol
+          path: review-artifact
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ ! -f factory/review/publish.py ]; then echo "factory: publish.py is not on the default branch yet"; exit 0; fi
+          python3 -I factory/review/publish.py comment "review-artifact/.review/gpt-5-6-sol/review.md" "gpt-5.6-sol" "${{ github.event.pull_request.head.sha }}"
