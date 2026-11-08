@@ -94,6 +94,9 @@ test("a machine's fluid boxes are dumped with their kind and segments", function
   local f = l:match("|f=([^|]+)")
   assert(f, "no fluid field: " .. l)
   assert(f:find(":input:", 1, true) and f:find(":output:", 1, true), "fluid boxes without their kind: " .. f)
+  -- An empty plant still names its recipe's fluids: through the box filters the recipe sets.
+  assert(f:find(":input:water", 1, true), "input box without its fluid: " .. f)
+  assert(f:find(":output:sulfuric-acid", 1, true), "output box without its fluid: " .. f)
   plant.destroy()
 end)
 
