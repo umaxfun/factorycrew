@@ -90,3 +90,15 @@ def test_a_plain_tag_must_match_the_app_version(repo):
     p = release(work, "tag", f"v{old}")
     assert p.returncode == 0, p.stderr
     assert version(origin, "release") == old and git(origin, "branch", "--list", "release-staging") == ""
+
+
+def test_a_refused_push_to_main_publishes_nothing(repo):
+    # main is protected (a ruleset): when the bump commit cannot go there, players get nothing.
+    work, origin = repo
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nwhile read old new ref; do [ \"$ref\" = refs/heads/main ] && exit 1; done; exit 0\n")
+    hook.chmod(0o755)
+    p = release(work, "bump", "patch")
+    assert p.returncode != 0
+    assert git(origin, "branch", "--list", "release") == ""   # the players' channel was not pushed
+    assert git(origin, "tag", "--list") == ""                 # the tag goes with main, atomically

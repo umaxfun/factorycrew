@@ -6,7 +6,8 @@
 #   scripts/release.sh tag vX.Y.Z[-suffix]            (a pushed tag)
 #
 # bump: sets "version" in app/app.json, commits "Release X.Y.Z" on main, tags vX.Y.Z, builds,
-#       publishes the build, pushes main and the tag.
+#       pushes main and the tag, then publishes the build. A refused push to main (the
+#       branch's ruleset) stops it before players get anything.
 # tag:  builds the tagged commit as that version and publishes it. A tag with a suffix
 #       (v0.3.12-test.1) is a rehearsal: it goes to the branch `release-staging`, never to
 #       `release`, so players do not get it. A plain vX.Y.Z must match app/app.json.
@@ -111,7 +112,8 @@ if [ -n "${FC_RELEASE_NO_PUSH:-}" ]; then
   echo "not pushed (FC_RELEASE_NO_PUSH)"
   exit 0
 fi
-git -C "$WT" push -q origin "HEAD:refs/heads/$CHANNEL"
+# main and the tag first: if that push is refused, nothing has reached players yet.
 if [ "$MODE" = bump ]; then
-  git push -q origin HEAD:refs/heads/main "refs/tags/v$NEW"
+  git push -q --atomic origin HEAD:refs/heads/main "refs/tags/v$NEW"
 fi
+git -C "$WT" push -q origin "HEAD:refs/heads/$CHANNEL"
