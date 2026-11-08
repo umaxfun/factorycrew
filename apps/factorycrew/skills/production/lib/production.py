@@ -156,6 +156,18 @@ def _products(spec):
     return out
 
 
+def _category(r):
+    """2.0's `category`, or 2.1's list `categories` (its first; a list passed as `category` too)."""
+    c = r.get("category")
+    if c is None:
+        c = r.get("categories")
+    if isinstance(c, (list, tuple)):
+        c = c[0] if c else None
+    elif isinstance(c, dict):  # a Lua list can arrive as {"1": ...}
+        c = next(iter(c.values()), None)
+    return c or "crafting"
+
+
 def _recipe(name, r):
     time = r.get("time", r.get("energy", r.get("energy_required", 0.5)))
     allowed = r.get("allowed_effects")
@@ -165,7 +177,7 @@ def _recipe(name, r):
         "_n": True,
         "name": r.get("name", name),
         "time": F(time),
-        "category": r.get("category") or "crafting",
+        "category": _category(r),
         "ingredients": _ingredients(r.get("ingredients")),
         "products": _products(r.get("products", r.get("results"))),
         "allowed": _names(allowed),
