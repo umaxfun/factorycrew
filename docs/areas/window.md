@@ -9,7 +9,7 @@ Kira's window in the game (run name, tabs, feed, status, marks row, panels row, 
 - `mod/kc-companion/data.lua`: prototypes: hotkeys `kc-toggle` (Ctrl+Shift+K), `kc-pointer` (Alt+K), `kc-clear-cursor` (linked to the game's clear-cursor), the `kc-pointer` selection tool and shortcut, the `kc-kira` sprite (`mod/kc-companion/data.lua`)
 - `mod/kc-companion/graphics/`: `kira.png` and `pointer.png`, both 64×64, drawn by `tools/draw_kira.py` and `tools/draw_pointer.py` (`file mod/kc-companion/graphics/*`; docstrings of both scripts)
 - `mod/kc-companion/locale/en/kc.cfg`: names for the `kc-toggle` control and the mod only
-- `tools/ui_dev.py`: the UI loop, a real 2.0.77 client driven over a dev bridge, with screenshots (docstring, `tools/ui_dev.py:1-22`)
+- `tools/ui_dev.py`: the UI loop, a real 2.0.77 or 2.1.24 client (`FACTORIO_APP`) driven over a dev bridge, with screenshots (docstring, `tools/ui_dev.py:1-22`)
 
 ## Talks to
 

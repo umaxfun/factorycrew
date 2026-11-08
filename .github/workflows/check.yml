@@ -34,9 +34,9 @@ jobs:
         include:
           - name: level 1, Factorio 2.0.77
             script: ./scripts/test-mod.sh
-          - name: level 1, Factorio 2.1.23
+          - name: level 1, Factorio 2.1
             script: ./scripts/test-mod-2.1.sh
-          - name: level 2, Factorio 2.1.23
+          - name: level 2, Factorio 2.1
             script: ./scripts/test-integration.sh
     name: ${{ matrix.name }}
     steps:

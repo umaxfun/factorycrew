@@ -47,7 +47,7 @@ The `kc` table in the query environment: Lua helpers Kira calls inside `factorio
 
 ## How to check a change
 
-- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh`: level 1 on 2.0.77 and 2.1.23, ~11 s each; covers `test-helpers.lua` and `test-trial.lua`, and rewrites `.test-data/level1*/script-output/kc-world/*.json`.
+- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh`: level 1 on 2.0.77 and 2.1.24, ~11 s each; covers `test-helpers.lua` and `test-trial.lua`, and rewrites `.test-data/level1*/script-output/kc-world/*.json`.
 - After a reader change, copy the new `kc-world` JSON into `tests/unit/fixtures/kc_world/<version>/` by hand (no script does it: `grep -rn kc-world scripts/` finds nothing), then `./scripts/test-unit.sh tests/unit/test_kc_world.py tests/unit/test_kc_checks.py` (~1 s).
 - `./scripts/test-integration.sh` (~65 s): `tests/integration/test_belts_game.py`, `test_pipes_game.py`, `test_power_game.py`, `test_solar_game.py`, `test_mining_game.py`, `test_beacons_game.py` place plans through `kc.place_ghosts` and revive them.
 - `./scripts/test-app-e2e.sh -k uncoded` (real client, real model): `tests/app_e2e/test_uncoded.py` checks Kira calls `kc.trial_start` before replying (lamp power, belt around a wall) and uses `kc.grid_power` on the test grid.

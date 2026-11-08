@@ -49,7 +49,7 @@ Reads any circuit network in the game into a plain JSON snapshot (Lua, `kc.circu
 
 - `./scripts/test-unit.sh tests/unit/test_kc_circuits.py` (85 tests, under 1 s measured): semantics, simulator, check, explain, recorded fixtures.
 - `./scripts/test-unit.sh tests/unit/test_compute.py -k kc_module`: `kc.circuits` reachable in `factorio_compute`.
-- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh` (~11 s each): `mod/kc-companion/tests/test-circuits.lua` on 2.0.77 and 2.1.23; snapshots land in `.test-data/level1/script-output/kc-circuits/` and `.test-data/level1-2.1/script-output/kc-circuits/`.
+- `./scripts/test-mod.sh` and `./scripts/test-mod-2.1.sh` (~11 s each): `mod/kc-companion/tests/test-circuits.lua` on 2.0.77 and 2.1.24; snapshots land in `.test-data/level1/script-output/kc-circuits/` and `.test-data/level1-2.1/script-output/kc-circuits/`.
 - After a reader change, copy those snapshots into `tests/unit/fixtures/circuits/` (2.1 ones with a `-2.1` suffix, as the committed files are named) by hand: no script does it (`grep -rn kc-circuits scripts/` finds nothing). Then rerun the unit tests.
 - `./scripts/test-integration.sh` (~65 s): `tests/integration/test_kc_circuits_game.py`.
 - `./scripts/test-app-e2e.sh -k uncoded` (real client, real model): `tests/app_e2e/test_uncoded.py::test_explains_why_a_lamp_never_lights` and `::test_finds_why_trains_leave_with_cargo` check Kira reads the network with `kc.circuits`.

@@ -6,7 +6,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 
 - `scripts/stand.sh`: one stand per worktree: `up`, `claim`, `check`, `env`, `status`, `ui`, `kc`, `down`, `release`. Picks a slot by `mkdir` claim plus port ownership.
 - `scripts/kc.sh`: the factorycrew Kiro Crew gateway (default :5477, `~/.kirocrew-factorio`; `FC_KC_PORT`/`FC_KC_HOME` override). `install` writes the agent and the dispatcher; any other subcommand goes to `kirocrew`. The gateway itself starts with `--port` and no `KIROCREW_PORT` in its env (`GATEWAY`), as the desktop app starts a player's: the inherited variable once hid that crons dialed the default port.
-- `tools/ui_dev.py`: a real 2.0.77 client plus a bridge for one data dir: `start`, `stop`, `restart`, `shot`, `lua`, `steps`, `digest`. Writes `bridge.sha` and `game-mod.sha` for `stand.sh check`.
+- `tools/ui_dev.py`: a real client (`FACTORIO_APP`: the 2.0.77 one by default, `/Users/Shared/factorio-2.1.app` for 2.1.24) plus a bridge for one data dir. It writes the client's line into the deployed mod's `info.json` and keeps one dev save per line, `ui-test.zip` for 2.0 and `ui-test-<line>.zip` otherwise, since a save a 2.1 client wrote does not load in 2.0 (`tools/ui_dev.py:52-74`, `:176-180`): `start`, `stop`, `restart`, `shot`, `lua`, `steps`, `digest`. Writes `bridge.sha` and `game-mod.sha` for `stand.sh check`.
 - `scripts/check.sh`: the fast check: `unit`, `level1-2.0`, `level1-2.1`, `level2`; logs in `.test-data/check/<step>.log`.
 - `scripts/test-unit.sh`, `test-mod.sh`, `test-mod-2.1.sh`, `test-integration.sh`, `test-e2e.sh`: the levels. `test-app-e2e.sh` belongs to [the app](app.md).
 - `scripts/lib/docker.sh`: `docker_alive`, `docker_ok` (a probe container), `docker_bounded` (a wall clock on `docker run`).
@@ -45,6 +45,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 
 ## Easy to break
 
+- The 2.1.24 client stops the game when the character dies (seen 2026-11-07: ticks stop, every query times out, the update thread idles), where 2.0.77 respawns by itself. Tests teleport the character to far corners of the plain dev map, so `tools/ui_dev.py start` removes the biters of that map and turns them off (`NO_BITERS`, `tools/ui_dev.py:211`); before that, one biter base at the atlas events spot froze every later test on 2.1. A player's save (`FC_UI_SAVE`) keeps its biters.
 - A running bridge, game or MCP server keeps the code it started with. `stand.sh check` compares `bridge.sha`, `game-mod.sha` and MCP start times with the checkout (`scripts/stand.sh:132-175`). Fix with `stand.sh ui restart`, or `stand.sh kc stop` then `up` for MCP.
 - Copying an identical dispatcher would restart the running wake, so `kc.sh` copies only on change (`scripts/kc.sh:47-48`). The e2e scripts wait up to 90 s for a wake newer than the installed script (`scripts/test-e2e.sh:31-53`).
 - `stand.sh check` uses macOS `stat -f %m` and parses `ps -o lstart` (`scripts/stand.sh:164`, `:169`); on a GNU userland that line misreads (inferred: GNU `stat -f` means file-system status).
@@ -70,7 +71,7 @@ Starts private copies of the whole stack (game, bridge, gateway, Kira, dispatche
 - Each worktree brings up and checks only its own copy of the stack: [docs/worktrees.md](../worktrees.md), intro and "What is yours" (the incident there is the reason).
 - Levels 1 and 2 run in a `linux/amd64` image: the `arm64` image runs the x64 binary through box64 and fails ([SPEC, Tests](../../SPEC.md#tests); Decided, "Headless Factorio in Docker on Apple Silicon").
 - FactorioTest is built from source at `cli-v3.5.1`: the portal copy needs a Factorio login, and from 3.6.0 the mod needs 2.1 ([SPEC, Tests](../../SPEC.md#tests)).
-- Level 2 runs on 2.1.23: headless 2.0 aborts on the first UDP packet ([SPEC, Decided](../../SPEC.md#decided), "Game version").
+- Level 2 runs on 2.1.24: headless 2.0 aborts on the first UDP packet ([SPEC, Decided](../../SPEC.md#decided), "Game version").
 - The UI loop uses a real client: headless renders no screenshots ([SPEC, Decided](../../SPEC.md#decided), "Screenshots for UI work").
 - Players install the Kiro Crew app and the `gamer` setup is retired, so `services.sh`, `deploy-mod.sh` and the `gamer` lines in `tools/ui_dev.py`'s docstring describe it: confirmed by the repository owner, [decisions.md](../decisions.md#players-install-the-kiro-crew-app-the-second-account-setup-is-retired).
 

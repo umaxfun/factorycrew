@@ -54,6 +54,18 @@ def test_pointers_go_as_lines_between_header_and_question():
     assert lines[4] == "why is @1 slow? build like @2"
 
 
+def test_header_names_the_factorio_version():
+    # Kira writes Lua for this game: 2.1 removed APIs that 2.0 has (agent/factorio-companion.md)
+    msg = d.render({"run_id": "r", "run_name": "R", "chat": "T", "tick": 1, "text": "hi", "factorio_version": "2.1.24"})
+    assert msg.startswith('[Factorio 2.1.24 · run "R" · tab "T" · tick 1')
+    old = d.render({"run_id": "r", "run_name": "R", "chat": "T", "tick": 1, "text": "hi"})  # a mod before the field
+    assert old.startswith('[Factorio · run "R"')
+    # 2.1 gets the list of removed 2.0 reads under the header, 2.0 does not
+    assert msg.split("\n")[1] == d.API_21 and msg.split("\n")[2] == "hi"
+    on_20 = d.render({"run_id": "r", "run_name": "R", "chat": "T", "tick": 1, "text": "hi", "factorio_version": "2.0.77"})
+    assert on_20.split("\n")[1] == "hi"
+
+
 def test_no_pointers_no_extra_lines():
     msg = d.render({"run_id": "r", "chat": "T", "tick": 1, "text": "hi"})
     assert msg.split("\n")[1] == "hi"

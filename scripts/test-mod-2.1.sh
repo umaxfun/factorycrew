@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Level 1 on Factorio 2.1.23: same as scripts/test-mod.sh, with the mod copied and its
+# Level 1 on Factorio 2.1.24: same as scripts/test-mod.sh, with the mod copied and its
 # factorio_version set to 2.1 inside the container (the repo copy stays at 2.0).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="factorycrew-test:2.1.23"
+IMAGE="factorycrew-test:2.1.24"
 . "$ROOT/scripts/lib/docker.sh"
 docker_alive
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.23 -t "$IMAGE" "$ROOT/docker"
+  docker build --platform linux/amd64 --build-arg FACTORIO_VERSION=2.1.24 -t "$IMAGE" "$ROOT/docker"
 fi
 
 docker_ok "$IMAGE"

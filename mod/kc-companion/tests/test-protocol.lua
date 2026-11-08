@@ -116,6 +116,13 @@ describe("handle", function()
     protocol.handle({ type = "status", chat = "live-tab", state = "idle" })
   end)
 
+  it("tells the bridge and Kira which Factorio it runs", function()
+    local game_version = script.active_mods.base
+    assert(protocol.heartbeat().factorio_version == game_version, serpent.line(protocol.heartbeat()))
+    local ask = protocol.ask("version-tab", "hi", nil)
+    assert(ask.factorio_version == game_version, serpent.line(ask))
+  end)
+
   it("reports its version and learns from the pong that the app has a newer one", function()
     local mine = script.active_mods["kc-companion"]
     assert(mine and protocol.heartbeat().mod_version == mine, serpent.line(protocol.heartbeat()))

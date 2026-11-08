@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# App e2e: build the Kiro Crew app, reinstall it into a dev gateway, run the real Factorio
-# 2.0.77 client against the app's bridge, and drive questions through the window.
-# No Docker. Needs /Users/Shared/factorio.app (FACTORIO_APP) and a real model (a few agent turns).
+# App e2e: build the Kiro Crew app, reinstall it into a dev gateway, run a real Factorio client
+# against the app's bridge, and drive questions through the window. No Docker. Needs a real model
+# (a few agent turns) and a client: /Users/Shared/factorio.app (2.0.77) by default, or
+# FACTORIO_APP=/Users/Shared/factorio-2.1.app for 2.1.24. Run it on both: the mod and Kira's Lua differ.
 #
 # Isolated per worktree (docs/worktrees.md): this checkout's slot (scripts/stand.sh claim) gives
 # the run its own app gateway (FC_APP_PORT, home FC_APP_HOME), app bridge ports

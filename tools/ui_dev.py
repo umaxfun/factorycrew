@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -46,7 +47,31 @@ def _in_linked_worktree():
 DATA = DEV / "factorio"
 APP = Path(os.environ.get("FACTORIO_APP", "/Users/Shared/factorio.app"))
 BIN = APP / "Contents" / "MacOS" / "factorio"
-SAVE = DATA / "saves" / "ui-test.zip"
+
+
+def client_version():
+    """The version of the client in FACTORIO_APP, e.g. "2.1.24" (once per process)."""
+    global _CLIENT_VERSION
+    if _CLIENT_VERSION is None:
+        out = subprocess.run([str(BIN), "--version"], capture_output=True, text=True, timeout=60).stdout
+        m = re.search(r"Version: (\d+\.\d+\.\d+)", out)
+        if not m:
+            raise SystemExit(f"{BIN} --version printed no version: {out[:200]!r}")
+        _CLIENT_VERSION = m.group(1)
+    return _CLIENT_VERSION
+
+
+_CLIENT_VERSION = None
+
+
+def client_line():
+    return ".".join(client_version().split(".")[:2])
+
+
+def dev_save():
+    """The plain dev save, one per game line: a save a 2.1 client wrote no longer loads in 2.0."""
+    line = client_line()
+    return DATA / "saves" / ("ui-test.zip" if line == "2.0" else f"ui-test-{line}.zip")
 HTTP = int(os.environ.get("FC_UI_HTTP_PORT") or 34298)
 UDP_BRIDGE, UDP_GAME = HTTP + 1, HTTP + 2
 BRIDGE = f"http://127.0.0.1:{HTTP}"
@@ -135,7 +160,7 @@ def deploy_fixture(mods):
 def save_path():
     if os.environ.get("FC_UI_SAVE"):
         return DATA / "saves" / ("fixture-" + Path(os.environ["FC_UI_SAVE"]).name)
-    return SAVE
+    return dev_save()
 
 
 def deploy():
@@ -148,6 +173,11 @@ def deploy():
     proto = mods / "kc-companion" / "scripts" / "protocol.lua"
     text = proto.read_text(encoding="utf-8").replace("M.BRIDGE_PORT = 34199", f"M.BRIDGE_PORT = {UDP_BRIDGE}")
     proto.write_text(text, encoding="utf-8")
+    # the game loads the mod only when info.json names its own line, as the app writes it for players
+    info_path = mods / "kc-companion" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["factorio_version"] = client_line()
+    info_path.write_text(json.dumps(info, indent=2) + "\n")
     if os.environ.get("FC_UI_MODS"):
         deploy_fixture(mods)
     else:
@@ -168,10 +198,28 @@ def deploy():
         subprocess.run(["cp", os.environ["FC_UI_SAVE"], str(save_path())], check=True)
     # the plain dev save is created only with the plain mod set: one created while a player's mods were
     # deployed (FC_UI_MODS) was a modded map that the plain client then hung on
-    if not SAVE.exists() and not os.environ.get("FC_UI_MODS"):
-        SAVE.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run([str(BIN), "-c", str(cfg), "--create", str(SAVE)], check=True,
+    save = dev_save()
+    if not save.exists() and not os.environ.get("FC_UI_MODS"):
+        save.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([str(BIN), "-c", str(cfg), "--create", str(save)], check=True,
                        stdout=open(DEV / "create.log", "w"), stderr=subprocess.STDOUT, timeout=180)
+
+
+# The plain dev map has no biters: tests teleport the character to far corners, and the 2.1.24 client
+# stops the game when the character dies (seen 2026-11-07: ticks stop, the update thread idles), so a
+# biter base at a test spot froze every later query. A player's save (FC_UI_SAVE) is left as is.
+NO_BITERS = """
+local s = game.surfaces[1]
+local mgs = s.map_gen_settings
+if mgs.autoplace_controls and mgs.autoplace_controls["enemy-base"] then
+  mgs.autoplace_controls["enemy-base"].size = 0
+  s.map_gen_settings = mgs
+end
+s.peaceful_mode = true
+game.map_settings.enemy_expansion.enabled = false
+for _, e in pairs(s.find_entities_filtered{force = "enemy"}) do e.destroy() end
+return true
+"""
 
 
 def spawn(name, argv, env=None):
@@ -206,6 +254,8 @@ def start():
             # the freeplay intro cutscene would sit on top of every screenshot
             lua("local p = game.get_player(1) if p and p.controller_type == defines.controllers.cutscene "
                 "then p.exit_cutscene() end return true")
+            if not os.environ.get("FC_UI_SAVE"):
+                lua(NO_BITERS)
             print("game online")
             return
         if not alive("game"):

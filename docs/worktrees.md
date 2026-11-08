@@ -97,7 +97,7 @@ On failure, `test-e2e.sh` also prints the bridge health, the gateway status, the
 
 ## Requirements on the host
 
-- A Factorio client the stand can start: `FACTORIO_APP` (default `/Users/Shared/factorio.app`, the macOS Steam build). The UI loop needs a real client with a window. A headless Linux server has none. There the stand's game would have to be the headless server from `docker/`, and `tools/ui_dev.py` does not do that yet.
+- A Factorio client the stand can start: `FACTORIO_APP` (default `/Users/Shared/factorio.app`, the macOS Steam build of 2.0.77; `/Users/Shared/factorio-2.1.app` is the 2.1.24 one, copied from Steam's stable branch). The UI loop needs a real client with a window. A headless Linux server has none. There the stand's game would have to be the headless server from `docker/`, and `tools/ui_dev.py` does not do that yet.
 - `kirocrew` on `PATH`, logged in once for the user the agents run as. Each stand's gateway gets its own home, but they share that login.
 - `python3`, `lsof`, `curl`, `rsync`, and GNU `timeout` (Homebrew coreutils on macOS).
 - `uv`: the test scripts run pytest through `uv run --no-project --with pytest==8.3.5`; `scripts/test-unit.sh` also pins `--python 3.12`, the e2e scripts take uv's default Python. The bridge, MCP server and dispatcher themselves are stdlib only and also run on the system `python3` (3.9 on macOS).

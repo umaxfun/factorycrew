@@ -56,6 +56,7 @@ def test_handshake(stack):
     assert h["game_online"] and h["run_id"] == st["run_id"] and h["run_name"] == st["run_name"]
     # the version the game loaded, for the status page's "restart Factorio after an update"
     assert h["mod_version"] and h["mod_version"] == stack.rcon.lua('return script.active_mods["kc-companion"]'), h
+    assert h["factorio_version"] and h["factorio_version"] == stack.rcon.lua("return script.active_mods.base"), h
     wait_until(lambda: stack.mod_state()["connected"], what="pong reaching the mod")
 
 
@@ -64,6 +65,8 @@ def test_ask_reaches_dispatcher_with_ack_and_thinking(stack):
     asks = http("GET", "/asks?wait=10")["asks"]
     assert [(a["id"], a["chat"], a["text"]) for a in asks] == [(ask_id, CHAT, "find yellow chests without a filter")]
     assert asks[0]["run_id"] == stack.mod_state()["run_id"]
+    # the dispatcher's question header names it, so Kira writes Lua for this API
+    assert asks[0]["factorio_version"] == stack.rcon.lua("return script.active_mods.base"), asks[0]
     assert http("POST", "/asks/done", {"ids": [ask_id]})["confirmed"] == 1
 
     def acked_and_thinking():

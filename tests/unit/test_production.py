@@ -71,6 +71,18 @@ def test_electronic_circuits_in_assembler_2():
     json.dumps(r)
 
 
+def test_a_2_1_recipe_with_a_categories_list_plans_like_a_2_0_one():
+    # 2.1 renamed LuaRecipePrototype::category to the list `categories` (agent/factorio-companion.md)
+    recipes = {n: dict(r) for n, r in RECIPES.items()}
+    for r in recipes.values():
+        r["categories"] = [r.pop("category", "crafting")]
+    old = production.plan(RECIPES, MACHINES, {"petroleum-gas": 10})
+    new = production.plan(recipes, MACHINES, {"petroleum-gas": 10})
+    assert new["recipes"] == old["recipes"] and new["warnings"] == old["warnings"] == []
+    recipes["lubricant"]["category"] = ["chemistry"]  # the list passed under the old key
+    assert production.plan(recipes, MACHINES, {"lubricant": 1})["recipes"]["lubricant"]["machine"] == "chemical-plant"
+
+
 def test_default_machine_is_the_fastest_of_the_category():
     r = production.plan(RECIPES, MACHINES, {"iron-gear-wheel": 1})
     assert r["recipes"]["iron-gear-wheel"]["machine"] == "assembling-machine-3"

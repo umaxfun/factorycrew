@@ -258,6 +258,15 @@ def reply_language(text):
     return None
 
 
+# Under the header of a question from Factorio 2.1, which removed these 2.0 reads (reading one raises
+# "doesn't contain key"). Only there: a 2.0 game never needs it, and Kira's always-on rules stay short.
+API_21 = ("[2.1 API: entity.fluidbox is gone, use entity.fluids_count, get_fluid(i), get_fluid_segment_id(i), "
+          "get_fluid_box_pipe_connections(i), get_fluid_box_prototype(i) (get_fluid_contents() as before); "
+          "recipe.category is the list recipe.categories; item.fuel_category is fuel_categories; "
+          "entity.neighbours is gone (underground_belt_neighbour, fluidbox_neighbours); "
+          "game.create_profiler is helpers.create_profiler()]")
+
+
 def render(ask):
     lang = reply_language(ask["text"])
     reply_in = f" · reply in {lang}" if lang else ""
@@ -266,10 +275,12 @@ def render(ask):
     if isinstance(p, dict) and "x" in p and "y" in p:
         who = f"player {p['name']} " if p.get("name") else "player "
         where = f" · {who}at ({p['x']}, {p['y']}) on {p.get('surface') or '?'}"
-    head = (f"[Factorio · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
+    game = f"Factorio {ask['factorio_version']}" if ask.get("factorio_version") else "Factorio"
+    head = (f"[{game} · run \"{ask.get('run_name') or ask['run_id']}\" · tab \"{ask['chat']}\" · "
             f"tick {ask.get('tick')}{where}{reply_in}]")
     lines = [render_pointer(p) for p in ask.get("pointers") or [] if isinstance(p, dict)]
-    return "\n".join([head, *lines, ask["text"]])
+    api = [API_21] if str(ask.get("factorio_version") or "").startswith("2.1.") else []
+    return "\n".join([head, *api, *lines, ask["text"]])
 
 
 def _num(v):

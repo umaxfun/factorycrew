@@ -250,6 +250,25 @@ return {grid = grid.electric_network_id, at = p.position}
 
 OIL_CHECK = """
 local s = game.surfaces[1]
+-- fluid boxes: LuaEntity::fluidbox on 2.0; 2.1 removed it for methods on the entity (box index first)
+local function pipe_cons(e, i)
+  local ok, fb = pcall(function() return e.fluidbox end)
+  if ok then return fb.get_pipe_connections(i) end
+  return e.get_fluid_box_pipe_connections(i) or {}
+end
+local function box_count(e)
+  local ok, fb = pcall(function() return e.fluidbox end)
+  if ok then return #fb end
+  return e.fluids_count
+end
+local function connected(e, i) -- the entities box i of e is joined to
+  local out = {}
+  for _, c in pairs(pipe_cons(e, i)) do
+    local t = c.target
+    if t then out[#out + 1] = t.object_name == "LuaFluidBox" and t.owner or t end
+  end
+  return out
+end
 local out = {pumpjacks = {}, on_b = 0, poles = {}, revive_failed = {}}
 for _, g in pairs(s.find_entities_filtered{name = "entity-ghost", area = {{360, 320}, {420, 380}}}) do
   if g.ghost_name == "pumpjack" then out.on_b = out.on_b + 1 end
@@ -273,7 +292,7 @@ end
 local jacks = s.find_entities_filtered{name = "pumpjack", area = {{240, 260}, {360, 380}}}
 for _, j in pairs(jacks) do
   local outs = {}
-  for _, c in pairs(j.fluidbox.get_pipe_connections(1)) do
+  for _, c in pairs(pipe_cons(j, 1)) do
     local t = c.target_position
     local there = s.find_entities_filtered{position = t, radius = 0.4}
     outs[#outs + 1] = {x = t.x, y = t.y, linked = c.target ~= nil,
@@ -295,8 +314,8 @@ while #queue > 0 do
   if e and e.valid and not seen[e.unit_number] then
     seen[e.unit_number] = true
     if e.name == "pumpjack" then reached = reached + 1 end
-    for i = 1, #e.fluidbox do
-      for _, other in pairs(e.fluidbox.get_connections(i)) do queue[#queue + 1] = other.owner end
+    for i = 1, box_count(e) do
+      for _, other in pairs(connected(e, i)) do queue[#queue + 1] = other end
     end
   end
 end
