@@ -2,10 +2,11 @@
 # AI review of a merge request (GitLab) or pull request (GitHub) with kiro-cli, on one model.
 # Usage: review.sh <model>      (the CI job ai-review-<model slug> runs it)
 #
-# Run it from the copy of factory/ taken from the TARGET branch (the CI templates do that): the
-# prompt modules next to this script, factory.yml, the calibration file and the area docs all
-# come from the target, so a merge request cannot weaken the review that judges it. Only when
-# the target has no factory/ yet (the merge request that adds the factory) is the merge
+# Run it from the copy of factory/ taken from the DEFAULT branch (the CI templates do that), so
+# the prompt modules next to this script never come from a crew-pushed feature branch;
+# factory.yml, the calibration file and the area docs come from the target, so a merge request
+# cannot weaken the review that judges it. Only when the default branch has no factory/ yet
+# (the merge request that adds the factory) is the merge
 # request's own copy used, and that one touches gate paths, so a person approves it.
 #
 # Needs: KIRO_API_KEY; a checkout of the head commit with full history in the working

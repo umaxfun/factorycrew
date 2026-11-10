@@ -35,16 +35,40 @@ def _ts(value):
     except (TypeError, ValueError):
         return None
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib would resend PRIVATE-TOKEN / Authorization to wherever
+    the Location points (another host, or plain http). A 3xx comes back as its status, and
+    `_Http.call` turns it into a ForgeError."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(_NoRedirect)
+MOVED_HINT = "repository moved or URL changed: fix --url/--project (or the cron message)"
+
+
 class Transport:
     """One HTTP request. Returns (status, body bytes). Raises nothing for HTTP errors."""
 
     def __call__(self, method: str, url: str, headers: dict, body: bytes | None) -> tuple[int, bytes]:
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with OPENER.open(req, timeout=30) as r:
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
-            return e.code, e.read() or b""
+            return e.code, redirect_body(e) or e.read() or b""
+
+
+def redirect_body(e: urllib.error.HTTPError) -> bytes | None:
+    """For a 3xx, the body `_Http.call` reports: where it pointed, as scheme, host and path only
+    (a Location may carry credentials or a signed query). None for any other status."""
+    if not 300 <= e.code < 400:
+        return None
+    loc = urllib.parse.urlsplit(urllib.parse.urljoin(e.url or "", (e.headers or {}).get("Location") or ""))
+    port = f":{loc.port}" if loc.port else ""
+    where = f"{loc.scheme}://{loc.hostname}{port}{loc.path}" if loc.hostname else "(no Location)"
+    return f"redirected to {where}".encode()
 
 
 class _Http:
@@ -62,6 +86,8 @@ class _Http:
         status, out = self.transport(method, url, headers, body)
         if status == 404 and ok404:
             return None
+        if 300 <= status < 400:  # not followed (see _NoRedirect): an error, not an answer
+            raise ForgeError(status, out[:300].decode("utf-8", "replace") + ": " + MOVED_HINT)
         if status >= 400:
             raise ForgeError(status, out[:300].decode("utf-8", "replace"))
         if raw:
@@ -206,29 +232,40 @@ class GitLab(Forge):
         return sorted(out, key=lambda c: c.created_at)  # oldest first, as on GitHub
 
     def approvers(self, mr):
-        # An approval counts for the head only when it was given after that head was pushed.
+        # An approval counts for the head only when it was given after the head's LATEST push.
         # GitLab keeps approvals across pushes unless the project resets them ("Remove all
         # approvals when a commit is added", Premium), so the approval API alone could carry an
-        # approval of an older head. The head's push time is its first merge request diff
-        # version; an approval's time is the latest "approved this merge request" system note
-        # of that user. No version for the head (not read, or not there yet): nobody approved it.
+        # approval of an older head. Every push adds a merge request diff version. The newest
+        # version must be the head, and its time is the head's push time: a push of A, then B,
+        # then A again leaves two versions with A's sha, and the older one would let an
+        # approval of B count for A. An approval's time is the latest "approved this merge
+        # request" system note of that user. Newest version not the head (not read, or not
+        # there yet): nobody approved it. Bot accounts (access tokens, the merger) never count.
         a = self.http.call("GET", f"{self.p}/merge_requests/{mr.number}/approvals") or {}
-        current = {x["user"]["username"] for x in a.get("approved_by") or []}
+        current = {x["user"]["username"]: x["user"].get("id") for x in a.get("approved_by") or []}
         if not current:
             return set()
-        pushed = [_ts(v.get("created_at")) for v in self.http.pages(f"{self.p}/merge_requests/{mr.number}/versions")
-                  if v.get("head_commit_sha") == mr.head]
-        pushed = [t for t in pushed if t is not None]
-        if not pushed:
+        versions = [(int(v.get("id") or 0), _ts(v.get("created_at")), v.get("head_commit_sha"))
+                    for v in self.http.pages(f"{self.p}/merge_requests/{mr.number}/versions")]
+        if not versions or any(v[1] is None for v in versions):
+            return set()  # a version without a time could be the newest push: count nobody
+        _id, since, sha = max(versions, key=lambda v: (v[0], v[1]))
+        if sha != mr.head:
             return set()
-        since = min(pushed)
         approved_at: dict = {}
         for n in self.http.pages(f"{self.p}/merge_requests/{mr.number}/notes"):
             if n.get("system") and (n.get("body") or "").strip() == "approved this merge request":
                 who, t = (n.get("author") or {}).get("username", ""), _ts(n.get("created_at"))
                 if t is not None and (who not in approved_at or t > approved_at[who]):
                     approved_at[who] = t
-        return {u for u in current if u in approved_at and approved_at[u] >= since}
+        return {u for u, uid in current.items() if u in approved_at and approved_at[u] > since
+                and self._person(uid)}
+
+    def _person(self, uid) -> bool:
+        # `bot` is in /users/:id (not in the approvals or user search answers); unknown: not a person.
+        if not uid:
+            return False
+        return (self.http.call("GET", f"/users/{int(uid)}", ok404=True) or {}).get("bot") is False
 
     def closing_issues(self, mr):
         # GitLab links `Fixes #N` only for MRs into the default branch; for a feature branch the
@@ -465,11 +502,13 @@ class GitHub(Forge):
 
     def approvers(self, mr):
         # The latest review of each person counts, and only when it approved the current head.
+        # A review by an app or another bot account (`type` not "User") never counts.
         last = {}
         for r in self.http.pages(f"{self.r}/pulls/{mr.number}/reviews"):
             if r.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
                 last[(r.get("user") or {}).get("login", "")] = r
-        return {u for u, r in last.items() if r["state"] == "APPROVED" and r.get("commit_id") == mr.head}
+        return {u for u, r in last.items() if r["state"] == "APPROVED" and r.get("commit_id") == mr.head
+                and (r.get("user") or {}).get("type") == "User"}
 
     def closing_issues(self, mr):
         return fixes_issues(mr.body)
@@ -592,7 +631,24 @@ def github_api(url: str) -> str:
     return f"{u.scheme}://{u.netloc}{u.path}/api/v3"
 
 
+LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def check_url(url: str) -> None:
+    """Refuse a forge URL the token must not travel to: anything but https, except plain http
+    to the loopback (a local test forge). Raises ValueError."""
+    # The messages name the scheme and host only: the URL may carry `user:password@`.
+    u = urllib.parse.urlsplit(url)
+    if not u.hostname:
+        raise ValueError("forge URL has no scheme or host: write it as https://<host>")
+    if u.scheme == "https" or (u.scheme == "http" and u.hostname in LOOPBACK):
+        return
+    raise ValueError(f"forge URL {u.scheme}://{u.hostname} must be https:// "
+                     "(plain http only to 127.0.0.1 or localhost)")
+
+
 def make_forge(kind: str, url: str, project: str, token: str, transport=None, merge_method="merge") -> Forge:
+    check_url(url)
     if kind == "gitlab":
         return GitLab(url.rstrip("/") + "/api/v4", project, token, transport)
     if kind == "github":

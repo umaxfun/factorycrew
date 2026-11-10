@@ -18,13 +18,14 @@ default_branch: main
 # override an AI review.
 humans: [alice, bob]
 
-# The crew's forge accounts (the Kiro Crew instance's forge login). Only a merge request one of
-# them opened is the crew's. Must not share an account with humans.
+# The crew's forge accounts (with Issue Radar EE, each crew's own account). Only a merge request
+# one of them opened is the crew's. Must not share an account with humans.
 crew: [factory-bot]
 
 # The triager's forge accounts. Besides humans, only they may set an issue's first tier label;
 # a tier below the highest from anyone else does not count (the issue stays at the highest
-# tier). Usually the same login as the crew. Must not share an account with humans.
+# tier). With Issue Radar EE its own account, never the crew's. Must not share an account with
+# humans.
 triager: [factory-bot]
 
 # The repository's own checks, by the CI job that runs each. On GitHub a GitHub Actions check
