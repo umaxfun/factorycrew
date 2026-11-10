@@ -14,9 +14,11 @@ default_branch: main
 
 humans: [umaxfun]
 
-# The crew's GitHub App `factorycrew-crew`; it also posts the triager's tier labels.
+# Each role is its own GitHub App, run by Issue Radar EE: the crew `factorycrew-crew`, the
+# triager `factorycrew-triager` (issues only). The merger is `factorycrew-merger`, an EE step
+# that runs factory/factory-merger.py from the default branch.
 crew: ["factorycrew-crew[bot]"]
-triager: ["factorycrew-crew[bot]"]
+triager: ["factorycrew-triager[bot]"]
 
 # The repository's own CI (`.github/workflows/check.yml`, the same steps as ./scripts/check.sh).
 # The e2e (./scripts/test-e2e.sh) has no CI job: it needs a Kiro Crew gateway and a real model.
