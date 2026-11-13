@@ -7,7 +7,8 @@ Usage: python3 factory/docs_gate.py [--root .] [--config factory.yml]
 Docs checked: AGENTS.md, factory.yml `overview`, and every `areas[].doc`. Findings, one line each:
 
   LINK         a relative link or #anchor that does not resolve
-  PATH         a backticked repository path that does not exist
+  PATH         a backticked repository path that does not exist (of a test node id
+               `tests/test_x.py::test_y`, the file before `::`)
   STALE-LINE   `path:N` or `path:N-M` past the end of the file
   PHANTOM-CODE a backticked call `name()` / `Type.name()` that appears in no tracked code file
   UNREACHABLE  an area doc or the overview that no link chain from AGENTS.md reaches
@@ -23,6 +24,10 @@ The baseline lists findings accepted at assessment (debt), one per line, exactly
 A baselined finding is reported but does not fail; a baseline line that no longer occurs is
 reported as fixed so the baseline can shrink. Exit 1 on any finding not in the baseline.
 
+A brace pattern `a/{b,c}.py` is checked as each path it stands for. One over the limits (256
+paths, 64 brace groups, 1024 characters) is checked as written, and an `areas[].paths` glob
+over them is an AREA-MAP finding.
+
 The link and path rules are the repo-readiness skill's docs-check.py, copied here because a
 repository vendors factory/ only. Standard library plus PyYAML (through fcore).
 """
@@ -30,7 +35,6 @@ repository vendors factory/ only. Standard library plus PyYAML (through fcore).
 from __future__ import annotations
 
 import argparse
-import itertools
 import os
 import re
 import subprocess
@@ -54,21 +58,40 @@ def slug(heading: str) -> str:
     return h.replace(" ", "-")
 
 
-EXPAND_MAX = 256  # brace alternatives one path may expand to; past it the path is left as written
+# One `{a,b}` group, innermost first: the group fcore.glob_re expands, so a brace pattern means
+# the same paths in a doc, in the AGENTS.md table and in a factory.yml glob.
+BRACES = re.compile(r"\{([^{}]*)\}")
+MAX_VARIANTS = 256  # the paths one brace pattern may stand for
+MAX_GROUPS = 64     # the `{` in one pattern
+MAX_LENGTH = 1024   # its length; no path is longer. The three keep the work bounded.
+
+
+def brace_variants(p: str) -> list[str] | None:
+    """The paths a brace pattern stands for (`a/{b,c}.py`: `a/b.py`, `a/c.py`), or None when
+    there are more than MAX_VARIANTS of them, or the pattern is longer than MAX_LENGTH or has
+    more than MAX_GROUPS groups.
+
+    Thirty `{a,b}` groups stand for 2**30 paths: the count is checked before a group is
+    expanded, so the work is bounded whatever the text is."""
+    if len(p) > MAX_LENGTH or p.count("{") > MAX_GROUPS:
+        return None
+    done, todo = [], [p]
+    while todo:
+        q = todo.pop()
+        m = BRACES.search(q)
+        if not m:
+            done.append(q)
+            continue
+        alts = m.group(1).split(",")
+        if len(done) + len(todo) + len(alts) > MAX_VARIANTS:
+            return None
+        todo.extend(q[: m.start()] + x + q[m.end():] for x in reversed(alts))
+    return done
 
 
 def expand(p: str) -> list[str]:
-    # Count first: 30 groups of two alternatives would build 2^30 paths.
-    n = 1
-    for g in re.findall(r"\{([^}]*)\}", p):
-        n *= len(g.split(","))
-        if n > EXPAND_MAX:
-            return [p]
-    m = re.search(r"\{([^}]*)\}", p)
-    if not m:
-        return [p]
-    return list(itertools.chain.from_iterable(
-        expand(p[: m.start()] + x + p[m.end():]) for x in m.group(1).split(",")))
+    """The paths `p` stands for, each once; `p` as written when brace_variants gives up on it."""
+    return list(dict.fromkeys(brace_variants(p) or [p]))
 
 
 def headings(path: str) -> set[str]:
@@ -151,7 +174,9 @@ def check_doc(repo: Repo, rel: str, allow: set[str]) -> list[str]:
             if not re.search(rf"\b{re.escape(name)}\b", repo.code_text()):
                 out.append(f"PHANTOM-CODE {rel}: {token}")
             continue
-        ref = token.split("::", 1)[0]  # a test node id (`tests/x.py::test_y`) names its file
+        # A test node id (`tests/test_x.py::test_y[param]`) names a file, then what is in it:
+        # the file is the path to check.
+        ref = token.split("::", 1)[0]
         lines = re.search(r":([0-9]+)(?:-([0-9]+))?$", ref)
         p = re.sub(r":[0-9][0-9,\-]*$", "", ref).rstrip("/")
         if p.startswith("./"):
@@ -285,12 +310,20 @@ def run(root: str, config_text: str, baseline: list[str], allow: set[str] | None
     for d in sorted(seen - {"AGENTS.md"}):
         if os.path.isfile(os.path.join(repo.root, d)) and d not in reach:
             findings.append(f"UNREACHABLE {d}: no link chain from AGENTS.md")
+    over = []
     for a in cfg.areas:
         for g in a["paths"]:
+            if brace_variants(g.lstrip("/")) is None:
+                # glob_re would write out every alternative, however many: such a glob is not
+                # compiled here. It is reported with the area map, so it cannot be baselined:
+                # the other readers of factory.yml would still expand it.
+                over.append(f"AREA-MAP factory.yml: the glob {g[:80]}{'...' if len(g) > 80 else ''} of {a['doc']} is over "
+                            f"the limits ({MAX_LENGTH} characters, {MAX_GROUPS} brace groups, {MAX_VARIANTS} alternatives)")
+                continue
             rx = glob_re(g)
             if not any(rx.match(f) or f.startswith(_norm_path(g) + "/") for f in repo.files):
                 findings.append(f"PHANTOM-AREA {a['doc']}: {g} matches no tracked file")
-    map_findings = []
+    map_findings = over
     agents_path = os.path.join(repo.root, "AGENTS.md")
     if cfg.areas:
         if not os.path.isfile(agents_path):

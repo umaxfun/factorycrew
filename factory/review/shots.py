@@ -28,7 +28,10 @@ import urllib.request
 MAX_IMAGES = 10
 MAX_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 3
-LINK = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)|<img\s[^>]*?\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
+# Bounded like fcore.IMAGE: the description is text any author writes, and an unbounded `[^x]*`
+# is walked again from every `![` or `<img` in it.
+LINK = re.compile(r"!\[[^\]]{0,500}\]\(\s{0,100}<?([^)\s>]+)"
+                  r"|<img\s[^>]{0,500}?\bsrc\s{0,100}=\s{0,100}[\"']([^\"']{1,2000})[\"']", re.I)
 GL_UPLOAD = re.compile(r"/uploads/([0-9a-f]{32})/([^/?#]+)\Z")
 MAGIC = [(b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif")]
 

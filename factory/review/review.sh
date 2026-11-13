@@ -50,6 +50,25 @@ else
   echo "review.sh: not in GitLab CI or GitHub Actions" >&2; exit 2
 fi
 
+REPO="$PWD"
+OUT="$REPO/.review/$SLUG"
+# The checkout is the merge request's: a committed .review/ or kiro-usage/ (a symlink, or a
+# directory holding one) would make the root-run steps below write or copy through it. Start
+# both from nothing; rm -rf removes a symlink itself, never its target.
+rm -rf -- "$REPO/.review" "$REPO/kiro-usage"
+mkdir -p "$OUT"
+# How this job ended, for the comment on the merge request (publish.py): the exit code and the
+# head it is about, written on every way out from here on, the two skips below included. The
+# comment then never says PASS for a review that failed closed, or for another commit, and a
+# skipped review leaves `3 <sha>` here, never a folder the merge request committed. It also
+# undoes the confinement, once set.
+finish() {
+  local code=$?
+  if [[ -n "${CONFINE+x}" ]]; then "${CONFINE[@]}" restore --ws "$WS" >/dev/null 2>&1 || true; fi
+  printf '%s %s\n' "$code" "$HEAD_SHA" > "$OUT/result" 2>/dev/null || true
+}
+trap finish EXIT
+
 # scope.mode own: the tier job found the merge request outside the factory's stream. Skip.
 if [[ "${FACTORY_IN_SCOPE:-1}" == "0" ]]; then
   echo "out of the factory's scope (scope.mode own): $JOB skipped"
@@ -61,17 +80,10 @@ if [[ -n "${FACTORY_CHECKS+x}" && ",${FACTORY_CHECKS}," != *",${JOB},"* ]]; then
   exit 3
 fi
 
-REPO="$PWD"
-OUT="$REPO/.review/$SLUG"
-# The checkout is the merge request's: a committed .review/ or kiro-usage/ (a symlink, or a
-# directory holding one) would make the root-run steps below write or copy through it. Start
-# both from nothing; rm -rf removes a symlink itself, never its target.
-rm -rf -- "$REPO/.review" "$REPO/kiro-usage"
-mkdir -p "$OUT"
 mv /tmp/factory-intent.txt "$OUT/intent.txt"
 [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] || { echo "checkout is $(git rev-parse HEAD), not the head $HEAD_SHA: check out the head commit" >&2; exit 1; }
-git fetch --quiet origin "$TARGET"
-REF="origin/$TARGET"
+git fetch --quiet origin "+refs/heads/$TARGET:refs/remotes/origin/$TARGET"   # the branch, never a tag of that name
+REF="refs/remotes/origin/$TARGET"   # the full name: no tag `origin/<branch>` stands in
 BASE="$(git merge-base "$REF" HEAD)"
 # The merge request's own .gitattributes must not hide its code (`-diff`, a textconv or an external
 # diff driver): force a plain text diff of every file.
@@ -85,16 +97,19 @@ python3 -I -c 'import sys;p=sys.argv[1];b=open(p,"rb").read();open(p,"w",encodin
 # applies and says in inputs.txt when the head is not that branch's tip.
 SOURCE_REF=""
 if [[ -n "$SOURCE" && "$SOURCE" != "$TARGET" ]] && git fetch --quiet origin "+refs/heads/$SOURCE:refs/remotes/origin/$SOURCE"; then
-  SOURCE_REF="origin/$SOURCE"
+  SOURCE_REF="refs/remotes/origin/$SOURCE"
 fi
 
 # The agent runs as a separate user on copies of the checkout and of the inputs (confine.py):
 # root runs the confinement, directly (GitLab's docker runner) or through passwordless sudo
 # (GitHub Actions). Without either the review cannot be confined, so it does not run.
 if [[ $EUID -eq 0 ]]; then
-  AS_ROOT=()
+  AS_ROOT=(); ENV_STDIN=()
 elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
-  AS_ROOT=(sudo -n -E)
+  # No -E: a sudo resets the environment, and some ignore the flag (sudo-rs: "preserving the
+  # entire environment is not supported"). Each confine.py step gets the few variables it
+  # needs on its stdin instead (confine_step below), so nothing depends on what sudo keeps.
+  AS_ROOT=(sudo -n); ENV_STDIN=(--env-stdin)
 else
   echo "cannot run the review agent as a separate user (not root, no passwordless sudo): failing closed"; exit 1
 fi
@@ -122,17 +137,29 @@ fi
 # check fails, the review fails closed. redact.py below stays as the second layer.
 KIRO_BIN="$(dirname "$(readlink -f "$(command -v kiro-cli)")")"
 export FACTORY_COMMIT="$HEAD_SHA"
-CONFINE=("${AS_ROOT[@]}" python3 "$HERE/confine.py")
-trap '"${CONFINE[@]}" restore --ws "$WS" >/dev/null 2>&1 || true' EXIT
-"${CONFINE[@]}" setup --ws "$WS" --repo "$REPO" --inputs "$OUT" --kiro-bin "$KIRO_BIN" \
+CONFINE=("${AS_ROOT[@]}" python3 "$HERE/confine.py")   # from here on `finish` restores
+# The job's variables a step needs, for its stdin: an allow-list per step (confine.py,
+# `step_env`), never the whole environment, and never in a command line. Root started by the
+# job itself inherits them and reads nothing here.
+step_vars() { python3 "$HERE/confine.py" export --for "$1"; }
+confine_step() {
+  local step="$1"; shift
+  if [[ ${#AS_ROOT[@]} -eq 0 ]]; then "${CONFINE[@]}" "$step" "$@"; return; fi
+  step_vars "$step" | "${CONFINE[@]}" "$step" --env-stdin "$@"
+}
+confine_step setup --ws "$WS" --repo "$REPO" --inputs "$OUT" --kiro-bin "$KIRO_BIN" \
   || { echo "could not confine the review agent: failing closed"; exit 1; }
-"${CONFINE[@]}" check --ws "$WS" || { echo "the review agent's confinement does not hold: failing closed"; exit 1; }
+confine_step check --ws "$WS" || { echo "the review agent's confinement does not hold: failing closed"; exit 1; }
+# The key goes to `run` only, the same way.
+run_agent() {
+  bash "$HERE/kiro-run.sh" review "$OUT/raw.md" timeout "${REVIEW_TIMEOUT:-1500}" \
+    "${CONFINE[@]}" run --ws "$WS" --with-key "${ENV_STDIN[@]}" -- \
+    kiro-cli chat --no-interactive --agent-engine v2 --agent factory-review \
+    --trust-tools=read,grep,glob,subagent \
+    --model "$MODEL" "$(cat "$OUT/prompt.md")"
+}
 set +e
-bash "$HERE/kiro-run.sh" review "$OUT/raw.md" timeout "${REVIEW_TIMEOUT:-1500}" \
-  "${CONFINE[@]}" run --ws "$WS" --with-key -- \
-  kiro-cli chat --no-interactive --agent-engine v2 --agent factory-review \
-  --trust-tools=read,grep,glob,subagent \
-  --model "$MODEL" "$(cat "$OUT/prompt.md")"
+if [[ ${#AS_ROOT[@]} -eq 0 ]]; then run_agent; else run_agent < <(step_vars run); fi
 rc=$?
 echo "confine: kiro-cli ran as user factory-review with agent factory-review (exit $rc)"
 python3 "$HERE/redact.py" "$OUT" "${CI_PROJECT_DIR:-${GITHUB_WORKSPACE:-$REPO}}/kiro-usage"

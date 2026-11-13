@@ -1,10 +1,19 @@
 """Confine the review agent: a separate user, its own copy of the inputs, no CI credentials.
 
-Usage (as root; on GitHub Actions review.sh runs it through `sudo -n -E`):
-  confine.py setup   --ws DIR --repo CHECKOUT --inputs DIR --kiro-bin DIR
-  confine.py check   --ws DIR
-  confine.py run     --ws DIR [--with-key] -- COMMAND...
+Usage (as root; on GitHub Actions review.sh runs it through `sudo -n`):
+  confine.py setup   --ws DIR --repo CHECKOUT --inputs DIR --kiro-bin DIR [--env-stdin]
+  confine.py check   --ws DIR [--env-stdin]
+  confine.py run     --ws DIR [--with-key] [--env-stdin] -- COMMAND...
   confine.py restore --ws DIR
+  confine.py export  --for setup|check|run      (as the job's user, piped into the step)
+
+Each step needs a few of the job's variables: `setup` the job's directories to lock, `check`
+the credentials to look for, `run` the key for kiro-cli. Root started by the job itself
+(GitLab's docker runner) inherits them. Through sudo nothing is assumed to be inherited: a
+sudo resets the environment, and some (sudo-rs) ignore `-E`. So `export` prints the step's
+variables, an allow-list (`step_env`), as one JSON object, review.sh pipes it into the step,
+and `--env-stdin` makes the step read them there and nowhere else. The values never go into a
+command line. `export` prints credentials: only ever pipe it, never let it reach a log.
 
 The diff, the issues and every file of the checkout are untrusted, and an injected prompt can
 steer the agent's read tool anywhere the agent's process can read. kiro-cli's own permission
@@ -72,8 +81,9 @@ class ConfineError(Exception):
 
 
 # The tools the agent gets, by their kiro-cli 2.x (agent engine v2) names: review.sh pins that
-# engine, the one whose stream-json reports credits. No shell, no write, no web, no MCP.
-# Read-only tools only: `code` can rewrite files (pattern_rewrite), its own profile included.
+# engine, the one whose stream-json reports credits. No shell, no write, no web, no MCP, and no
+# `code`: that tool can also edit files, and a diff that talks the agent into using it could
+# rewrite the agent's own profile.
 TOOLS = ["read", "grep", "glob", "subagent"]
 
 
@@ -113,10 +123,43 @@ def agent_env(env: dict[str, str], ws: str, with_key: bool) -> dict[str, str]:
     return out
 
 
+# The variables that name the job's own directories (`lock_targets`).
+LOCK_VARS = ("CI_PROJECT_DIR", "GITHUB_WORKSPACE", "RUNNER_TEMP", "GITHUB_EVENT_PATH")
+MAX_ENV = 1024 * 1024
+
+
+def step_env(step: str, env: dict[str, str]) -> dict[str, str]:
+    """The variables of the job a step may get: an allow-list, never the whole environment.
+
+    setup: the directories to lock. check: the credentials it looks for (it has to know a
+    value to prove the agent cannot read it). run: what kiro-cli reads, the KIRO_* variables
+    with the key. `export` applies it to the job's environment and `--env-stdin` again to what
+    arrives, so a name outside the list is dropped on both sides.
+    """
+    if step == "setup":
+        return {k: env[k] for k in LOCK_VARS if env.get(k)}
+    if step == "check":
+        return secrets(env)
+    if step == "run":
+        return {k: v for k, v in env.items() if k.startswith("KIRO_")}
+    return {}
+
+
+def parse_env(text: str, step: str) -> dict[str, str]:
+    """What `export --for STEP` wrote, as the step's variables. Anything else is an error."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+        raise ConfineError("--env-stdin: stdin is not the JSON object `export` writes")
+    return step_env(step, data)
+
+
 def lock_targets(env: dict[str, str], invoker_home: str | None) -> list[str]:
     """The job's own directories the review user must not enter."""
     cands = []
-    for k in ("CI_PROJECT_DIR", "GITHUB_WORKSPACE", "RUNNER_TEMP"):
+    for k in LOCK_VARS[:3]:
         if env.get(k):
             cands.append(env[k])
     if env.get("CI_PROJECT_DIR"):
@@ -217,7 +260,7 @@ def _read(p: str) -> bytes | None:
 def _need_root() -> None:
     if os.geteuid() != 0:
         raise ConfineError("needs root (GitLab's docker runner job is root; on GitHub Actions "
-                           "review.sh calls this through sudo -n -E)")
+                           "review.sh calls this through sudo -n)")
 
 
 def _user() -> pwd.struct_passwd:
@@ -262,7 +305,7 @@ def copy_checkout(repo: str, dest: str, idx: str) -> None:
             os.remove(idx)
 
 
-def setup(ws: str, repo: str, inputs: str, kiro_bin: str) -> None:
+def setup(ws: str, repo: str, inputs: str, kiro_bin: str, env: dict[str, str]) -> None:
     _need_root()
     try:
         pwd.getpwnam(USER)
@@ -311,7 +354,7 @@ def setup(ws: str, repo: str, inputs: str, kiro_bin: str) -> None:
     invoker = os.environ.get("SUDO_USER")
     invoker_home = pwd.getpwnam(invoker).pw_dir if invoker else os.path.expanduser("~")
     state = {}
-    for t in lock_targets(dict(os.environ), invoker_home):
+    for t in lock_targets(env, invoker_home):
         if os.path.isdir(t) and not os.path.islink(t):
             mode = stat.S_IMODE(os.stat(t).st_mode)
             state[t] = mode
@@ -372,10 +415,10 @@ def _user_view(ws: str, ndl: dict[str, list[str]]) -> dict:
             "uid": os.getuid()}
 
 
-def check(ws: str) -> None:
+def check(ws: str, env: dict[str, str]) -> None:
     _need_root()
     u = _user()
-    ndl = needles(dict(os.environ))
+    ndl = needles(env)
     if not ndl:
         raise ConfineError("no secret-looking CI variable in the environment to check against")
     # A probe from an execute-only binary, run as the user: its environ must be unreadable.
@@ -423,10 +466,10 @@ def check(ws: str) -> None:
           f"or any process command line")
 
 
-def run(ws: str, with_key: bool, cmd: list[str]) -> None:
+def run(ws: str, with_key: bool, cmd: list[str], env: dict[str, str]) -> None:
     _need_root()
     u = _user()
-    env = agent_env(dict(os.environ), ws, with_key)
+    env = agent_env(env, ws, with_key)
     # The workspace itself is the working directory: kiro-cli's subagents read without asking
     # only under it, and it holds no README.md, AGENTS.md or .kiro of the merge request's own.
     os.chdir(ws)
@@ -446,26 +489,46 @@ def restore(ws: str) -> None:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="confine.py")
-    ap.add_argument("step", choices=["setup", "check", "run", "restore"])
-    ap.add_argument("--ws", required=True)
+    ap.add_argument("step", choices=["setup", "check", "run", "restore", "export"])
+    ap.add_argument("--ws")
     ap.add_argument("--repo")
     ap.add_argument("--inputs")
     ap.add_argument("--kiro-bin")
     ap.add_argument("--with-key", action="store_true")
+    ap.add_argument("--env-stdin", action="store_true")
+    ap.add_argument("--for", dest="for_step", choices=["setup", "check", "run"])
     args = argv[1:]
     cmd = args[args.index("--") + 1:] if "--" in args else []
     a = ap.parse_args(args[:args.index("--")] if "--" in args else args)
     try:
+        if a.step == "export":
+            if not a.for_step:
+                raise ConfineError("export needs --for setup, check or run")
+            sys.stdout.write(json.dumps(step_env(a.for_step, dict(os.environ))))
+            return 0
+        if not a.ws:
+            raise ConfineError(f"{a.step} needs --ws")
+        env = dict(os.environ)
+        if a.env_stdin:
+            # The job's variables come from stdin and from nowhere else; whatever sudo let
+            # through is not used. Stdin is then /dev/null, also for the command `run` starts.
+            text = sys.stdin.read(MAX_ENV + 1)
+            if len(text) > MAX_ENV:
+                raise ConfineError("--env-stdin: more than 1 MiB on stdin")
+            env = parse_env(text, a.step)
+            null = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(null, 0)
+            os.close(null)
         if a.step == "setup":
             if not (a.repo and a.inputs and a.kiro_bin):
                 raise ConfineError("setup needs --repo, --inputs and --kiro-bin")
-            setup(os.path.abspath(a.ws), a.repo, a.inputs, a.kiro_bin)
+            setup(os.path.abspath(a.ws), a.repo, a.inputs, a.kiro_bin, env)
         elif a.step == "check":
-            check(os.path.abspath(a.ws))
+            check(os.path.abspath(a.ws), env)
         elif a.step == "run":
             if not cmd:
                 raise ConfineError("run needs a command after --")
-            run(os.path.abspath(a.ws), a.with_key, cmd)
+            run(os.path.abspath(a.ws), a.with_key, cmd, env)
         else:
             restore(os.path.abspath(a.ws))
     except (ConfineError, OSError, subprocess.CalledProcessError) as e:

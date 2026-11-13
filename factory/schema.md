@@ -47,7 +47,7 @@ list can:
   [model=<model>]: <reason>`, any class (`false-positive`, `not-applicable`, `pre-existing #N`,
   `infra-failure <https job URL>`, `deferred #N` with N an open issue of this project (a defect tracked elsewhere is
   `owner-decision` with its link in the reason), `owner-decision`), a
-  reason of 20-500 characters. The merge request's author, when it is the crew (an account in
+  reason of 20-500 characters that is more than one `<placeholder>`. The merge request's author, when it is the crew (an account in
   `crew`; without `crew`, any author outside `humans` except on an adopted merge request), may post only
   `false-positive`, and the merger ignores it when a blocking finding of that review is a
   security, crash, data-loss, corruption or guard-removal one, or a product-shape,
