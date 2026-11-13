@@ -4,9 +4,14 @@
 # claude-opus-5-5 / gpt-5-6-sol with their job slugs (lowercase, non-alphanumerics -> "-").
 #
 # `pull_request`, never `pull_request_target`: the jobs get a read-only token and no secrets on
-# forks. Everything that judges the pull request (factory.yml and the factory/ scripts and
-# prompt) is read from the TARGET branch, so a pull request cannot change its own gates; only
-# the pull request that adds the factory uses its own copy (bootstrap). One exception:
+# forks. Nothing that judges the pull request comes from the pull request itself, so it cannot
+# change its own gates: the factory/ scripts and prompt are read from the DEFAULT branch, also for
+# a pull request into a feature branch, which the crew pushes to; the rules are the default
+# branch's factory.yml, made stricter by the target branch's (DESIGN.md, "Feature-branch rules
+# can only tighten"). Only the pull request that adds the factory uses its own copy (bootstrap),
+# and only when the repository's owner or a member of its organization opened it: the review
+# jobs hold KIRO_API_KEY, and that copy is code the author wrote. From anyone else the jobs fail.
+# One exception:
 # factory-docs checks the docs against the pull request's own factory.yml (`areas`,
 # `docs_allow`), because they describe the docs it changes. .github/workflows/**,
 # factory.yml and factory/** are gate paths: a person approves a change to them.
@@ -21,6 +26,26 @@
 # workflows, which run the pull request's code, never do. Limit the environment's deployment
 # branches if pull requests from branches must not reach it. Pin the actions below to commit
 # SHAs in your repository.
+#
+# Runner image: every job names its image (`ubuntu-24.04`), never `ubuntu-latest`. GitHub moves
+# `ubuntu-latest` to a new Ubuntu release on its own schedule, and a new release can change what
+# the review depends on (its sudo, its Python, the tools on the image) on a day nobody chose.
+# To move: change `runs-on` in ALL jobs in one pull request (a gate path, so a person approves
+# it) and read the two ai-review jobs' logs on that pull request: "confine: check passed" must
+# be there and no line from sudo. The review itself does not rely on what sudo keeps of the
+# environment (factory/review/review.sh passes each step's variables explicitly).
+#
+# Each review shows on the pull request: review-comment-<model> posts one comment per review
+# model and edits it on later runs (factory/review/publish.py), and writes the whole review to
+# its job summary. Those two jobs are the only ones that may write (`pull-requests: write`), so
+# they hold no KIRO_API_KEY (no `environment`) and run nothing of the pull request: their only
+# checkout is the default branch's factory/, and the review reaches them as an artifact they
+# read as data. Before the default branch has publish.py they post nothing. They decide
+# nothing: the merger does not count a failed or cancelled review-comment job of a configured
+# review model (an edit of the title cancels a running one), and waits while one is running.
+# A pull request from a fork gets no comment: its token cannot write. As for every job here, a pull request from a branch of this repository runs the
+# workflow file it carries: it can give itself `pull-requests: write` and comment as
+# github-actions[bot], this comment included. The comment informs; the checks decide.
 name: factory
 
 on:
@@ -35,37 +60,45 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Who opened the pull request, as GitHub reports it: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, ...
+  FACTORY_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
   FACTORY_FROM_TARGET: |
     set -euo pipefail
-    git fetch --quiet origin "$GITHUB_BASE_REF" "${{ github.event.repository.default_branch }}"
+    # By full refspec: asked for `main`, git fetches a TAG `main` when there is one and leaves
+    # the branch as the checkout had it, or absent, which would look like "no factory yet".
+    git fetch --quiet origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF" \
+      "+refs/heads/${{ github.event.repository.default_branch }}:refs/remotes/origin/${{ github.event.repository.default_branch }}"
     FACTORY_DIR="$(mktemp -d)"
-    T="origin/$GITHUB_BASE_REF"
-    D="origin/${{ github.event.repository.default_branch }}"
+    # The full ref names: a tag or a branch named `origin/<branch>` must not stand in.
+    D="refs/remotes/origin/${{ github.event.repository.default_branch }}"
+    T="refs/remotes/origin/$GITHUB_BASE_REF"
+    # The scripts always from the default branch: a feature branch is pushed by the crew.
     if git cat-file -e "$D:factory/fcore.py" 2>/dev/null && git cat-file -e "$D:factory.yml" 2>/dev/null; then
-      # The scripts always come from the default branch: a feature branch is pushed to without a
-      # person's review, and these jobs hold KIRO_API_KEY. The rules come from the target, which
-      # the tier job merges with the default branch's (it may only make them stricter).
       git archive "$D" factory | tar -x -C "$FACTORY_DIR"
-      git show "$T:factory.yml" > "$FACTORY_DIR/factory.yml" 2>/dev/null || git show "$D:factory.yml" > "$FACTORY_DIR/factory.yml"
-      echo "factory: scripts from $D, rules from $T"
+      git show "$T:factory.yml" > "$FACTORY_DIR/factory.yml" 2>/dev/null \
+        || git show "$D:factory.yml" > "$FACTORY_DIR/factory.yml"
+      echo "factory: scripts from $D, rules from $D made stricter by $T"
     else
-      # Bootstrap runs this pull request's own factory code, in jobs that hold KIRO_API_KEY:
-      # only for the repository's owner or an organisation member, never for anyone else.
-      case "${{ github.event.pull_request.author_association }}" in
+      # The pull request's own factory/ is about to run, in jobs that hold KIRO_API_KEY.
+      case "${FACTORY_AUTHOR_ASSOCIATION:-}" in
         OWNER|MEMBER) ;;
-        *) echo "factory: not on $D yet; only the repository's owner may bootstrap it"; exit 1 ;;
+        *) echo "::error::factory: $D has no factory yet, and this pull request's own copy runs" \
+             "only when the repository's owner or a member of its organization opened it" \
+             "(author_association: '${FACTORY_AUTHOR_ASSOCIATION:-}'). Ask one of them to open" \
+             "the pull request that adds the factory."
+           exit 1 ;;
       esac
       echo "factory: not on $D yet, using this pull request's copy (bootstrap)"
       cp -r factory factory.yml "$FACTORY_DIR/"
     fi
-    git show "origin/${{ github.event.repository.default_branch }}:factory.yml" > "$FACTORY_DIR/default-factory.yml" 2>/dev/null \
+    git show "$D:factory.yml" > "$FACTORY_DIR/default-factory.yml" 2>/dev/null \
       || cp "$FACTORY_DIR/factory.yml" "$FACTORY_DIR/default-factory.yml"
     echo "FACTORY_DIR=$FACTORY_DIR" >> "$GITHUB_ENV"
 
 jobs:
   factory-tier:
     name: factory-tier
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: read
@@ -92,7 +125,7 @@ jobs:
     needs: factory-tier
     # scope.mode own: a pull request outside the factory's stream skips (GitLab: exit 3).
     if: needs.factory-tier.outputs.in_scope != '0'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,7 +142,7 @@ jobs:
     # outside the factory's scope (scope.mode own: factory-tier lists no checks); the merger
     # accepts the skip only where factory.yml allows it.
     if: contains(needs.factory-tier.outputs.checks, ',ai-review-claude-opus-5-5,')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: factory    # KIRO_API_KEY is an environment secret of `factory` (see the header)
     permissions:
       contents: read
@@ -129,15 +162,6 @@ jobs:
           FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash "$FACTORY_DIR/factory/review/review.sh" "claude-opus-5.5"
-      # The whole review in the job summary: it needs no write right. The comment on the pull
-      # request comes from review-comment-claude-opus-5-5 below, which holds the write right
-      # and not KIRO_API_KEY.
-      - if: always()
-        run: |
-          # A default branch from before publish.py has none: the review's own verdict stands.
-          if [ -f "$FACTORY_DIR/factory/review/publish.py" ]; then
-            python3 -I "$FACTORY_DIR/factory/review/publish.py" summary ".review/claude-opus-5-5/review.md" "claude-opus-5.5" "${{ github.event.pull_request.head.sha }}"
-          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -145,14 +169,14 @@ jobs:
           path: |
             .review/
             kiro-usage/
-          include-hidden-files: true   # .review/ starts with a dot; v4 leaves such paths out
+          include-hidden-files: true   # .review/ is a hidden folder: left out without a word otherwise
           retention-days: 7
 
   ai-review-b:
     name: ai-review-gpt-5-6-sol
     needs: factory-tier
     if: contains(needs.factory-tier.outputs.checks, ',ai-review-gpt-5-6-sol,')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: factory    # KIRO_API_KEY is an environment secret of `factory` (see the header)
     permissions:
       contents: read
@@ -172,15 +196,6 @@ jobs:
           FACTORY_TIER: ${{ needs.factory-tier.outputs.tier }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash "$FACTORY_DIR/factory/review/review.sh" "gpt-5.6-sol"
-      # The whole review in the job summary: it needs no write right. The comment on the pull
-      # request comes from review-comment-gpt-5-6-sol below, which holds the write right
-      # and not KIRO_API_KEY.
-      - if: always()
-        run: |
-          # A default branch from before publish.py has none: the review's own verdict stands.
-          if [ -f "$FACTORY_DIR/factory/review/publish.py" ]; then
-            python3 -I "$FACTORY_DIR/factory/review/publish.py" summary ".review/gpt-5-6-sol/review.md" "gpt-5.6-sol" "${{ github.event.pull_request.head.sha }}"
-          fi
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -188,75 +203,80 @@ jobs:
           path: |
             .review/
             kiro-usage/
-          include-hidden-files: true   # .review/ starts with a dot; v4 leaves such paths out
+          include-hidden-files: true   # .review/ is a hidden folder: left out without a word otherwise
           retention-days: 7
 
-  # Shows the review on the pull request: one comment per model, edited for each new head. It
-  # holds `pull-requests: write` and no KIRO_API_KEY, runs only the default branch's
-  # publish.py on the review's artifact, and nothing from the pull request. Not for forks: their
-  # token cannot write. It never fails the pull request (publish.py exits 0 on every error).
   review-comment-a:
     name: review-comment-claude-opus-5-5
-    needs: [factory-tier, ai-review-a]
-    if: >-
-      always() && needs.ai-review-a.result != 'skipped' && needs.ai-review-a.result != 'cancelled'
-      && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    needs: ai-review-a
+    # After the review whatever its verdict; not when the review itself was skipped.
+    if: ${{ !cancelled() && needs.ai-review-a.result != 'skipped' }}
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read          # publish.py, from the default branch
+      pull-requests: write    # the comment
     timeout-minutes: 5
     steps:
+      # No step fails the job: a comment that could not be posted is no red check for a person
+      # to chase. The merger does not count this job either way.
       - uses: actions/checkout@v4
+        continue-on-error: true
         with:
-          ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: factory/review/publish.py
-          sparse-checkout-cone-mode: false
+          ref: refs/heads/${{ github.event.repository.default_branch }}   # the branch by its full name; never the pull request's code
+          sparse-checkout: factory
           persist-credentials: false
       - uses: actions/download-artifact@v4
-        continue-on-error: true   # no artifact: publish.py says the review reached no verdict
+        continue-on-error: true   # a review that failed before it wrote anything has no artifact
         with:
           name: review-claude-opus-5-5
-          path: review-artifact
-      - env:
+          path: ${{ runner.temp }}/review   # outside the checkout: the artifact is data
+      - continue-on-error: true
+        timeout-minutes: 3
+        env:
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FACTORY_PR_NUMBER: ${{ github.event.pull_request.number }}
+          FACTORY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FACTORY_REVIEW_RESULT: ${{ needs.ai-review-a.result }}   # PASS only when GitHub says so
         run: |
-          if [ ! -f factory/review/publish.py ]; then echo "factory: publish.py is not on the default branch yet"; exit 0; fi
-          python3 -I factory/review/publish.py comment "review-artifact/.review/claude-opus-5-5/review.md" "claude-opus-5.5" "${{ github.event.pull_request.head.sha }}"
+          if [ ! -f factory/review/publish.py ]; then
+            echo "::notice::factory: the default branch has no factory/review/publish.py yet: no comment"
+            exit 0
+          fi
+          python3 -I factory/review/publish.py --model "claude-opus-5.5" --dir "$RUNNER_TEMP/review" --summary "$GITHUB_STEP_SUMMARY"
 
-  # Shows the review on the pull request: one comment per model, edited for each new head. It
-  # holds `pull-requests: write` and no KIRO_API_KEY, runs only the default branch's
-  # publish.py on the review's artifact, and nothing from the pull request. Not for forks: their
-  # token cannot write. It never fails the pull request (publish.py exits 0 on every error).
   review-comment-b:
     name: review-comment-gpt-5-6-sol
-    needs: [factory-tier, ai-review-b]
-    if: >-
-      always() && needs.ai-review-b.result != 'skipped' && needs.ai-review-b.result != 'cancelled'
-      && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    needs: ai-review-b
+    if: ${{ !cancelled() && needs.ai-review-b.result != 'skipped' }}
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read          # publish.py, from the default branch
+      pull-requests: write    # the comment
     timeout-minutes: 5
     steps:
+      # No step fails the job: a comment that could not be posted is no red check for a person
+      # to chase. The merger does not count this job either way.
       - uses: actions/checkout@v4
+        continue-on-error: true
         with:
-          ref: ${{ github.event.repository.default_branch }}
-          sparse-checkout: factory/review/publish.py
-          sparse-checkout-cone-mode: false
+          ref: refs/heads/${{ github.event.repository.default_branch }}   # the branch by its full name; never the pull request's code
+          sparse-checkout: factory
           persist-credentials: false
       - uses: actions/download-artifact@v4
-        continue-on-error: true   # no artifact: publish.py says the review reached no verdict
+        continue-on-error: true   # a review that failed before it wrote anything has no artifact
         with:
           name: review-gpt-5-6-sol
-          path: review-artifact
-      - env:
+          path: ${{ runner.temp }}/review   # outside the checkout: the artifact is data
+      - continue-on-error: true
+        timeout-minutes: 3
+        env:
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FACTORY_PR_NUMBER: ${{ github.event.pull_request.number }}
+          FACTORY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FACTORY_REVIEW_RESULT: ${{ needs.ai-review-b.result }}   # PASS only when GitHub says so
         run: |
-          if [ ! -f factory/review/publish.py ]; then echo "factory: publish.py is not on the default branch yet"; exit 0; fi
-          python3 -I factory/review/publish.py comment "review-artifact/.review/gpt-5-6-sol/review.md" "gpt-5.6-sol" "${{ github.event.pull_request.head.sha }}"
+          if [ ! -f factory/review/publish.py ]; then
+            echo "::notice::factory: the default branch has no factory/review/publish.py yet: no comment"
+            exit 0
+          fi
+          python3 -I factory/review/publish.py --model "gpt-5.6-sol" --dir "$RUNNER_TEMP/review" --summary "$GITHUB_STEP_SUMMARY"

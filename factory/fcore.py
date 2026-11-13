@@ -52,6 +52,11 @@ def review_job(model: str) -> str:
     return "ai-review-" + re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")
 
 
+def comment_job(model: str) -> str:
+    """CI job name of the job that shows that review on the merge request: review-comment-<slug>."""
+    return "review-comment-" + review_job(model)[len("ai-review-"):]
+
+
 class CheckSpec(NamedTuple):
     """One concrete check the merger looks for. `review` marks an AI review job."""
     name: str           # the factory.yml name it came from (ai-review expands to two)
@@ -400,6 +405,11 @@ class Forge:
     def issue(self, number: int) -> Issue: raise NotImplementedError
     def issue_comments(self, issue: int) -> list[Comment]: raise NotImplementedError  # oldest first
     def merge(self, mr: MR) -> None: raise NotImplementedError             # at mr.head only
+    # For the merger's report only; neither decides anything. The web address of the merge
+    # request, "" unknown; and what the forge says of a merge just made:
+    # {"merge_commit": sha|None, "by": login|None, "at": ISO time|None}.
+    def mr_url(self, mr: MR) -> str: return ""
+    def merged_info(self, mr: MR) -> dict: return {}
     def rebase(self, mr: MR) -> None: raise NotImplementedError
     def rebase_in_progress(self, mr: MR) -> bool: raise NotImplementedError
     # A new pipeline on an up-to-date head for an adopted merge request: update the branch when
@@ -479,10 +489,14 @@ def issue_tier(events: list[dict], cfg: Config) -> tuple[str, str]:
 TRIAGE_MARK = "<!-- factory-triage -->"
 # The triager's citation of the documented behaviour a T1 (a fix) restores, one line of its
 # comment: Spec: `docs/areas/x.md:42` "the line, quoted". No such line: the issue is not a fix.
-# Line patterns use [ \t], never \s: \s crosses newlines, and on a body of blank lines every
-# line start would rescan the rest of the body (quadratic; minutes on a forge-sized body).
-SPEC_LINE = re.compile(r'(?m)^[ \t]*Spec:[ \t]*`?([A-Za-z0-9_./@+-]+):(\d+)`?[ \t]*[-\u2014:]?[ \t]*'
-                       r'["\u201c](.+?)["\u201d][ \t]*\r?$')
+# These patterns run over text anyone can write (a description, a comment), so every one is
+# linear in its input: a space, a tab or a non-breaking space (`_W`), never `\s`, between the
+# parts of a line (under `(?m)` a `\s*` after `^` walks every blank line that follows, at each
+# of them), no two neighbouring runs that can share the same spaces, and no tail that can fail
+# after a part that can end in many places. `\r?$` keeps a line that ends in CRLF.
+_W = r"[ \t\xa0]"
+SPEC_LINE = re.compile(r'(?m)^' + _W + r'*Spec:' + _W + r'*`?([A-Za-z0-9_./@+-]+):(\d+)`?' + _W
+                       + r'*(?:[-\u2014:]' + _W + r'*)?["\u201c]([^\r\n]+?)["\u201d]' + _W + r'*\r?$')
 
 
 class Citation(NamedTuple):
@@ -512,12 +526,34 @@ def triage_citation(comments: list[Comment], cfg: Config) -> Citation | None:
     return None
 
 
-FIXES = re.compile(r"(?im)^[ \t]*(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)[ \t]*:?[ \t]+#(\d+)[ \t]*\.?[ \t]*\r?$")
+# A closing line: the keyword at the start of a line, then the issue, then whatever the author
+# went on with (`Closes #35. Step 1 of the design: ...`, as a crew writes it). FIXES finds the
+# line and gives what follows the keyword; FIXES_REF reads the references at its start.
+FIXES = re.compile(r"(?im)^" + _W + r"*(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)(?:" + _W + r"*:)?" + _W
+                   + r"+(#\d[^\r\n]*)")
+# One reference, after the first one behind `,`, `&` or `and`. `#12abc` and `#1#2` are none.
+FIXES_REF = re.compile(r"(?i)" + _W + r"*(?:(?:,|&|and\b)" + _W + r"*)?#(\d+)(?![\w#])")
 
 
 def fixes_issues(body: str) -> list[int]:
-    """Issue numbers from `Fixes #N` lines (one per line), the convention for every MR."""
-    return sorted({int(n) for n in FIXES.findall(body or "")})
+    """Issue numbers from the closing lines of a description, the convention for every MR.
+
+    A closing line starts with `Fixes`, `Closes` or `Resolves` (any form, an optional colon)
+    and names its issues right after it: `Fixes #12`, `Closes #35. Step 1 of ...`,
+    `Resolves #3, #4 and #5: ...`. Text after the references is not read. The keyword anywhere
+    else in a line (`this closes #3`), a quoted line or a list item is no closing line.
+    """
+    found: set[int] = set()
+    for tail in FIXES.findall(body or ""):
+        pos, first = 0, True
+        while True:
+            m = FIXES_REF.match(tail, pos)
+            # The first reference follows the keyword directly, with no separator before it.
+            if not m or (first and m.start(1) != 1):
+                break
+            found.add(int(m.group(1)))
+            pos, first = m.end(), False
+    return sorted(found)
 
 
 def mr_tier(forge: Forge, mr: MR, cfg: Config) -> tuple[str, str]:
@@ -646,12 +682,22 @@ def is_adopted(forge: Forge, mr: MR, cfg: Config) -> bool:
 
 WAIT = "wait"
 STALE = "stale"     # an adopted merge request's checks ran before its adoption: not yet judged
+
+
+class NeedsApproval(str):
+    """A refusal of `check_mr` that a person's approval alone lifts: every other rule held.
+    The text is the refusal as before; the type is what the merger's report reads."""
+
+
 # `/factory override ai-review <sha> <class>[ #N | <url>][ model=<model>]: <reason>`. The full
 # 40-character head sha, compared for equality: a short prefix could be matched by a later commit
 # crafted to share it, and the override would then clear a review nobody saw.
 OVERRIDE = re.compile(
-    r"(?im)^[ \t]*/factory[ \t]+override[ \t]+ai-review[ \t]+([0-9a-f]{40})[ \t]+([a-z-]+)"
-    r"(?:[ \t]+(#\d+|https://\S+))?(?:[ \t]+model=(\S+?))?[ \t]*:[ \t]*(\S.*?)[ \t]*\r?$")
+    r"(?im)^" + _W + r"*/factory" + _W + r"+override" + _W + r"+ai-review" + _W + r"+([0-9a-f]{40})" + _W
+    + r"+([a-z-]+)(?:" + _W + r"+(#\d+|https://\S+))?(?:" + _W + r"+model=(\S+?))?" + _W + r"*:" + _W
+    # The reason runs to the end of the line and cannot fail there: the URL and the model can
+    # end at each of their colons, and a tail that could fail would be tried from every one.
+    + r"*(\S[^\n]*)$")
 # The class names why a block is released, and what it must carry: #N an issue, <url> a job.
 OVERRIDE_CLASSES = {"false-positive": "", "not-applicable": "", "owner-decision": "",
                     "pre-existing": "#", "deferred": "#", "infra-failure": "url"}
@@ -663,8 +709,9 @@ REASON_MIN, REASON_MAX = 20, 500
 CREW_CLASS = "false-positive"
 CREW_NEVER = frozenset({"security", "crash", "data-loss", "corruption", "guard-removal",
                         "product-shape", "design-one-way-door", "evidence-gap"})
-# Bounded: an unclosed `![` or `<img` must not make every later one rescan to the end.
-IMAGE = re.compile(r"!\[[^\]]{0,2000}\]\([ \t]*[^)\s]+|<img\s[^>]{0,2000}src\s*=", re.I)
+# Bounded, so that a body of `![` or `<img ` repeated costs its length times the bound and not
+# its length squared. An image whose alt text or tag is longer than the bound does not count.
+IMAGE = re.compile(r"!\[[^\]]{0,500}\]\([ \t]{0,100}[^)\s]|<img\s[^>]{0,500}?src[ \t]{0,100}=", re.I)
 _FAILED = {"failed", "cancelled"}
 
 
@@ -716,12 +763,16 @@ def parse_overrides(comments: list[Comment], head: str, cfg: Config, author: str
         if not (person or crew):
             continue
         for sha, cls, ref, model, reason in OVERRIDE.findall(c.body or ""):
+            reason = reason.strip()
             if head.lower() != sha.lower() or cls not in OVERRIDE_CLASSES:
                 continue
             need = OVERRIDE_CLASSES[cls]
             if (need == "#") != ref.startswith("#") or (need == "url") != ref.startswith("https://"):
                 continue
             if not REASON_MIN <= len(reason) <= REASON_MAX:
+                continue
+            # A placeholder left as it was (`<reason, 20 to 500 characters>`) is no reason.
+            if reason.startswith("<") and reason.endswith(">") and "<" not in reason[1:] and ">" not in reason[:-1]:
                 continue
             if model and review_job(model) not in models:
                 continue
@@ -837,7 +888,10 @@ def check_mr(forge: Forge, mr: MR, cfg: Config, since: datetime.datetime | None 
                 bad.append(f"{spec.job}=review infra failure (a lens did not run, nothing found): retry the job")
                 continue
         bad.append(f"{spec.job}={run.status}")
-    known = cfg.all_jobs()
+    # The factory's own jobs: the checks of every tier, and the jobs that show each review on the
+    # merge request. Those decide nothing, and GitHub keeps a run that an edit of the title
+    # cancelled for as long as the head stays. Exact names of the configured models only.
+    known = cfg.all_jobs() | {comment_job(m) for m in cfg.review_models}
     required_jobs = {s.job for s in required}
     for c in checks:
         # Outside the tier: a failure blocks unless it is allowed to fail or is a factory check
@@ -882,12 +936,12 @@ def check_mr(forge: Forge, mr: MR, cfg: Config, since: datetime.datetime | None 
             note += f"; {len(synced)} gate path(s) already as on {cfg.default_branch}"
     word = "merge request" if forge.kind == "gitlab" else "pull request"
     if hits and not human_approved():
-        return ("touches " + ", ".join(hits[:4]) + f": needs a person's approval on the {word}"), note
+        return NeedsApproval("touches " + ", ".join(hits[:4]) + f": needs a person's approval on the {word}"), note
     to_default = mr.target == cfg.default_branch
     if to_default and cfg.is_feature(mr.source) and not human_approved():
-        return (f"merges feature branch {mr.source} into {mr.target}: only a person ships a whole "
-                f"feature, approve the {word}"), note
+        return NeedsApproval(f"merges feature branch {mr.source} into {mr.target}: only a person ships a whole "
+                             f"feature, approve the {word}"), note
     if to_default and not cfg.tier[tier]["automerge"] and not human_approved():
-        return (f"{tier} ({cfg.tier[tier]['title']}) is not merged alone: a person approves the "
-                f"{word} ({why}); every other rule holds, so it would merge on that approval"), note
+        return NeedsApproval(f"{tier} ({cfg.tier[tier]['title']}) is not merged alone: a person approves the "
+                             f"{word} ({why}); every other rule holds, so it would merge on that approval"), note
     return None, note

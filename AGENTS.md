@@ -167,6 +167,11 @@ same evidence: move the issue up rather than argue the tier.
   line, `Part of #<n>` for the T3 or T4 issue, and the step it does. Do not open them
   earlier. A step issue needs no `scope.label` and no tier label, even in own mode: the
   crew takes it on the strength of the approved design, and the triager leaves it alone.
+- With Issue Radar EE a person may write the design in a chat of their own instead. Then the
+  design is on `feature/<name>` without a merge request, and the person opens the step issues
+  themselves when they hand the design over, each with a tier label. A design on a feature
+  branch is yours to build only through such a step issue: never start from the design alone,
+  and never open step issues for a design a person wrote.
 - The T3 or T4 issue stays open until the feature reaches the default branch: refer to it as
   `Part of #<n>` in the design and step merge requests, never `Fixes #<n>`, because the
   merger closes the issues a merge into a feature branch fixes.

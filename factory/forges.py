@@ -129,6 +129,7 @@ class GitLab(Forge):
         self.pid = q(project)
         self.p = f"/projects/{self.pid}"
         self._target_ids: dict[int, int] = {}  # merge request -> its target project id
+        self._urls: dict[int, str] = {}        # merge request -> its web address, as the forge gave it
 
     def default_branch(self) -> str:
         return self.http.call("GET", self.p)["default_branch"]
@@ -170,6 +171,8 @@ class GitLab(Forge):
             mergeable = "ok"
         if m.get("target_project_id") is not None:
             self._target_ids[m["iid"]] = m["target_project_id"]
+        if m.get("web_url"):
+            self._urls[m["iid"]] = m["web_url"]
         return MR(number=m["iid"], title=m.get("title") or "", body=m.get("description") or "",
                   source=m["source_branch"], target=m["target_branch"], head=m["sha"],
                   draft=bool(m.get("draft") or m.get("work_in_progress")),
@@ -306,6 +309,17 @@ class GitLab(Forge):
         self.http.call("PUT", f"{self.p}/merge_requests/{mr.number}/merge",
                        {"sha": mr.head, "should_remove_source_branch": mr.same_repo})
 
+    def mr_url(self, mr):
+        return self._urls.get(mr.number, "")
+
+    def merged_info(self, mr):
+        m = self.http.call("GET", f"{self.p}/merge_requests/{mr.number}")
+        if m.get("state") != "merged":
+            return {}
+        who = m.get("merged_by") or m.get("merge_user") or {}
+        return {"merge_commit": m.get("merge_commit_sha") or None, "by": who.get("username") or None,
+                "at": m.get("merged_at") or None}
+
     def rebase(self, mr):
         self.http.call("PUT", f"{self.p}/merge_requests/{mr.number}/rebase")
 
@@ -380,6 +394,9 @@ pullRequest(number:$n){reviewThreads(first:100,after:$c){nodes{isResolved}
 pageInfo{hasNextPage endCursor}}}}}"""
 
 
+GH_MAX_FILES = 3000   # what `GET /pulls/{n}/files` lists at most
+
+
 class GitHub(Forge):
     kind = "github"
     mr_ref = "#"
@@ -394,6 +411,7 @@ class GitHub(Forge):
         self.owner, self.repo = project.split("/", 1)
         self.r = f"/repos/{q(self.owner)}/{q(self.repo)}"
         self.merge_method = merge_method
+        self._urls: dict[int, str] = {}        # pull request -> its web address, as the forge gave it
 
     def default_branch(self):
         return self.http.call("GET", self.r)["default_branch"]
@@ -430,6 +448,8 @@ class GitHub(Forge):
             mergeable = "ok"
         head_repo = ((p.get("head") or {}).get("repo") or {}).get("full_name")
         base_repo = ((p.get("base") or {}).get("repo") or {}).get("full_name")
+        if p.get("html_url"):
+            self._urls[p["number"]] = p["html_url"]
         return MR(number=p["number"], title=p.get("title") or "", body=p.get("body") or "",
                   source=p["head"]["ref"], target=p["base"]["ref"], head=p["head"]["sha"],
                   draft=bool(p.get("draft")), labels=tuple(x["name"] for x in p.get("labels") or []),
@@ -473,12 +493,23 @@ class GitHub(Forge):
         return out
 
     def changed_paths(self, mr):
+        # GitHub lists at most 3,000 files of a pull request and says nothing about the rest.
+        # A gate path among the unlisted ones would pass unseen, so a short list is no list.
+        pr = self.http.call("GET", f"{self.r}/pulls/{mr.number}") or {}
+        # The list and the count are the current head's; the rules judge, and the merge is pinned
+        # to, `mr.head`. After a push they are another commit's: try again on the next pass.
+        if ((pr.get("head") or {}).get("sha") or "") != mr.head:
+            raise ForgeError(200, f"pull request {mr.number} moved on from {mr.head[:12]}: its files are "
+                                  "read again on the next pass")
+        total = pr.get("changed_files")
+        if not isinstance(total, int) or isinstance(total, bool) or total > GH_MAX_FILES:
+            raise ForgeError(200, f"pull request {mr.number} changes {total} files and GitHub lists at "
+                                  f"most {GH_MAX_FILES}: the paths it touches cannot be checked")
         files = self.http.pages(f"{self.r}/pulls/{mr.number}/files")
-        # GitHub lists at most 3000 files: a shorter list than the pull request's own count
-        # could hide a gate path, and a rule never decides on a partial list.
-        total = (self.http.call("GET", f"{self.r}/pulls/{mr.number}") or {}).get("changed_files")
-        if isinstance(total, int) and len(files) < total:
-            raise ForgeError(200, f"pull request #{mr.number} lists {len(files)} of {total} changed files")
+        listed = len({f["filename"] for f in files})   # a row repeated across pages counts once
+        if listed < total:
+            raise ForgeError(200, f"pull request {mr.number} changes {total} files and GitHub listed "
+                                  f"{listed}: the paths it touches cannot be checked")
         return sorted({f["filename"] for f in files} | {f["previous_filename"] for f in files
                                                          if f.get("previous_filename")})
 
@@ -547,6 +578,16 @@ class GitHub(Forge):
                 self.http.call("DELETE", f"{self.r}/git/refs/heads/{q(mr.source)}")
             except ForgeError:
                 pass  # a protected or already deleted branch: the merge itself is done
+
+    def mr_url(self, mr):
+        return self._urls.get(mr.number, "")
+
+    def merged_info(self, mr):
+        p = self.http.call("GET", f"{self.r}/pulls/{mr.number}")
+        if not p.get("merged"):
+            return {}
+        return {"merge_commit": p.get("merge_commit_sha") or None,
+                "by": (p.get("merged_by") or {}).get("login") or None, "at": p.get("merged_at") or None}
 
     def rebase(self, mr):
         # GitHub's API updates a branch by merging the base into it (no rebase endpoint).

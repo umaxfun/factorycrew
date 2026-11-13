@@ -80,20 +80,25 @@ LABEL_OF = {**{d: LABEL_CLOSE for d in CLOSE}, "needs-info": LABEL_INFO, "needs-
             "proposed-merge": LABEL_MERGE, "proposed-decline": LABEL_DECLINE}
 ACTION_OF = {**{d: "close" for d in CLOSE}, "proposed-merge": "merge", "proposed-decline": "decline",
              "needs-run": "run checks"}
-ACTIONS = ["close", "merge", "decline", "approve design", "run checks", "answer"]
+ACTIONS = ["close", "merge", "decline", "approve design", "look at it", "run checks", "answer"]
 ACTION_HOW = {
     "close": "close it with the prepared comment in its last factory comment, or remove "
              f"`{LABEL_CLOSE}` and say why",
     "merge": "approve and merge it, or remove `{merge}` and say why".format(merge=LABEL_MERGE),
     "decline": "close it with the prepared comment, or remove `{d}` and say why".format(d=LABEL_DECLINE),
     "approve design": "read the design and approve the merge request, or comment what to change",
+    "look at it": "the forge does not list all of its files (GitHub lists at most 3,000), so the "
+                  "factory cannot check what it touches and will not merge it: read it and merge "
+                  "it yourself, or have it split",
     "run checks": "read the diff, then decide how its checks run: on GitLab a fork's pipeline "
                   "here runs its code with this project's CI variables, on GitHub a fork's "
                   "workflows get no secrets, so the factory does not start them",
     "answer": f"answer the crew's question on the item, then remove `{NEEDS_HUMAN}`",
 }
 
-MARK = re.compile(r"<!--\s*factory-backlog\s+((?:[a-z_]+=[^\s>]+\s*)+)-->")
+# One or more blanks between the pairs, so a text splits into pairs in one way only: with
+# `\s*` there, 40 pairs and no closing `-->` did not finish (fcore.py, SPEC_LINE).
+MARK = re.compile(r"<!--\s*factory-backlog\s+((?:[a-z_]+=[^\s>]+\s+)*[a-z_]+=[^\s>]+)\s*-->")
 _HEAD_LINE = re.compile(r"^\s*\*\*\s*Backlog:\s*(?P<what>.+?)\s*\*\*\s*(?P<why>.*)$", re.I)
 
 
@@ -101,7 +106,7 @@ class BacklogError(Exception):
     pass
 
 
-STEP_BRANCH = re.compile(r"(?im)^\s*Feature branch:\s*\S+")
+STEP_BRANCH = re.compile(r"(?im)^[ \t]*Feature branch:[ \t]*\S+")   # linear: fcore.py, SPEC_LINE
 STEP_PARENT = re.compile(r"(?i)\bPart of #\d+")
 
 
@@ -477,7 +482,13 @@ class Backlog:
         for item in (i for i in items if i.kind == "mr"):
             if item.author not in self.cfg.crew or item.mr.draft:
                 continue
-            paths = self.forge.changed_paths(item.mr)
+            try:
+                paths = self.forge.changed_paths(item.mr)
+            except ForgeError:
+                # Its files cannot be listed (GitHub: over 3,000). One such merge request must
+                # not take the page down; a person looks at it.
+                out.append(State(item, "waiting-you", False, None, "look at it"))
+                continue
             if any(match_any(p, [self.cfg.designs_dir + "/**"]) for p in paths) and \
                     not (self.forge.approvers(item.mr) & self.cfg.humans):
                 out.append(State(item, "waiting-you", False, None, "approve design"))
